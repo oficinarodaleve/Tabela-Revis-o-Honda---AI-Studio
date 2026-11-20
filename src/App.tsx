@@ -1,10 +1,8 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { PublicBootstrapData } from './types';
-import { auth } from './lib/firebase';
 import { adminFetch, clearAdminToken, getAdminToken } from './utils/adminAuth';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { PublicPage } from './components/PublicPage';
-import { AdminPanel } from './components/admin/AdminPanel';
 import { SeoHeadSync } from './components/SeoHeadSync';
 import { fetchWithRetry, normalizePublicBootstrapData } from './utils/bootstrapNormalize';
 import {
@@ -14,6 +12,10 @@ import {
   getInitialLanguage,
   persistLanguage,
 } from './utils/i18n';
+
+const AdminPanel = lazy(() =>
+  import('./components/admin/AdminPanel').then((m) => ({ default: m.AdminPanel }))
+);
 
 export default function App() {
   const [route, setRoute] = useState<string>(() =>
@@ -47,7 +49,28 @@ export default function App() {
       }
     }
     try {
-      const res = await fetchWithRetry(() => fetch('/api/public/bootstrap'), 2, 400);
+      const win = window as Window & { __rodaleveBootstrapPromise?: Promise<Response> };
+      const preloadedPromise = !options?.manualRetry ? win.__rodaleveBootstrapPromise : undefined;
+      if (preloadedPromise) {
+        win.__rodaleveBootstrapPromise = undefined;
+      }
+
+      let res: Response | null = null;
+      if (preloadedPromise) {
+        try {
+          const candidate = await preloadedPromise;
+          if (candidate.ok) {
+            res = candidate;
+          }
+        } catch {
+          res = null;
+        }
+      }
+
+      if (!res) {
+        res = await fetchWithRetry(() => fetch('/api/public/bootstrap'), 2, 400);
+      }
+
       if (!res.ok) {
         throw new Error(`Falha ao carregar dados da tabela de revisões (HTTP ${res.status}).`);
       }
@@ -71,11 +94,16 @@ export default function App() {
     void loadPublicData();
   }, [loadPublicData]);
 
-  // Verifica silenciosamente se há sessão administrativa Firebase válida
+  // Verifica silenciosamente se há sessão administrativa Firebase válida (carregamento sob demanda fora da rota /gestor)
   useEffect(() => {
     let active = true;
-    (async () => {
+    const isUrgentAuthRoute =
+      route.startsWith('/gestor') ||
+      (typeof window !== 'undefined' && window.location.search.includes('visual_editor=1'));
+
+    const checkAuth = async () => {
       try {
+        const { auth } = await import('./lib/firebase');
         await auth.authStateReady();
         if (!active) return;
         if (!auth.currentUser) {
@@ -98,9 +126,36 @@ export default function App() {
           setIsEditMode(false);
         }
       }
-    })();
+    };
+
+    if (isUrgentAuthRoute) {
+      void checkAuth();
+      return () => {
+        active = false;
+      };
+    }
+
+    const win = window as Window & {
+      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+      cancelIdleCallback?: (id: number) => void;
+    };
+    let timerId: number | null = null;
+    let idleId: number | null = null;
+
+    if (typeof win.requestIdleCallback === 'function') {
+      idleId = win.requestIdleCallback(() => void checkAuth(), { timeout: 2200 });
+    } else {
+      timerId = window.setTimeout(() => void checkAuth(), 1500);
+    }
+
     return () => {
       active = false;
+      if (idleId !== null && typeof win.cancelIdleCallback === 'function') {
+        win.cancelIdleCallback(idleId);
+      }
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
     };
   }, [route]);
 
@@ -197,15 +252,23 @@ export default function App() {
             setError(null);
           }}
         >
-          <AdminPanel
-            onNavigate={navigate}
-            onPublicDataChanged={loadPublicData}
-            onOpenVisualEditor={enterEditMode}
-            onAuthChange={setIsAdminLoggedIn}
-          />
+          <Suspense
+            fallback={
+              <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-600">
+                Carregando Gestor Rodaleve...
+              </div>
+            }
+          >
+            <AdminPanel
+              onNavigate={navigate}
+              onPublicDataChanged={loadPublicData}
+              onOpenVisualEditor={enterEditMode}
+              onAuthChange={setIsAdminLoggedIn}
+            />
+          </Suspense>
         </ErrorBoundary>
       ) : loading ? (
-        <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-500">
+        <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-600">
           {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).loadingTable}
         </div>
       ) : error || !publicData ? (
@@ -213,11 +276,11 @@ export default function App() {
           <p className="text-base font-bold text-neutral-900">
             {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).loadErrorTitle}
           </p>
-          <p className="text-sm text-neutral-500">{error}</p>
+          <p className="text-sm text-neutral-600">{error}</p>
           <button
             type="button"
             onClick={() => void loadPublicData({ manualRetry: true })}
-            className="rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white"
+            className="rounded-xl bg-[#D00027] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#B80022]"
           >
             {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).tryAgain}
           </button>

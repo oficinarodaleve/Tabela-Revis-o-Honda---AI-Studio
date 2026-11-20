@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -58,20 +58,32 @@ import {
   trackAllPixelsLeadContact,
   trackAllPixelsViewContent,
 } from '../utils/metaPixel';
+import { ErrorBoundary } from './ErrorBoundary';
 import { FloatingWhatsApp } from './FloatingWhatsApp';
 import { LanguageSelector } from './LanguageSelector';
-import { UnitsMapSection } from './UnitsMapSection';
 import {
   WhatsAppIcon,
   buildWhatsAppHref,
   getUnitWhatsAppNumber,
 } from './WhatsAppIcon';
-import { WhatsAppScheduleModal } from './WhatsAppScheduleModal';
-import { AddBlockModal } from './editor/AddBlockModal';
 import { EditableText } from './editor/EditableText';
-import { ImageSwapModal } from './editor/ImageSwapModal';
 import { DropPosition, SectionEditorWrapper } from './editor/SectionEditorWrapper';
-import { VisualEditorToolbar } from './editor/VisualEditorToolbar';
+
+const UnitsMapSection = lazy(() =>
+  import('./UnitsMapSection').then((m) => ({ default: m.UnitsMapSection }))
+);
+const WhatsAppScheduleModal = lazy(() =>
+  import('./WhatsAppScheduleModal').then((m) => ({ default: m.WhatsAppScheduleModal }))
+);
+const AddBlockModal = lazy(() =>
+  import('./editor/AddBlockModal').then((m) => ({ default: m.AddBlockModal }))
+);
+const ImageSwapModal = lazy(() =>
+  import('./editor/ImageSwapModal').then((m) => ({ default: m.ImageSwapModal }))
+);
+const VisualEditorToolbar = lazy(() =>
+  import('./editor/VisualEditorToolbar').then((m) => ({ default: m.VisualEditorToolbar }))
+);
 import {
   SITE_CONTENT_TRANSLATIONS,
   SiteLanguage,
@@ -136,7 +148,7 @@ function FooterClock() {
   return (
     <time
       dateTime={now.toISOString()}
-      className="block text-center text-xs font-normal text-neutral-500 tabular-nums dark:text-neutral-400"
+      className="block text-center text-xs font-normal text-neutral-600 tabular-nums dark:text-neutral-300"
     >
       {formatFooterDateTimeBR(now)}
     </time>
@@ -184,6 +196,33 @@ export function PublicPage({
   const railRef = useRef<HTMLDivElement | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
+  const [shouldMountUnits, setShouldMountUnits] = useState(isEditMode);
+
+  useEffect(() => {
+    if (isEditMode) {
+      setShouldMountUnits(true);
+    }
+  }, [isEditMode]);
+
+  useEffect(() => {
+    if (shouldMountUnits) return;
+    const el = document.getElementById('unidades');
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setShouldMountUnits(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldMountUnits(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '550px 0px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [shouldMountUnits]);
 
   // Pixels, Tags (GTM, GA4, Google Ads, Meta Pixel, TikTok Pixel): injeção única no site público
   useEffect(() => {
@@ -844,6 +883,9 @@ export function PublicPage({
   }, [orderedModels, vbConfig.hiddenModelIds, isEditMode]);
 
   const scrollToSection = useCallback((elementId: string) => {
+    if (elementId === 'unidades') {
+      setShouldMountUnits(true);
+    }
     const el = document.getElementById(elementId);
     if (el) {
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -953,7 +995,7 @@ export function PublicPage({
                     entry={heroEyebrow.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="text-xs font-bold uppercase tracking-widest text-[#E4002B]"
+                    className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]"
                   />
                   <EditableText
                     as="h1"
@@ -1079,8 +1121,8 @@ export function PublicPage({
                     }}
                     className={`inline-flex w-fit shrink-0 cursor-pointer flex-col items-start rounded-2xl border px-3 py-2 text-left transition-all duration-150 ease-out lg:min-w-0 lg:flex-1 lg:px-2 lg:py-2 xl:px-3 xl:py-2.5 ${
                       isSelected
-                        ? 'border-[#E4002B] bg-[#E4002B] text-white shadow-sm'
-                        : 'border-neutral-200 bg-white text-neutral-900 hover:-translate-y-0.5 hover:border-[#E4002B]/75 hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-white dark:hover:border-[#E4002B]/80'
+                        ? 'border-[#D00027] bg-[#D00027] text-white shadow-sm'
+                        : 'border-neutral-200 bg-white text-neutral-900 hover:-translate-y-0.5 hover:border-[#D00027]/75 hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-white dark:hover:border-[#E4002B]/80'
                     }`}
                   >
                     <EditableText
@@ -1098,7 +1140,7 @@ export function PublicPage({
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
                       className={`mt-0.5 max-w-full truncate whitespace-nowrap text-[11px] lg:text-[10px] xl:text-[11.5px] ${
-                        isSelected ? 'text-white/90' : 'text-neutral-500 dark:text-neutral-400'
+                        isSelected ? 'text-white' : 'text-neutral-600 dark:text-neutral-300'
                       }`}
                     />
                   </button>
@@ -1158,20 +1200,20 @@ export function PublicPage({
               {/* Linha 1 horizontal: Busca + Ir direto para a moto + Atalhos */}
               <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
                 <div className="relative min-w-[210px] flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-600 dark:text-neutral-300" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={dict.searchPlaceholder}
-                    className="w-full rounded-xl border border-neutral-200 bg-neutral-50/70 py-2 pl-9 pr-8 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:bg-white focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-white sm:text-sm"
+                    className="w-full rounded-xl border border-neutral-200 bg-neutral-50/70 py-2 pl-9 pr-8 text-xs text-neutral-900 placeholder:text-neutral-500 focus:border-[#D00027] focus:bg-white focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-white dark:placeholder:text-neutral-400 sm:text-sm"
                   />
                   {searchQuery && (
                     <button
                       type="button"
                       onClick={() => setSearchQuery('')}
                       aria-label={dict.clearSearch}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -1264,7 +1306,7 @@ export function PublicPage({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2.5">
-                  <span className="whitespace-nowrap text-xs font-medium text-neutral-500 tabular-nums">
+                  <span className="whitespace-nowrap text-xs font-medium text-neutral-600 tabular-nums dark:text-neutral-300">
                     {dict.showingModels(visibleModels.length, computedModels.length)}
                   </span>
 
@@ -1276,7 +1318,7 @@ export function PublicPage({
                         disabled={!canScrollLeft}
                         aria-label={dict.prevModel}
                         title={dict.scrollModelsLeft}
-                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#C80024] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
                       >
                         <ArrowLeft className="h-3.5 w-3.5" />
                       </button>
@@ -1286,7 +1328,7 @@ export function PublicPage({
                         disabled={!canScrollRight}
                         aria-label={dict.nextModel}
                         title={dict.scrollModelsRight}
-                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#C80024] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
                       >
                         <ArrowRight className="h-3.5 w-3.5" />
                       </button>
@@ -1302,7 +1344,7 @@ export function PublicPage({
                       className={`rounded-lg p-1.5 transition-colors ${
                         viewMode === 'grid'
                           ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
+                          : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
                       }`}
                     >
                       <LayoutGrid className="h-4 w-4" />
@@ -1314,7 +1356,7 @@ export function PublicPage({
                       className={`rounded-lg p-1.5 transition-colors ${
                         viewMode === 'list'
                           ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
+                          : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
                       }`}
                     >
                       <List className="h-4 w-4" />
@@ -1330,7 +1372,7 @@ export function PublicPage({
                 <p className="text-base font-semibold text-neutral-900 dark:text-white">
                   {dict.noModelsTitle}
                 </p>
-                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
                   {dict.noModelsDesc}
                 </p>
                 <button
@@ -1351,7 +1393,7 @@ export function PublicPage({
                   onClick={() => scrollRailBy(-1)}
                   disabled={!canScrollLeft}
                   aria-label={dict.scrollModelsLeft}
-                  className="hidden sm:flex absolute -left-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-neutral-800 shadow-md backdrop-blur transition-all hover:border-[#E4002B] hover:text-[#E4002B] disabled:pointer-events-none disabled:opacity-0 dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-white"
+                  className="hidden sm:flex absolute -left-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-neutral-800 shadow-md backdrop-blur transition-all hover:border-[#D00027] hover:text-[#C80024] disabled:pointer-events-none disabled:opacity-0 dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-white"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
@@ -1361,7 +1403,7 @@ export function PublicPage({
                   onScroll={updateRailScrollState}
                   className="flex flex-row items-stretch gap-4 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-3 pt-1"
                 >
-                  {visibleModels.map(({ model, summary, isVisuallyHidden }) => {
+                  {visibleModels.map(({ model, summary, isVisuallyHidden }, modelIdx) => {
                     const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
                     const revTitleUpper = `${dict.totalOfPrefix} ${revisionLabel.toUpperCase()}`;
                     const includeOptionals = true;
@@ -1445,11 +1487,16 @@ export function PublicPage({
                             <img
                               src={model.image_url}
                               alt={`Honda ${model.name}`}
+                              width={640}
+                              height={478}
+                              loading={modelIdx < 3 ? 'eager' : 'lazy'}
+                              decoding="async"
+                              fetchPriority={modelIdx === 0 ? 'high' : undefined}
                               referrerPolicy="no-referrer"
                               className="h-full w-full object-contain"
                             />
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-400">
+                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
                               Honda {model.name}
                             </div>
                           )}
@@ -1464,7 +1511,7 @@ export function PublicPage({
                                   currentUrl: model.image_url,
                                 })
                               }
-                              className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-neutral-950/85 px-3.5 py-1.5 text-xs font-bold text-white opacity-95 shadow-lg backdrop-blur transition-all hover:bg-[#E4002B] group-hover/img:opacity-100"
+                              className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-neutral-950/85 px-3.5 py-1.5 text-xs font-bold text-white opacity-95 shadow-lg backdrop-blur transition-all hover:bg-[#D00027] group-hover/img:opacity-100"
                             >
                               <ImageIcon className="h-3.5 w-3.5" />
                               Trocar Imagem
@@ -1491,10 +1538,10 @@ export function PublicPage({
                               entry={vbConfig.siteContent[`model_cat_${model.id}`]}
                               isEditMode={isEditMode}
                               onCommit={handleCommitText}
-                              className="block text-xs font-medium text-neutral-500 dark:text-neutral-400"
+                              className="block text-xs font-medium text-neutral-600 dark:text-neutral-300"
                             />
                           </div>
-                          <span className="shrink-0 text-xs font-semibold text-neutral-500 tabular-nums dark:text-neutral-400">
+                          <span className="shrink-0 text-xs font-semibold text-neutral-600 tabular-nums dark:text-neutral-300">
                             {summary.items.length}{' '}
                             {summary.items.length === 1 ? dict.itemSingular : dict.itemPlural}
                           </span>
@@ -1505,8 +1552,8 @@ export function PublicPage({
                           <span
                             className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold ${
                               isFreeLabor
-                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                                ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
                             }`}
                           >
                             <Clock className="h-3 w-3 shrink-0" />
@@ -1514,7 +1561,7 @@ export function PublicPage({
                           </span>
 
                           <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                            <Wrench className="h-3 w-3 shrink-0 text-[#E4002B]" />
+                            <Wrench className="h-3 w-3 shrink-0 text-[#C80024] dark:text-[#ff4d6d]" />
                             {isFreeLabor ? dict.freeLaborBadge : dict.consultLaborBadge}
                           </span>
                         </div>
@@ -1522,7 +1569,7 @@ export function PublicPage({
                         {/* Lista compacta de peças da revisão (altura alinhada no carrossel) */}
                         <div className="mt-2.5 h-[196px] flex-1 overflow-y-auto divide-y divide-neutral-100 px-4 dark:divide-neutral-800">
                           {summary.items.length === 0 ? (
-                            <p className="py-6 text-center text-xs text-neutral-400">
+                            <p className="py-6 text-center text-xs text-neutral-600 dark:text-neutral-300">
                               {dict.noPartsLinked}
                             </p>
                           ) : (
@@ -1549,12 +1596,12 @@ export function PublicPage({
                                       {part.is_optional &&
                                       !translatedDesc.includes('[Opcional]') &&
                                       !translatedDesc.includes('[Optional]') ? (
-                                        <span className="ml-1 text-neutral-500">
+                                        <span className="ml-1 text-neutral-600 dark:text-neutral-300">
                                           {dict.optionalTag}
                                         </span>
                                       ) : null}
                                     </p>
-                                    <p className="mt-0.5 font-mono text-[10px] text-neutral-400 dark:text-neutral-500">
+                                    <p className="mt-0.5 font-mono text-[10px] text-neutral-600 dark:text-neutral-300">
                                       {dict.codePrefix} {part.code}
                                       {(part.unit === 'ML' || revisionPart.quantity > 1) &&
                                         ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
@@ -1574,13 +1621,13 @@ export function PublicPage({
                         </div>
 
                         {/* Rodapé vermelho de destaque */}
-                        <div className="mt-2.5 bg-[#E4002B] px-4 py-3 text-white">
+                        <div className="mt-2.5 bg-[#D00027] px-4 py-3 text-white">
                           <div className="flex items-center justify-between gap-2">
                             <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-white/95">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-white">
                                 {revTitleUpper}
                               </p>
-                              <p className="text-[10px] text-white/90 tabular-nums">
+                              <p className="text-[10px] text-white tabular-nums">
                                 {dict.withoutOptionals}: {formatBRL(summary.totalWithoutOptionals)}
                               </p>
                             </div>
@@ -1644,7 +1691,7 @@ export function PublicPage({
             ) : (
               /* List View */
               <div className="mt-7 space-y-4">
-                {visibleModels.map(({ model, summary, isVisuallyHidden }) => {
+                {visibleModels.map(({ model, summary, isVisuallyHidden }, modelIdx) => {
                   const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
                   const includeOptionals = true;
                   const activeTotal = summary.totalWithOptionals;
@@ -1656,7 +1703,7 @@ export function PublicPage({
                       key={model.id}
                       className={`flex flex-col overflow-hidden rounded-2xl border bg-white dark:bg-neutral-900 md:flex-row ${
                         isHighlighted
-                          ? 'border-[#E4002B] ring-2 ring-[#E4002B]/50 shadow-lg'
+                          ? 'border-[#D00027] ring-2 ring-[#D00027]/50 shadow-lg'
                           : 'border-neutral-200 dark:border-neutral-800'
                       } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                     >
@@ -1664,6 +1711,11 @@ export function PublicPage({
                         <img
                           src={model.image_url}
                           alt={`Honda ${model.name}`}
+                          width={640}
+                          height={478}
+                          loading={modelIdx < 2 ? 'eager' : 'lazy'}
+                          decoding="async"
+                          fetchPriority={modelIdx === 0 ? 'high' : undefined}
                           referrerPolicy="no-referrer"
                           className="h-40 w-full object-contain"
                         />
@@ -1678,7 +1730,7 @@ export function PublicPage({
                                 currentUrl: model.image_url,
                               })
                             }
-                            className="absolute bottom-2 inline-flex items-center gap-1 rounded-full bg-neutral-950/85 px-3 py-1 text-[11px] font-bold text-white shadow hover:bg-[#E4002B]"
+                            className="absolute bottom-2 inline-flex items-center gap-1 rounded-full bg-neutral-950/85 px-3 py-1 text-[11px] font-bold text-white shadow hover:bg-[#D00027]"
                           >
                             <ImageIcon className="h-3 w-3" />
                             Trocar Imagem
@@ -1692,11 +1744,11 @@ export function PublicPage({
                               <h2 className="font-display text-lg font-bold text-neutral-900 dark:text-white">
                                 {model.name}
                               </h2>
-                              <span className="text-xs font-medium text-neutral-500">
+                              <span className="text-xs font-medium text-neutral-600 dark:text-neutral-300">
                                 {categoryLabel}
                               </span>
                             </div>
-                            <span className="text-xs font-semibold text-neutral-500 tabular-nums">
+                            <span className="text-xs font-semibold text-neutral-600 tabular-nums dark:text-neutral-300">
                               {summary.items.length}{' '}
                               {summary.items.length === 1 ? dict.itemSingular : dict.itemPlural}
                             </span>
@@ -1706,15 +1758,15 @@ export function PublicPage({
                             <span
                               className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
                                 isFreeLabor
-                                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                  : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                                  ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
                               }`}
                             >
                               <Clock className="h-3 w-3" />
                               {isFreeLabor ? dict.walkInBadge : dict.appointmentBadge}
                             </span>
                             <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                              <Wrench className="h-3 w-3 text-[#E4002B]" />
+                              <Wrench className="h-3 w-3 text-[#C80024] dark:text-[#ff4d6d]" />
                               {isFreeLabor ? dict.freeLaborBadge : dict.consultLaborBadge}
                             </span>
                           </div>
@@ -1740,7 +1792,7 @@ export function PublicPage({
                                     !translatedDesc.includes('[Optional]')
                                       ? ` ${dict.optionalTag}`
                                       : ''}
-                                    <span className="ml-1.5 font-mono text-[10px] text-neutral-400">
+                                    <span className="ml-1.5 font-mono text-[10px] text-neutral-600 dark:text-neutral-300">
                                       ({part.code})
                                     </span>
                                   </span>
@@ -1753,12 +1805,12 @@ export function PublicPage({
                           </div>
                         </div>
 
-                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#E4002B] px-4 py-3 text-white">
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#D00027] px-4 py-3 text-white">
                           <div>
                             <span className="text-xs font-bold uppercase tracking-wider">
                               {dict.totalOfPrefix} {revisionLabel.toUpperCase()}
                             </span>
-                            <span className="ml-3 text-xs text-white/90 tabular-nums">
+                            <span className="ml-3 text-xs text-white tabular-nums">
                               {dict.withoutOptionals}: {formatBRL(summary.totalWithoutOptionals)}
                             </span>
                           </div>
@@ -1894,8 +1946,8 @@ export function PublicPage({
                         className="text-sm font-bold text-neutral-900 dark:text-white sm:text-base"
                       />
                       <ChevronDown
-                        className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${
-                          isOpen ? 'rotate-180 text-[#E4002B]' : ''
+                        className={`h-5 w-5 shrink-0 text-neutral-600 transition-transform dark:text-neutral-300 ${
+                          isOpen ? 'rotate-180 text-[#C80024] dark:text-[#ff4d6d]' : ''
                         }`}
                       />
                     </button>
@@ -1924,45 +1976,75 @@ export function PublicPage({
         const unitsTitle = getLocalizedContent('units_title');
         const unitsSubtitle = getLocalizedContent('units_subtitle');
         return (
-          <UnitsMapSection
-            units={data.seo?.units || []}
-            mapsActive={data.maps_config?.active ?? true}
-            mapsApiKey={data.maps_config?.api_key || ''}
-            language={language}
-            renderEyebrow={() => (
-              <EditableText
-                as="p"
-                textKey="units_eyebrow"
-                defaultText={unitsEyebrow.defaultText}
-                entry={unitsEyebrow.entry}
-                isEditMode={isEditMode}
-                onCommit={handleCommitText}
-                className="text-xs font-bold uppercase tracking-widest text-[#E4002B]"
-              />
+          <ErrorBoundary compact screenName="Unidades e Mapa" fallback={null}>
+            {shouldMountUnits ? (
+              <Suspense
+                fallback={
+                  <section
+                    id="unidades"
+                    className="min-h-[540px] border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
+                  />
+                }
+              >
+                <UnitsMapSection
+                  units={data.seo?.units || []}
+                  mapsActive={data.maps_config?.active ?? true}
+                  mapsApiKey={data.maps_config?.api_key || ''}
+                  language={language}
+                  renderEyebrow={() => (
+                    <EditableText
+                      as="p"
+                      textKey="units_eyebrow"
+                      defaultText={unitsEyebrow.defaultText}
+                      entry={unitsEyebrow.entry}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                      className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]"
+                    />
+                  )}
+                  renderTitle={() => (
+                    <EditableText
+                      as="h2"
+                      textKey="units_title"
+                      defaultText={unitsTitle.defaultText}
+                      entry={unitsTitle.entry}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                      className="mt-1 block text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl"
+                    />
+                  )}
+                  renderSubtitle={() => (
+                    <EditableText
+                      as="p"
+                      textKey="units_subtitle"
+                      defaultText={unitsSubtitle.defaultText}
+                      entry={unitsSubtitle.entry}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                      className="mt-1.5 block text-sm text-neutral-600 dark:text-neutral-300"
+                    />
+                  )}
+                />
+              </Suspense>
+            ) : (
+              <section
+                id="unidades"
+                className="min-h-[540px] border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
+              >
+                <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+                  <p className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]">
+                    {unitsEyebrow.entry?.text || unitsEyebrow.defaultText}
+                  </p>
+                  <h2 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl">
+                    {unitsTitle.entry?.text || unitsTitle.defaultText}
+                  </h2>
+                  <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                    {unitsSubtitle.entry?.text || unitsSubtitle.defaultText}
+                  </p>
+                </div>
+              </section>
             )}
-            renderTitle={() => (
-              <EditableText
-                as="h2"
-                textKey="units_title"
-                defaultText={unitsTitle.defaultText}
-                entry={unitsTitle.entry}
-                isEditMode={isEditMode}
-                onCommit={handleCommitText}
-                className="mt-1 block text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl"
-              />
-            )}
-            renderSubtitle={() => (
-              <EditableText
-                as="p"
-                textKey="units_subtitle"
-                defaultText={unitsSubtitle.defaultText}
-                entry={unitsSubtitle.entry}
-                isEditMode={isEditMode}
-                onCommit={handleCommitText}
-                className="mt-1.5 block text-sm text-neutral-600 dark:text-neutral-400"
-              />
-            )}
-          />
+          </ErrorBoundary>
         );
       }
 
@@ -1986,6 +2068,10 @@ export function PublicPage({
                       <img
                         src={effectiveLogoUrl}
                         alt={data.seo.logo_alt || 'RODALEVE'}
+                        width={147}
+                        height={36}
+                        loading="lazy"
+                        decoding="async"
                         className="h-9 w-auto object-contain"
                         referrerPolicy="no-referrer"
                       />
@@ -1996,7 +2082,7 @@ export function PublicPage({
                         entry={vbConfig.siteContent.footer_brand_text}
                         isEditMode={isEditMode}
                         onCommit={handleCommitText}
-                        className="font-display text-2xl font-extrabold tracking-tight text-[#E4002B]"
+                        className="font-display text-2xl font-extrabold tracking-tight text-[#C80024] dark:text-[#ff4d6d]"
                       />
                     )}
                     {isEditMode && (
@@ -2121,7 +2207,7 @@ export function PublicPage({
                             data.tracking_config
                           )
                         }
-                        className="tabular-nums text-[#E4002B] hover:underline"
+                        className="tabular-nums text-[#C80024] hover:underline dark:text-[#ff4d6d]"
                       >
                         {primaryWhatsAppNumber}
                       </a>
@@ -2144,14 +2230,14 @@ export function PublicPage({
                     <button
                       type="button"
                       onClick={() => setLegalModal('privacy')}
-                      className="text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                      className="text-neutral-700 underline-offset-4 hover:text-[#C80024] hover:underline dark:text-neutral-300"
                     >
                       {dict.privacyPolicy}
                     </button>
                     <button
                       type="button"
                       onClick={() => setLegalModal('terms')}
-                      className="text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                      className="text-neutral-700 underline-offset-4 hover:text-[#C80024] hover:underline dark:text-neutral-300"
                     >
                       {dict.termsOfUse}
                     </button>
@@ -2163,13 +2249,13 @@ export function PublicPage({
                     entry={footerDisclaimer.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="mt-3 block text-xs leading-relaxed text-neutral-500 dark:text-neutral-400"
+                    className="mt-3 block text-xs leading-relaxed text-neutral-600 dark:text-neutral-300"
                   />
                 </div>
               </div>
 
               {/* Faixa inferior */}
-              <div className="mt-10 grid grid-cols-1 items-center gap-3 border-t border-neutral-200 pt-6 text-center text-xs text-neutral-500 dark:border-neutral-800 sm:grid-cols-3">
+              <div className="mt-10 grid grid-cols-1 items-center gap-3 border-t border-neutral-200 pt-6 text-center text-xs text-neutral-600 dark:border-neutral-800 dark:text-neutral-300 sm:grid-cols-3">
                 <div className="sm:text-left">
                   <EditableText
                     as="p"
@@ -2240,7 +2326,7 @@ export function PublicPage({
             <div
               className={`overflow-hidden rounded-2xl border p-6 sm:p-8 ${
                 isRed
-                  ? 'border-[#E4002B] bg-[#E4002B] text-white'
+                  ? 'border-[#D00027] bg-[#D00027] text-white'
                   : isGray
                     ? 'border-neutral-200 bg-neutral-100 text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white'
                     : 'border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white'
@@ -2257,7 +2343,7 @@ export function PublicPage({
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
                       className={`text-xs font-bold uppercase tracking-widest ${
-                        isRed ? 'text-white/90' : 'text-[#E4002B]'
+                        isRed ? 'text-white' : 'text-[#C80024] dark:text-[#ff4d6d]'
                       }`}
                     />
                   )}
@@ -2278,7 +2364,7 @@ export function PublicPage({
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
                     className={`block text-sm leading-relaxed ${
-                      isRed ? 'text-white/90' : 'text-neutral-600 dark:text-neutral-300'
+                      isRed ? 'text-white' : 'text-neutral-600 dark:text-neutral-300'
                     }`}
                   />
                   {custom.cta_label && (
@@ -2292,8 +2378,8 @@ export function PublicPage({
                         }}
                         className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold transition-colors ${
                           isRed
-                            ? 'bg-white text-[#E4002B] hover:bg-neutral-100'
-                            : 'bg-[#E4002B] text-white hover:bg-[#C80024]'
+                            ? 'bg-white text-[#C80024] hover:bg-neutral-100'
+                            : 'bg-[#D00027] text-white hover:bg-[#B80022]'
                         }`}
                       >
                         <EditableText
@@ -2314,6 +2400,10 @@ export function PublicPage({
                       <img
                         src={custom.image_url}
                         alt={custom.title}
+                        width={512}
+                        height={352}
+                        loading="lazy"
+                        decoding="async"
                         referrerPolicy="no-referrer"
                         className="max-h-44 w-full rounded-xl object-contain"
                       />
@@ -2364,33 +2454,35 @@ export function PublicPage({
     >
       {/* Visual Editor Fixed Top Toolbar */}
       {isEditMode && (
-        <VisualEditorToolbar
-          canUndo={undoStack.length > 0}
-          canRedo={redoStack.length > 0}
-          viewport={viewport}
-          saving={savingVisual}
-          hasUnsavedChanges={hasUnsavedChanges}
-          autoSaveEnabled={autoSaveEnabled}
-          autoSaveStatus={autoSaveStatus}
-          onUndo={handleUndo}
-          onRedo={handleRedo}
-          onChangeViewport={setViewport}
-          onOpenAddBlock={() => {
-            setAddBlockAfterIndex(null);
-            setIsAddBlockOpen(true);
-          }}
-          onEditFavicon={() =>
-            setImageModal({
-              kind: 'favicon',
-              title: 'Favicon do Site (ícone da aba)',
-              currentUrl: effectiveFaviconUrl,
-            })
-          }
-          onRestoreDefaultOrder={handleRestoreDefaultOrder}
-          onRestoreDefault={handleRestoreDefault}
-          onBackToGestor={onExitEditModeToGestor}
-          onSaveAndPublish={handleSaveAndPublish}
-        />
+        <Suspense fallback={null}>
+          <VisualEditorToolbar
+            canUndo={undoStack.length > 0}
+            canRedo={redoStack.length > 0}
+            viewport={viewport}
+            saving={savingVisual}
+            hasUnsavedChanges={hasUnsavedChanges}
+            autoSaveEnabled={autoSaveEnabled}
+            autoSaveStatus={autoSaveStatus}
+            onUndo={handleUndo}
+            onRedo={handleRedo}
+            onChangeViewport={setViewport}
+            onOpenAddBlock={() => {
+              setAddBlockAfterIndex(null);
+              setIsAddBlockOpen(true);
+            }}
+            onEditFavicon={() =>
+              setImageModal({
+                kind: 'favicon',
+                title: 'Favicon do Site (ícone da aba)',
+                currentUrl: effectiveFaviconUrl,
+              })
+            }
+            onRestoreDefaultOrder={handleRestoreDefaultOrder}
+            onRestoreDefault={handleRestoreDefault}
+            onBackToGestor={onExitEditModeToGestor}
+            onSaveAndPublish={handleSaveAndPublish}
+          />
+        </Suspense>
       )}
 
       {/* Main Preview Canvas (switches width smoothly between Desktop and Mobile in edit mode) */}
@@ -2423,6 +2515,11 @@ export function PublicPage({
                   <img
                     src={effectiveLogoUrl}
                     alt={data.seo.logo_alt || 'RODALEVE'}
+                    width={131}
+                    height={32}
+                    loading="eager"
+                    decoding="async"
+                    fetchPriority="high"
                     className="h-8 w-auto object-contain"
                     referrerPolicy="no-referrer"
                   />
@@ -2433,7 +2530,7 @@ export function PublicPage({
                     entry={vbConfig.siteContent.header_brand_text}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="font-display text-xl font-extrabold tracking-tight text-[#E4002B]"
+                    className="font-display text-xl font-extrabold tracking-tight text-[#C80024] dark:text-[#ff4d6d]"
                   />
                 )}
               </a>
@@ -2537,7 +2634,7 @@ export function PublicPage({
                     data.tracking_config
                   );
                 }}
-                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-red-600 px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-red-700 sm:px-5 sm:py-2.5 sm:text-sm"
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[#D00027] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#B80022] sm:px-5 sm:py-2.5 sm:text-sm"
               >
                 {(() => {
                   const headerCta = getLocalizedContent('header_cta');
@@ -2665,27 +2762,29 @@ export function PublicPage({
 
       {/* Modal rápido de escolha de unidade para agendamento via WhatsApp */}
       {scheduleTarget && (
-        <WhatsAppScheduleModal
-          model={scheduleTarget.model}
-          revisionNumber={selectedRevision}
-          revisionLabel={revisionLabel}
-          revisionSubtitle={revisionSubtitle}
-          summary={scheduleTarget.summary}
-          initialIncludeOptionals={scheduleTarget.includeOptionals}
-          units={data.seo?.units || []}
-          language={language}
-          onClose={() => setScheduleTarget(null)}
-          onTrackLead={(unitName) =>
-            trackAllPixelsLeadContact(
-              data.seo,
-              {
-                content_name: `${scheduleTarget.model.name} - ${revisionLabel}`,
-                content_category: unitName,
-              },
-              data.tracking_config
-            )
-          }
-        />
+        <Suspense fallback={null}>
+          <WhatsAppScheduleModal
+            model={scheduleTarget.model}
+            revisionNumber={selectedRevision}
+            revisionLabel={revisionLabel}
+            revisionSubtitle={revisionSubtitle}
+            summary={scheduleTarget.summary}
+            initialIncludeOptionals={scheduleTarget.includeOptionals}
+            units={data.seo?.units || []}
+            language={language}
+            onClose={() => setScheduleTarget(null)}
+            onTrackLead={(unitName) =>
+              trackAllPixelsLeadContact(
+                data.seo,
+                {
+                  content_name: `${scheduleTarget.model.name} - ${revisionLabel}`,
+                  content_category: unitName,
+                },
+                data.tracking_config
+              )
+            }
+          />
+        </Suspense>
       )}
 
       {/* Botão flutuante discreto para o administrador autenticado */}
@@ -2701,7 +2800,7 @@ export function PublicPage({
           <button
             type="button"
             onClick={onEnterEditMode}
-            className="inline-flex items-center gap-1.5 rounded-full bg-neutral-950/90 px-4 py-2 text-xs font-bold text-white shadow-lg backdrop-blur transition-all hover:bg-[#E4002B]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-neutral-950/90 px-4 py-2 text-xs font-bold text-white shadow-lg backdrop-blur transition-all hover:bg-[#D00027]"
           >
             <Paintbrush className="h-3.5 w-3.5" />
             Editar Site Visualmente
@@ -2715,7 +2814,7 @@ export function PublicPage({
           className={`fixed right-5 top-16 z-50 rounded-xl border px-4 py-2.5 text-xs font-bold shadow-xl ${
             visualToast.type === 'success'
               ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-              : 'border-red-300 bg-red-50 text-[#E4002B]'
+              : 'border-red-300 bg-red-50 text-[#C80024]'
           }`}
         >
           {visualToast.msg}
@@ -2724,48 +2823,52 @@ export function PublicPage({
 
       {/* Modais do Editor Visual */}
       {isAddBlockOpen && (
-        <AddBlockModal
-          onSelect={handleInsertCustomBlock}
-          onClose={() => {
-            setIsAddBlockOpen(false);
-            setAddBlockAfterIndex(null);
-          }}
-        />
+        <Suspense fallback={null}>
+          <AddBlockModal
+            onSelect={handleInsertCustomBlock}
+            onClose={() => {
+              setIsAddBlockOpen(false);
+              setAddBlockAfterIndex(null);
+            }}
+          />
+        </Suspense>
       )}
 
       {imageModal && (
-        <ImageSwapModal
-          title={imageModal.title}
-          currentUrl={imageModal.currentUrl}
-          onClose={() => setImageModal(null)}
-          onApply={(nextUrl) => {
-            if (imageModal.kind === 'logo') {
-              setPendingLogoUrl(nextUrl);
-              commitVisualChange((prev) => ({
-                ...prev,
-                imageOverrides: { ...prev.imageOverrides, site_logo: nextUrl },
-              }));
-            } else if (imageModal.kind === 'favicon') {
-              setPendingFaviconUrl(nextUrl);
-              commitVisualChange((prev) => ({
-                ...prev,
-                imageOverrides: { ...prev.imageOverrides, site_favicon: nextUrl },
-              }));
-            } else if (imageModal.kind === 'model') {
-              const targetModelId = imageModal.modelId;
-              setPendingModelImageById((prev) => ({ ...prev, [targetModelId]: nextUrl }));
-              commitVisualChange((prev) => ({
-                ...prev,
-                imageOverrides: {
-                  ...prev.imageOverrides,
-                  [`model_${targetModelId}`]: nextUrl,
-                },
-              }));
-            } else if (imageModal.kind === 'custom_block') {
-              updateCustomBlockData(imageModal.blockId, { image_url: nextUrl });
-            }
-          }}
-        />
+        <Suspense fallback={null}>
+          <ImageSwapModal
+            title={imageModal.title}
+            currentUrl={imageModal.currentUrl}
+            onClose={() => setImageModal(null)}
+            onApply={(nextUrl) => {
+              if (imageModal.kind === 'logo') {
+                setPendingLogoUrl(nextUrl);
+                commitVisualChange((prev) => ({
+                  ...prev,
+                  imageOverrides: { ...prev.imageOverrides, site_logo: nextUrl },
+                }));
+              } else if (imageModal.kind === 'favicon') {
+                setPendingFaviconUrl(nextUrl);
+                commitVisualChange((prev) => ({
+                  ...prev,
+                  imageOverrides: { ...prev.imageOverrides, site_favicon: nextUrl },
+                }));
+              } else if (imageModal.kind === 'model') {
+                const targetModelId = imageModal.modelId;
+                setPendingModelImageById((prev) => ({ ...prev, [targetModelId]: nextUrl }));
+                commitVisualChange((prev) => ({
+                  ...prev,
+                  imageOverrides: {
+                    ...prev.imageOverrides,
+                    [`model_${targetModelId}`]: nextUrl,
+                  },
+                }));
+              } else if (imageModal.kind === 'custom_block') {
+                updateCustomBlockData(imageModal.blockId, { image_url: nextUrl });
+              }
+            }}
+          />
+        </Suspense>
       )}
 
       {/* Modal Políticas e Termos */}

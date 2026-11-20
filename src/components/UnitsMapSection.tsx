@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
+  APILoadingStatus,
   APIProvider,
-  AdvancedMarker,
-  InfoWindow,
   Map as GoogleMap,
-  Pin,
-  useAdvancedMarkerRef,
+  useApiIsLoaded,
+  useApiLoadingStatus,
   useMap,
   useMapsLibrary,
 } from '@vis.gl/react-google-maps';
@@ -73,7 +73,13 @@ function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteO
   useEffect(() => {
     if (!routesLib || !map || !origin || !destination) return;
 
-    polylinesRef.current.forEach((p) => p.setMap(null));
+    polylinesRef.current.forEach((p) => {
+      try {
+        p.setMap(null);
+      } catch {
+        // Ignore polyline cleanup errors when map instance is already torn down
+      }
+    });
     polylinesRef.current = [];
 
     let cancelled = false;
@@ -144,7 +150,13 @@ function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteO
 
     return () => {
       cancelled = true;
-      polylinesRef.current.forEach((p) => p.setMap(null));
+      polylinesRef.current.forEach((p) => {
+        try {
+          p.setMap(null);
+        } catch {
+          // Ignore polyline cleanup errors on unmount
+        }
+      });
       polylinesRef.current = [];
     };
   }, [routesLib, map, origin, destination, travelMode, onRouteResult]);
@@ -237,6 +249,240 @@ function UnitAddressGeocoder({
   return null;
 }
 
+function isValidGoogleMapsApiKey(rawKey?: string | null): boolean {
+  const key = (rawKey || '').trim();
+  if (!key || key.length < 20) return false;
+  const upper = key.toUpperCase();
+  if (
+    upper.includes('MY_API_KEY') ||
+    upper.includes('YOUR_API_KEY') ||
+    upper.includes('REPLACE') ||
+    upper.includes('PLACEHOLDER')
+  ) {
+    return false;
+  }
+  return /^AIza[0-9A-Za-z_-]{20,}$/.test(key);
+}
+
+function MapReadyGuard({ children }: { children: React.ReactNode }) {
+  const map = useMap();
+  const apiIsLoaded = useApiIsLoaded();
+  if (!apiIsLoaded || !map) return null;
+  return <>{children}</>;
+}
+
+function MapStatusAwareRenderer({
+  mapsUnavailable,
+  onUnavailable,
+  renderGridContent,
+}: {
+  mapsUnavailable: boolean;
+  onUnavailable: () => void;
+  renderGridContent: (mode: 'ready' | 'loading' | 'fallback') => React.ReactNode;
+}) {
+  const status = useApiLoadingStatus();
+
+  useEffect(() => {
+    if (status === APILoadingStatus.FAILED || status === APILoadingStatus.AUTH_FAILURE) {
+      onUnavailable();
+    }
+  }, [status, onUnavailable]);
+
+  if (
+    mapsUnavailable ||
+    status === APILoadingStatus.FAILED ||
+    status === APILoadingStatus.AUTH_FAILURE
+  ) {
+    return <>{renderGridContent('fallback')}</>;
+  }
+
+  if (status !== APILoadingStatus.LOADED) {
+    return <>{renderGridContent('loading')}</>;
+  }
+
+  return <>{renderGridContent('ready')}</>;
+}
+
+function SafePinMarker({
+  position,
+  title,
+  background,
+  borderColor = '#FFFFFF',
+  glyphColor = '#FFFFFF',
+  scale = 1.0,
+  onClick,
+  onMarkerChange,
+}: {
+  position: google.maps.LatLngLiteral;
+  title: string;
+  background: string;
+  borderColor?: string;
+  glyphColor?: string;
+  scale?: number;
+  onClick?: () => void;
+  onMarkerChange?: (marker: google.maps.marker.AdvancedMarkerElement | null) => void;
+}) {
+  const map = useMap();
+  const apiIsLoaded = useApiIsLoaded();
+  const markerLib = useMapsLibrary('marker');
+  const markerRef = useRef<google.maps.marker.AdvancedMarkerElement | null>(null);
+  const pinRef = useRef<google.maps.marker.PinElement | null>(null);
+  const onClickRef = useRef(onClick);
+  onClickRef.current = onClick;
+  const onMarkerChangeRef = useRef(onMarkerChange);
+  onMarkerChangeRef.current = onMarkerChange;
+
+  useEffect(() => {
+    const authFailed =
+      typeof window !== 'undefined' &&
+      Boolean((window as Window & { __rodaleveGmpAuthFailed?: boolean }).__rodaleveGmpAuthFailed);
+
+    if (
+      authFailed ||
+      !apiIsLoaded ||
+      !map ||
+      !markerLib?.AdvancedMarkerElement ||
+      !markerLib?.PinElement
+    ) {
+      return;
+    }
+
+    try {
+      const mapDiv = typeof map.getDiv === 'function' ? map.getDiv() : null;
+      if (!mapDiv || !mapDiv.isConnected) return;
+    } catch {
+      return;
+    }
+
+    let marker: google.maps.marker.AdvancedMarkerElement | null = null;
+    let pin: google.maps.marker.PinElement | null = null;
+    let clickListener: google.maps.MapsEventListener | null = null;
+
+    try {
+      pin = new markerLib.PinElement({
+        background,
+        borderColor,
+        glyphColor,
+        scale,
+      });
+      pinRef.current = pin;
+
+      marker = new markerLib.AdvancedMarkerElement({
+        map,
+        position,
+        title,
+      });
+      marker.append(pin);
+
+      if (onClickRef.current && typeof marker.addListener === 'function') {
+        clickListener = marker.addListener('click', () => {
+          onClickRef.current?.();
+        });
+      }
+      markerRef.current = marker;
+      onMarkerChangeRef.current?.(marker);
+    } catch {
+      // Ignore transient Google Maps marker initialization failures (e.g. auth failure)
+    }
+
+    return () => {
+      onMarkerChangeRef.current?.(null);
+      try {
+        clickListener?.remove();
+      } catch {
+        // Ignore listener cleanup errors
+      }
+      try {
+        if (marker) {
+          marker.map = null;
+        }
+      } catch {
+        // Guard against Google Maps marker.js getRootNode error when map tears down
+      }
+      try {
+        pin?.remove();
+      } catch {
+        // Ignore DOM cleanup errors
+      }
+      markerRef.current = null;
+      pinRef.current = null;
+    };
+  }, [apiIsLoaded, map, markerLib]);
+
+  useEffect(() => {
+    try {
+      if (markerRef.current) {
+        markerRef.current.position = position;
+        markerRef.current.title = title;
+      }
+      if (pinRef.current) {
+        pinRef.current.background = background;
+        pinRef.current.borderColor = borderColor;
+        pinRef.current.glyphColor = glyphColor;
+        pinRef.current.scale = scale;
+      }
+    } catch {
+      // Ignore transient property update failures
+    }
+  }, [position, title, background, borderColor, glyphColor, scale]);
+
+  return null;
+}
+
+function SafeInfoWindow({
+  anchor,
+  onCloseClick,
+  children,
+}: {
+  anchor: google.maps.marker.AdvancedMarkerElement;
+  onCloseClick: () => void;
+  children: React.ReactNode;
+}) {
+  const map = useMap();
+  const mapsLib = useMapsLibrary('maps');
+  const [contentContainer, setContentContainer] = useState<HTMLDivElement | null>(null);
+  const onCloseClickRef = useRef(onCloseClick);
+  onCloseClickRef.current = onCloseClick;
+
+  useEffect(() => {
+    if (!map || !mapsLib?.InfoWindow || !anchor) return;
+
+    const container = document.createElement('div');
+    setContentContainer(container);
+
+    let infoWindow: google.maps.InfoWindow | null = null;
+    let closeListener: google.maps.MapsEventListener | null = null;
+
+    try {
+      infoWindow = new mapsLib.InfoWindow({ content: container });
+      closeListener = infoWindow.addListener('closeclick', () => {
+        onCloseClickRef.current();
+      });
+      infoWindow.open({ map, anchor, shouldFocus: false });
+    } catch {
+      // Ignore transient Google Maps InfoWindow failures
+    }
+
+    return () => {
+      try {
+        closeListener?.remove();
+      } catch {
+        // Ignore listener cleanup errors
+      }
+      try {
+        infoWindow?.set('anchor', null);
+        infoWindow?.close();
+      } catch {
+        // Ignore InfoWindow unmount errors
+      }
+      setContentContainer(null);
+    };
+  }, [map, mapsLib, anchor]);
+
+  if (!contentContainer) return null;
+  return createPortal(children, contentContainer);
+}
+
 function UnitMarker({
   unit,
   position,
@@ -254,25 +500,22 @@ function UnitMarker({
   onSelect: () => void;
   onCloseInfo: () => void;
 }) {
-  const [markerRef, marker] = useAdvancedMarkerRef();
+  const [marker, setMarker] = useState<google.maps.marker.AdvancedMarkerElement | null>(null);
 
   return (
     <>
-      <AdvancedMarker
-        ref={markerRef}
+      <SafePinMarker
         position={position}
-        onClick={onSelect}
         title={unit.name}
-      >
-        <Pin
-          background={isSelected ? '#E4002B' : '#18181B'}
-          borderColor="#FFFFFF"
-          glyphColor="#FFFFFF"
-          scale={isSelected ? 1.25 : 1.05}
-        />
-      </AdvancedMarker>
+        background={isSelected ? '#E4002B' : '#18181B'}
+        borderColor="#FFFFFF"
+        glyphColor="#FFFFFF"
+        scale={isSelected ? 1.25 : 1.05}
+        onClick={onSelect}
+        onMarkerChange={setMarker}
+      />
       {isInfoOpen && marker && (
-        <InfoWindow anchor={marker} onCloseClick={onCloseInfo}>
+        <SafeInfoWindow anchor={marker} onCloseClick={onCloseInfo}>
           <div className="min-w-[220px] p-1 text-neutral-900">
             <p className="text-sm font-bold text-neutral-900">{unit.name}</p>
             <p className="mt-1 text-xs text-neutral-600">{formatUnitAddress(unit)}</p>
@@ -285,13 +528,13 @@ function UnitMarker({
                 href={unit.gmb_url || buildDirectMapsUrl(unit)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs font-semibold text-[#E4002B] hover:underline"
+                className="text-xs font-semibold text-[#C80024] hover:underline"
               >
                 {openInMapsLabel}
               </a>
             </div>
           </div>
-        </InfoWindow>
+        </SafeInfoWindow>
       )}
     </>
   );
@@ -502,7 +745,7 @@ function OriginAutocompleteInput({
   return (
     <div ref={containerRef} className="relative">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-600 dark:text-neutral-300" />
         <input
           type="text"
           value={value}
@@ -515,10 +758,10 @@ function OriginAutocompleteInput({
           placeholder={placeholder}
           aria-autocomplete="list"
           aria-expanded={isOpen}
-          className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-9 pr-9 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
+          className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-9 pr-9 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-[#D00027] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-neutral-400"
         />
         {isLoading ? (
-          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-neutral-400" />
+          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-neutral-600 dark:text-neutral-300" />
         ) : value ? (
           <button
             type="button"
@@ -528,7 +771,7 @@ function OriginAutocompleteInput({
               onClear();
             }}
             aria-label={clearAddressLabel}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -554,13 +797,13 @@ function OriginAutocompleteInput({
                     : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/70'
                 }`}
               >
-                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
+                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#D00027]" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-xs font-semibold text-neutral-900 dark:text-white">
                     {item.mainText}
                   </p>
                   {item.secondaryText && (
-                    <p className="truncate text-[11px] text-neutral-500 dark:text-neutral-400">
+                    <p className="truncate text-[11px] text-neutral-600 dark:text-neutral-300">
                       {item.secondaryText}
                     </p>
                   )}
@@ -644,6 +887,9 @@ export function UnitsMapSection({
       : false
   );
 
+  const sectionRef = useRef<HTMLElement | null>(null);
+  const [shouldLoadMaps, setShouldLoadMaps] = useState(false);
+
   useEffect(() => {
     const globallyFailed =
       typeof window !== 'undefined' &&
@@ -660,6 +906,26 @@ export function UnitsMapSection({
       window.removeEventListener('gmp-quota-exceeded', onUnavailable);
     };
   }, []);
+
+  useEffect(() => {
+    if (shouldLoadMaps) return;
+    const el = sectionRef.current;
+    if (!el || typeof IntersectionObserver === 'undefined') {
+      setShouldLoadMaps(true);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoadMaps(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '400px 0px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [shouldLoadMaps]);
 
   const safeUnits = Array.isArray(units) ? units : [];
   const activeUnit = safeUnits.find((u) => u.id === selectedTab) || safeUnits[0];
@@ -680,11 +946,13 @@ export function UnitsMapSection({
   }, [safeUnits, geocodedCoords]);
 
   const handleFocusOnMap = useCallback((unitId: string) => {
+    setShouldLoadMaps(true);
     setSelectedTab(unitId);
     setInfoOpenUnitId(unitId);
   }, []);
 
   const handleUseMyLocation = () => {
+    setShouldLoadMaps(true);
     if (!navigator.geolocation) {
       setRouteError(dict.geoUnsupported);
       return;
@@ -708,6 +976,7 @@ export function UnitsMapSection({
 
   const handleTraceRoute = (e: React.FormEvent) => {
     e.preventDefault();
+    setShouldLoadMaps(true);
     if (!originInput.trim()) {
       setRouteError(dict.originRequiredError);
       return;
@@ -729,9 +998,24 @@ export function UnitsMapSection({
     []
   );
 
+  const effectiveMapsApiKey = useMemo(() => {
+    const fromProps = (mapsApiKey || '').trim();
+    if (fromProps) return fromProps;
+    try {
+      return (import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
+    } catch {
+      return '';
+    }
+  }, [mapsApiKey]);
+
+  const handleMarkUnavailable = useCallback(() => {
+    setMapsUnavailable(true);
+  }, []);
+
   if (safeUnits.length === 0 || !activeUnit) return null;
 
-  const canRenderInteractiveMap = mapsActive && Boolean(mapsApiKey) && !mapsUnavailable;
+  const hasValidKey = isValidGoogleMapsApiKey(effectiveMapsApiKey);
+  const canLoadInteractiveMap = mapsActive && hasValidKey && !mapsUnavailable;
   const visibleUnits =
     selectedTab === 'both' ? safeUnits : safeUnits.filter((u) => u.id === activeUnit.id);
   const activeUnitCoords = coordsById[activeUnit.id] || {
@@ -741,294 +1025,355 @@ export function UnitsMapSection({
   const originMarkerCoords =
     activeOrigin && typeof activeOrigin === 'object' ? activeOrigin : null;
 
-  const renderGridContent = (interactiveMapActive: boolean) => (
-    <div className="mt-8 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
-      {/* Left Column: Route Planner + Unit Card(s) */}
-      <div className="flex flex-col gap-5 lg:col-span-5">
-        {/* Route Card */}
-        <form
-          onSubmit={handleTraceRoute}
-          className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-5 dark:border-neutral-800 dark:bg-neutral-900"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-              {dict.unitsRouteTitle(activeUnit?.city || activeUnit?.name || '')}
-            </h3>
-            <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
-              <button
-                type="button"
-                onClick={() => setTravelMode('moto')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  travelMode === 'moto'
-                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                    : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
-                }`}
-              >
-                <Bike className="h-3.5 w-3.5" />
-                {dict.modeMoto}
-              </button>
-              <button
-                type="button"
-                onClick={() => setTravelMode('carro')}
-                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  travelMode === 'carro'
-                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                    : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
-                }`}
-              >
-                <Car className="h-3.5 w-3.5" />
-                {dict.modeCar}
-              </button>
-            </div>
-          </div>
-
-          <div className="mt-3.5 space-y-2.5">
-            {interactiveMapActive ? (
-              <OriginAutocompleteInput
-                value={originInput}
-                onChange={(next) => setOriginInput(next)}
-                onSelectOrigin={(label, origin) => {
-                  setOriginInput(label);
-                  setRouteError(null);
-                  setActiveOrigin(origin);
-                }}
-                onClear={() => {
-                  setOriginInput('');
-                  setActiveOrigin(null);
-                  setRouteSummary(null);
-                  setRouteError(null);
-                }}
-                biasCenter={activeUnitCoords}
-                placeholder={dict.originPlaceholder}
-                clearAddressLabel={dict.clearAddress}
-              />
-            ) : (
-              <input
-                type="text"
-                value={originInput}
-                onChange={(e) => setOriginInput(e.target.value)}
-                placeholder={dict.originPlaceholderFallback}
-                className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
-              />
-            )}
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleUseMyLocation}
-                disabled={locating}
-                className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
-              >
-                <Crosshair className="h-3.5 w-3.5 text-[#E4002B]" />
-                {locating ? dict.locating : dict.useMyLocation}
-              </button>
-
-              <button
-                type="submit"
-                className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
-              >
-                <Navigation className="h-3.5 w-3.5" />
-                {dict.traceRouteBtn}
-              </button>
-            </div>
-          </div>
-
-          {routeSummary && (
-            <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
-              <span className="font-medium">{dict.routeCalculated(travelMode)}</span>
-              <span className="font-mono font-semibold tabular-nums">
-                {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
-              </span>
-            </div>
-          )}
-
-          {routeError && (
-            <p className="mt-2.5 text-xs font-medium text-[#E4002B]">{routeError}</p>
-          )}
-        </form>
-
-        {/* Unit Details Cards */}
-        <div className="flex flex-col gap-3">
-          {visibleUnits.map((unit) => (
-            <div
-              key={unit.id}
-              className="rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h4 className="text-base font-bold text-neutral-900 dark:text-white">
-                    {unit.name}
-                  </h4>
-                  <p className="mt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400">
-                    CNPJ {unit.cnpj}
-                  </p>
-                </div>
-                <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
-                  {Number(unit.rating ?? 4.8).toFixed(1)}
-                  <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                </span>
-              </div>
-
-              <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
-                <p className="flex items-start gap-2">
-                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
-                  <span>{formatUnitAddress(unit)}</span>
-                </p>
-                <p className="flex items-center gap-2">
-                  <Phone className="h-4 w-4 shrink-0 text-neutral-400" />
-                  <a
-                    href={`tel:${(unit.phone || '').replace(/\D/g, '')}`}
-                    className="tabular-nums hover:underline"
-                  >
-                    {unit.phone}
-                  </a>
-                </p>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2">
+  const renderGridContent = (mapMode: 'ready' | 'loading' | 'fallback' | 'deferred') => {
+    const interactiveMapActive = mapMode === 'ready';
+    return (
+      <div className="mt-8 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
+        {/* Left Column: Route Planner + Unit Card(s) */}
+        <div className="flex flex-col gap-5 lg:col-span-5">
+          {/* Route Card */}
+          <form
+            onSubmit={handleTraceRoute}
+            className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-5 dark:border-neutral-800 dark:bg-neutral-900"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
+                {dict.unitsRouteTitle(activeUnit?.city || activeUnit?.name || '')}
+              </h3>
+              <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
                 <button
                   type="button"
-                  onClick={() => handleFocusOnMap(unit.id)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                  onClick={() => setTravelMode('moto')}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    travelMode === 'moto'
+                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                      : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                  }`}
                 >
-                  <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
-                  {dict.focusOnMap}
+                  <Bike className="h-3.5 w-3.5" />
+                  {dict.modeMoto}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTravelMode('carro')}
+                  className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                    travelMode === 'carro'
+                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                      : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                  }`}
+                >
+                  <Car className="h-3.5 w-3.5" />
+                  {dict.modeCar}
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-3.5 space-y-2.5">
+              {interactiveMapActive ? (
+                <OriginAutocompleteInput
+                  value={originInput}
+                  onChange={(next) => setOriginInput(next)}
+                  onSelectOrigin={(label, origin) => {
+                    setOriginInput(label);
+                    setRouteError(null);
+                    setActiveOrigin(origin);
+                  }}
+                  onClear={() => {
+                    setOriginInput('');
+                    setActiveOrigin(null);
+                    setRouteSummary(null);
+                    setRouteError(null);
+                  }}
+                  biasCenter={activeUnitCoords}
+                  placeholder={dict.originPlaceholder}
+                  clearAddressLabel={dict.clearAddress}
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={originInput}
+                  onFocus={() => setShouldLoadMaps(true)}
+                  onChange={(e) => {
+                    setShouldLoadMaps(true);
+                    setOriginInput(e.target.value);
+                  }}
+                  placeholder={dict.originPlaceholderFallback}
+                  className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-[#D00027] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-neutral-400"
+                />
+              )}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleUseMyLocation}
+                  disabled={locating}
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                >
+                  <Crosshair className="h-3.5 w-3.5 text-[#C80024] dark:text-[#ff4d6d]" />
+                  {locating ? dict.locating : dict.useMyLocation}
+                </button>
+
+                <button
+                  type="submit"
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
+                >
+                  <Navigation className="h-3.5 w-3.5" />
+                  {dict.traceRouteBtn}
+                </button>
+              </div>
+            </div>
+
+            {routeSummary && (
+              <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+                <span className="font-medium">{dict.routeCalculated(travelMode)}</span>
+                <span className="font-mono font-semibold tabular-nums">
+                  {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
+                </span>
+              </div>
+            )}
+
+            {routeError && (
+              <p className="mt-2.5 text-xs font-medium text-[#C80024] dark:text-[#ff4d6d]">{routeError}</p>
+            )}
+          </form>
+
+          {/* Unit Details Cards */}
+          <div className="flex flex-col gap-3">
+            {visibleUnits.map((unit) => (
+              <div
+                key={unit.id}
+                className="rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="text-base font-bold text-neutral-900 dark:text-white">
+                      {unit.name}
+                    </h4>
+                    <p className="mt-0.5 font-mono text-xs text-neutral-600 dark:text-neutral-300">
+                      CNPJ {unit.cnpj}
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
+                    {Number(unit.rating ?? 4.8).toFixed(1)}
+                    <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                  </span>
+                </div>
+
+                <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                  <p className="flex items-start gap-2">
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#D00027]" />
+                    <span>{formatUnitAddress(unit)}</span>
+                  </p>
+                  <p className="flex items-center gap-2">
+                    <Phone className="h-4 w-4 shrink-0 text-neutral-600 dark:text-neutral-300" />
+                    <a
+                      href={`tel:${(unit.phone || '').replace(/\D/g, '')}`}
+                      className="tabular-nums hover:underline"
+                    >
+                      {unit.phone}
+                    </a>
+                  </p>
+                </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleFocusOnMap(unit.id)}
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                  >
+                    <MapPin className="h-3.5 w-3.5 text-[#C80024] dark:text-[#ff4d6d]" />
+                    {dict.focusOnMap}
+                  </button>
+                  <a
+                    href={unit.gmb_url || buildDirectMapsUrl(unit)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                  >
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    {dict.openInMaps}
+                  </a>
+                  <a
+                    href={buildWhatsAppHref(
+                      getUnitWhatsAppNumber(unit),
+                      `Olá, Rodaleve ${unit.city}! Gostaria de informações sobre revisão Honda.`
+                    )}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#15803D] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#166534]"
+                  >
+                    <WhatsAppIcon className="h-3.5 w-3.5" />
+                    WhatsApp
+                  </a>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Right Column: Interactive Google Map */}
+        <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
+          {mapMode === 'ready' ? (
+            <>
+              {/* Map/Satellite switcher */}
+              <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
+                <button
+                  type="button"
+                  onClick={() => setMapTypeId('roadmap')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    mapTypeId === 'roadmap'
+                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                      : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                  }`}
+                >
+                  {dict.mapView}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMapTypeId('satellite')}
+                  className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                    mapTypeId === 'satellite'
+                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                      : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                  }`}
+                >
+                  {dict.satelliteView}
+                </button>
+              </div>
+
+              <div className="h-[460px] w-full flex-1 lg:h-full">
+                <GoogleMap
+                  defaultCenter={activeUnitCoords}
+                  defaultZoom={16}
+                  mapId="DEMO_MAP_ID"
+                  mapTypeId={mapTypeId}
+                  gestureHandling="greedy"
+                  disableDefaultUI={false}
+                  streetViewControl={false}
+                  mapTypeControl={false}
+                  internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                  style={{ width: '100%', height: '100%' }}
+                >
+                  <MapReadyGuard>
+                    <UnitAddressGeocoder units={safeUnits} onResolved={handleGeocoded} />
+                    <MapCameraController
+                      units={safeUnits}
+                      coordsById={coordsById}
+                      selectedTab={selectedTab}
+                    />
+                    {originMarkerCoords && (
+                      <SafePinMarker
+                        position={originMarkerCoords}
+                        title={dict.yourStartPoint}
+                        background="#16A34A"
+                        borderColor="#FFFFFF"
+                        glyphColor="#FFFFFF"
+                        scale={1.0}
+                      />
+                    )}
+                    {safeUnits.map((u) => (
+                      <UnitMarker
+                        key={u.id}
+                        unit={u}
+                        position={coordsById[u.id] || { lat: u.lat, lng: u.lng }}
+                        isSelected={
+                          selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)
+                        }
+                        isInfoOpen={infoOpenUnitId === u.id}
+                        openInMapsLabel={dict.openInMaps}
+                        onSelect={() => {
+                          setSelectedTab(u.id);
+                          setInfoOpenUnitId(u.id);
+                        }}
+                        onCloseInfo={() => setInfoOpenUnitId(null)}
+                      />
+                    ))}
+                    {activeOrigin && activeUnit && (
+                      <RouteOverlay
+                        origin={activeOrigin}
+                        destination={activeUnitCoords}
+                        travelMode={travelMode}
+                        onRouteResult={handleRouteResult}
+                      />
+                    )}
+                  </MapReadyGuard>
+                </GoogleMap>
+              </div>
+            </>
+          ) : mapMode === 'loading' ? (
+            <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-[#D00027]" />
+              <p className="mt-3 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+                Carregando mapa interativo...
+              </p>
+              <a
+                href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+                {dict.openCityInMaps(activeUnit.city)}
+              </a>
+            </div>
+          ) : mapMode === 'deferred' ? (
+            <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
+              <MapPin className="h-10 w-10 text-[#D00027]" />
+              <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
+                {activeUnit.name}
+              </h4>
+              <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-300">
+                {formatUnitAddress(activeUnit)}
+              </p>
+              <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setShouldLoadMaps(true)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#D00027] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#B80022]"
+                >
+                  <MapPin className="h-4 w-4" />
+                  Carregar mapa interativo
                 </button>
                 <a
-                  href={unit.gmb_url || buildDirectMapsUrl(unit)}
+                  href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                  className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
                 >
-                  <ExternalLink className="h-3.5 w-3.5" />
-                  {dict.openInMaps}
-                </a>
-                <a
-                  href={buildWhatsAppHref(
-                    getUnitWhatsAppNumber(unit),
-                    `Olá, Rodaleve ${unit.city}! Gostaria de informações sobre revisão Honda.`
-                  )}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#25D366] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1FB858]"
-                >
-                  <WhatsAppIcon className="h-3.5 w-3.5" />
-                  WhatsApp
+                  <ExternalLink className="h-4 w-4" />
+                  {dict.openCityInMaps(activeUnit.city)}
                 </a>
               </div>
             </div>
-          ))}
+          ) : (
+            <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
+              <MapPin className="h-10 w-10 text-[#D00027]" />
+              <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
+                {dict.directMapsTitle}
+              </h4>
+              <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-300">
+                {dict.directMapsDesc(activeUnit.name, formatUnitAddress(activeUnit))}
+              </p>
+              <a
+                href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#D00027] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#B80022]"
+              >
+                <ExternalLink className="h-4 w-4" />
+                {dict.openCityInMaps(activeUnit.city)}
+              </a>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* Right Column: Interactive Google Map */}
-      <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
-        {interactiveMapActive ? (
-          <>
-            {/* Map/Satellite switcher */}
-            <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
-              <button
-                type="button"
-                onClick={() => setMapTypeId('roadmap')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  mapTypeId === 'roadmap'
-                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                    : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
-                }`}
-              >
-                {dict.mapView}
-              </button>
-              <button
-                type="button"
-                onClick={() => setMapTypeId('satellite')}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                  mapTypeId === 'satellite'
-                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                    : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
-                }`}
-              >
-                {dict.satelliteView}
-              </button>
-            </div>
-
-            <div className="h-[460px] w-full flex-1 lg:h-full">
-              <GoogleMap
-                defaultCenter={activeUnitCoords}
-                defaultZoom={16}
-                mapId="DEMO_MAP_ID"
-                mapTypeId={mapTypeId}
-                gestureHandling="greedy"
-                disableDefaultUI={false}
-                streetViewControl={false}
-                mapTypeControl={false}
-                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                style={{ width: '100%', height: '100%' }}
-              >
-                <UnitAddressGeocoder units={safeUnits} onResolved={handleGeocoded} />
-                <MapCameraController units={safeUnits} coordsById={coordsById} selectedTab={selectedTab} />
-                {originMarkerCoords && (
-                  <AdvancedMarker position={originMarkerCoords} title={dict.yourStartPoint}>
-                    <Pin
-                      background="#16A34A"
-                      borderColor="#FFFFFF"
-                      glyphColor="#FFFFFF"
-                      scale={1.0}
-                    />
-                  </AdvancedMarker>
-                )}
-                {safeUnits.map((u) => (
-                  <UnitMarker
-                    key={u.id}
-                    unit={u}
-                    position={coordsById[u.id] || { lat: u.lat, lng: u.lng }}
-                    isSelected={selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)}
-                    isInfoOpen={infoOpenUnitId === u.id}
-                    openInMapsLabel={dict.openInMaps}
-                    onSelect={() => {
-                      setSelectedTab(u.id);
-                      setInfoOpenUnitId(u.id);
-                    }}
-                    onCloseInfo={() => setInfoOpenUnitId(null)}
-                  />
-                ))}
-                {activeOrigin && activeUnit && (
-                  <RouteOverlay
-                    origin={activeOrigin}
-                    destination={activeUnitCoords}
-                    travelMode={travelMode}
-                    onRouteResult={handleRouteResult}
-                  />
-                )}
-              </GoogleMap>
-            </div>
-          </>
-        ) : (
-          <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
-            <MapPin className="h-10 w-10 text-[#E4002B]" />
-            <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
-              {dict.directMapsTitle}
-            </h4>
-            <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
-              {dict.directMapsDesc(activeUnit.name, formatUnitAddress(activeUnit))}
-            </p>
-            <a
-              href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#E4002B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#C80024]"
-            >
-              <ExternalLink className="h-4 w-4" />
-              {dict.openCityInMaps(activeUnit.city)}
-            </a>
-          </div>
-        )}
-      </div>
-    </div>
-  );
+    );
+  };
 
   return (
     <section
       id="unidades"
+      ref={sectionRef}
       className="border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
     >
       <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
@@ -1037,7 +1382,7 @@ export function UnitsMapSection({
             {renderEyebrow ? (
               renderEyebrow()
             ) : (
-              <p className="text-xs font-bold uppercase tracking-widest text-[#E4002B]">
+              <p className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]">
                 Onde estamos
               </p>
             )}
@@ -1051,7 +1396,7 @@ export function UnitsMapSection({
             {renderSubtitle ? (
               renderSubtitle()
             ) : (
-              <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+              <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
                 Localize nossas concessionárias autorizadas em Vitória da Conquista e Guanambi.
               </p>
             )}
@@ -1066,12 +1411,13 @@ export function UnitsMapSection({
                   key={u.id}
                   type="button"
                   onClick={() => {
+                    setShouldLoadMaps(true);
                     setSelectedTab(u.id);
                     setInfoOpenUnitId(u.id);
                   }}
                   className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
                     active
-                      ? 'bg-[#E4002B] text-white shadow-sm'
+                      ? 'bg-[#D00027] text-white shadow-sm'
                       : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
                   }`}
                 >
@@ -1081,10 +1427,13 @@ export function UnitsMapSection({
             })}
             <button
               type="button"
-              onClick={() => setSelectedTab('both')}
+              onClick={() => {
+                setShouldLoadMaps(true);
+                setSelectedTab('both');
+              }}
               className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
                 selectedTab === 'both'
-                  ? 'bg-[#E4002B] text-white shadow-sm'
+                  ? 'bg-[#D00027] text-white shadow-sm'
                   : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
               }`}
             >
@@ -1093,28 +1442,36 @@ export function UnitsMapSection({
           </div>
         </div>
 
-        {canRenderInteractiveMap ? (
-          <ErrorBoundary
-            screenName="Mapa das Unidades"
-            onError={(err) => {
-              console.error('[UnitsMapSection] Erro no mapa interativo:', err);
-              setMapsUnavailable(true);
-            }}
-            fallback={renderGridContent(false)}
-          >
-            <APIProvider
-              apiKey={mapsApiKey}
-              language={(LANGUAGE_META[language] || LANGUAGE_META.pt).htmlLang}
-              region="BR"
-              libraries={['marker', 'routes', 'geocoding', 'places']}
-              onError={() => setMapsUnavailable(true)}
-            >
-              {renderGridContent(true)}
-            </APIProvider>
-          </ErrorBoundary>
-        ) : (
-          renderGridContent(false)
-        )}
+        <ErrorBoundary
+          screenName="Mapa das Unidades"
+          onError={(err) => {
+            console.error('[UnitsMapSection] Erro no mapa interativo:', err);
+            setMapsUnavailable(true);
+          }}
+          fallback={renderGridContent('fallback')}
+        >
+          {canLoadInteractiveMap ? (
+            shouldLoadMaps ? (
+              <APIProvider
+                apiKey={effectiveMapsApiKey}
+                language={(LANGUAGE_META[language] || LANGUAGE_META.pt).htmlLang}
+                region="BR"
+                libraries={['marker', 'routes', 'geocoding', 'places']}
+                onError={handleMarkUnavailable}
+              >
+                <MapStatusAwareRenderer
+                  mapsUnavailable={mapsUnavailable}
+                  onUnavailable={handleMarkUnavailable}
+                  renderGridContent={renderGridContent}
+                />
+              </APIProvider>
+            ) : (
+              renderGridContent('deferred')
+            )
+          ) : (
+            renderGridContent('fallback')
+          )}
+        </ErrorBoundary>
       </div>
     </section>
   );

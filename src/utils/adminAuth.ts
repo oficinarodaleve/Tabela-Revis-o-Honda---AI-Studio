@@ -1,5 +1,3 @@
-import { auth } from '../lib/firebase';
-
 // Token JWT do Firebase mantido exclusivamente em memória (nunca em localStorage/sessionStorage)
 let memoryToken: string | null = null;
 
@@ -20,13 +18,14 @@ export async function adminFetch(
   init: RequestInit = {}
 ): Promise<Response> {
   let token = memoryToken;
-  if (auth.currentUser) {
-    try {
+  try {
+    const { auth } = await import('../lib/firebase');
+    if (auth.currentUser) {
       token = await auth.currentUser.getIdToken();
       memoryToken = token;
-    } catch {
-      // Mantém token atual em memória caso a atualização falhe
     }
+  } catch {
+    // Mantém token atual em memória caso a atualização falhe
   }
 
   const headers = new Headers(init.headers);

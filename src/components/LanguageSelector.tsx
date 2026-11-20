@@ -138,7 +138,7 @@ export function LanguageSelector({ language, onChange }: LanguageSelectorProps) 
                 }}
                 className={`flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs transition-colors ${
                   isSelected
-                    ? 'bg-red-50 font-bold text-[#E4002B] dark:bg-red-950/40 dark:text-[#ff4d6d]'
+                    ? 'bg-red-50 font-bold text-[#C80024] dark:bg-red-950/40 dark:text-[#ff4d6d]'
                     : 'font-medium text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800'
                 }`}
               >
@@ -149,12 +149,12 @@ export function LanguageSelector({ language, onChange }: LanguageSelectorProps) 
                 <span className="flex items-center gap-1.5">
                   <span
                     className={`font-mono text-[11px] font-bold ${
-                      isSelected ? 'text-[#E4002B] dark:text-[#ff4d6d]' : 'text-neutral-400'
+                      isSelected ? 'text-[#C80024] dark:text-[#ff4d6d]' : 'text-neutral-600 dark:text-neutral-300'
                     }`}
                   >
                     {opt.code}
                   </span>
-                  {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-[#E4002B] dark:text-[#ff4d6d]" />}
+                  {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-[#C80024] dark:text-[#ff4d6d]" />}
                 </span>
               </button>
             );

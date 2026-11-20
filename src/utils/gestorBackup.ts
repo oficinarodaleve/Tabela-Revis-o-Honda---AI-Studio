@@ -1,4 +1,4 @@
-import JSZip from 'jszip';
+import type JSZipType from 'jszip';
 import {
   FaqItem,
   IntegrationsData,
@@ -356,6 +356,7 @@ export function exportGestorConfigJson(source: GestorExportSource): string {
 }
 
 export async function exportGestorBackupZip(source: GestorExportSource): Promise<string> {
+  const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
   const dateSlug = new Date().toISOString().slice(0, 10);
   const files = buildGestorBackupFiles(source);
@@ -515,8 +516,9 @@ export async function parseAndValidateBackupFile(file: File): Promise<ParsedBack
   }
 
   if (lower.endsWith('.zip')) {
-    let zip: JSZip;
+    let zip: JSZipType;
     try {
+      const { default: JSZip } = await import('jszip');
       zip = await JSZip.loadAsync(file);
     } catch {
       throw new Error('Não foi possível abrir o arquivo .zip. Verifique se o pacote não está corrompido.');

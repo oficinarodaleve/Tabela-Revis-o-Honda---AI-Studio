@@ -459,10 +459,6 @@ export function initAllTrackingPixels(
 ): void {
   if (!seo && !trackingConfig) return;
 
-  if (trackingConfig?.gtm?.enabled && trackingConfig.gtm.container_id) {
-    initGtm(trackingConfig.gtm.container_id);
-  }
-
   if (trackingConfig?.meta_pixel?.enabled && trackingConfig.meta_pixel.domain_verification) {
     syncMetaDomainVerification(trackingConfig.meta_pixel.domain_verification);
   } else {
@@ -473,9 +469,28 @@ export function initAllTrackingPixels(
     trackingConfig?.google_search_console?.verification_code || ''
   );
 
-  initMetaPixel(resolveEffectiveMetaConfig(seo, trackingConfig));
-  initGoogleTag(resolveEffectiveGoogleTagConfig(seo, trackingConfig));
-  initTikTokPixel(resolveEffectiveTikTokConfig(seo, trackingConfig));
+  const runThirdPartyInits = () => {
+    try {
+      if (trackingConfig?.gtm?.enabled && trackingConfig.gtm.container_id) {
+        initGtm(trackingConfig.gtm.container_id);
+      }
+      initMetaPixel(resolveEffectiveMetaConfig(seo, trackingConfig));
+      initGoogleTag(resolveEffectiveGoogleTagConfig(seo, trackingConfig));
+      initTikTokPixel(resolveEffectiveTikTokConfig(seo, trackingConfig));
+    } catch {
+      // Ignore third-party script initialization errors
+    }
+  };
+
+  if (typeof window === 'undefined') return;
+  const win = window as Window & {
+    requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+  };
+  if (typeof win.requestIdleCallback === 'function') {
+    win.requestIdleCallback(runThirdPartyInits, { timeout: 1800 });
+  } else {
+    window.setTimeout(runThirdPartyInits, 1200);
+  }
 }
 
 export function trackPixelViewContent(

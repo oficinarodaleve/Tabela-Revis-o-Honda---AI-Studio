@@ -205,6 +205,13 @@ app.get('/sitemap.xml', async (_req, res) => {
   }
 });
 
+app.get('/googlefeed0c0c9ebc374e.html', (_req, res) => {
+  res
+    .status(200)
+    .type('text/html; charset=utf-8')
+    .send('google-site-verification: googlefeed0c0c9ebc374e.html');
+});
+
 // Auth endpoints (Firebase Authentication)
 app.post('/api/auth/logout', (_req, res) => {
   res.json({ ok: true });
