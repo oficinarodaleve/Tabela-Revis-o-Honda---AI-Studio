@@ -23,12 +23,15 @@ import {
   X,
 } from 'lucide-react';
 import { UnitLocation } from '../types';
+import { LANGUAGE_META, SiteLanguage, UI_TRANSLATIONS } from '../utils/i18n';
+import { ErrorBoundary } from './ErrorBoundary';
 import { WhatsAppIcon, buildWhatsAppHref, getUnitWhatsAppNumber } from './WhatsAppIcon';
 
 interface UnitsMapSectionProps {
   units: UnitLocation[];
   mapsActive: boolean;
   mapsApiKey: string;
+  language?: SiteLanguage;
   renderEyebrow?: () => React.ReactNode;
   renderTitle?: () => React.ReactNode;
   renderSubtitle?: () => React.ReactNode;
@@ -239,6 +242,7 @@ function UnitMarker({
   position,
   isSelected,
   isInfoOpen,
+  openInMapsLabel,
   onSelect,
   onCloseInfo,
 }: {
@@ -246,6 +250,7 @@ function UnitMarker({
   position: google.maps.LatLngLiteral;
   isSelected: boolean;
   isInfoOpen: boolean;
+  openInMapsLabel: string;
   onSelect: () => void;
   onCloseInfo: () => void;
 }) {
@@ -274,7 +279,7 @@ function UnitMarker({
             <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2">
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
-                {unit.rating.toFixed(1)}
+                {Number(unit.rating ?? 4.8).toFixed(1)}
               </span>
               <a
                 href={unit.gmb_url || buildDirectMapsUrl(unit)}
@@ -282,7 +287,7 @@ function UnitMarker({
                 rel="noopener noreferrer"
                 className="text-xs font-semibold text-[#E4002B] hover:underline"
               >
-                Abrir no Maps
+                {openInMapsLabel}
               </a>
             </div>
           </div>
@@ -307,12 +312,16 @@ function OriginAutocompleteInput({
   onSelectOrigin,
   onClear,
   biasCenter,
+  placeholder,
+  clearAddressLabel,
 }: {
   value: string;
   onChange: (next: string) => void;
   onSelectOrigin: (label: string, origin: string | google.maps.LatLngLiteral) => void;
   onClear: () => void;
   biasCenter: google.maps.LatLngLiteral;
+  placeholder: string;
+  clearAddressLabel: string;
 }) {
   const placesLib = useMapsLibrary('places');
   const geocodingLib = useMapsLibrary('geocoding');
@@ -375,7 +384,7 @@ function OriginAutocompleteInput({
               east: biasCenter.lng + 0.8,
               west: biasCenter.lng - 0.8,
             },
-            internalUsageAttributionIds: ['gmp_git_agentskills_v1'],
+            internalUsageAttributionIds: ['gmp_mcp_codeassist_v1_aistudio'],
           };
           const { suggestions: raw } =
             await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
@@ -503,7 +512,7 @@ function OriginAutocompleteInput({
           }}
           onKeyDown={handleKeyDown}
           autoComplete="off"
-          placeholder="Digite seu endereço, rua ou bairro de partida..."
+          placeholder={placeholder}
           aria-autocomplete="list"
           aria-expanded={isOpen}
           className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-9 pr-9 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
@@ -518,7 +527,7 @@ function OriginAutocompleteInput({
               setIsOpen(false);
               onClear();
             }}
-            aria-label="Limpar endereço"
+            aria-label={clearAddressLabel}
             className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
           >
             <X className="h-3.5 w-3.5" />
@@ -580,15 +589,29 @@ function MapCameraController({
   useEffect(() => {
     if (!map || units.length === 0) return;
 
-    if (selectedTab === 'both' && units.length > 1 && coreLib) {
-      const bounds = new coreLib.LatLngBounds();
-      units.forEach((u) => bounds.extend(coordsById[u.id] || { lat: u.lat, lng: u.lng }));
-      map.fitBounds(bounds, 60);
-    } else {
-      const target = units.find((u) => u.id === selectedTab) || units[0];
-      const pos = coordsById[target.id] || { lat: target.lat, lng: target.lng };
-      map.panTo(pos);
-      map.setZoom(16);
+    try {
+      if (selectedTab === 'both' && units.length > 1 && coreLib) {
+        const bounds = new coreLib.LatLngBounds();
+        units.forEach((u) =>
+          bounds.extend(
+            coordsById[u.id] || {
+              lat: Number(u.lat) || -14.8655,
+              lng: Number(u.lng) || -40.8385,
+            }
+          )
+        );
+        map.fitBounds(bounds, 60);
+      } else {
+        const target = units.find((u) => u.id === selectedTab) || units[0];
+        const pos = coordsById[target.id] || {
+          lat: Number(target.lat) || -14.8655,
+          lng: Number(target.lng) || -40.8385,
+        };
+        map.panTo(pos);
+        map.setZoom(16);
+      }
+    } catch {
+      // Ignore transient Google Maps camera errors when SDK fails to initialize
     }
   }, [map, coreLib, units, coordsById, selectedTab]);
 
@@ -599,10 +622,12 @@ export function UnitsMapSection({
   units,
   mapsActive,
   mapsApiKey,
+  language = 'pt',
   renderEyebrow,
   renderTitle,
   renderSubtitle,
 }: UnitsMapSectionProps) {
+  const dict = UI_TRANSLATIONS[language];
   const [selectedTab, setSelectedTab] = useState<string>(units[0]?.id || 'vitoria-da-conquista');
   const [infoOpenUnitId, setInfoOpenUnitId] = useState<string | null>(units[0]?.id || 'vitoria-da-conquista');
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite'>('roadmap');
@@ -613,8 +638,31 @@ export function UnitsMapSection({
   const [routeError, setRouteError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
   const [geocodedCoords, setGeocodedCoords] = useState<Record<string, google.maps.LatLngLiteral>>({});
+  const [mapsUnavailable, setMapsUnavailable] = useState(() =>
+    typeof window !== 'undefined'
+      ? Boolean((window as Window & { __rodaleveGmpAuthFailed?: boolean }).__rodaleveGmpAuthFailed)
+      : false
+  );
 
-  const activeUnit = units.find((u) => u.id === selectedTab) || units[0];
+  useEffect(() => {
+    const globallyFailed =
+      typeof window !== 'undefined' &&
+      Boolean((window as Window & { __rodaleveGmpAuthFailed?: boolean }).__rodaleveGmpAuthFailed);
+    setMapsUnavailable(globallyFailed);
+  }, [mapsApiKey, mapsActive]);
+
+  useEffect(() => {
+    const onUnavailable = () => setMapsUnavailable(true);
+    window.addEventListener('gmp-auth-failure', onUnavailable);
+    window.addEventListener('gmp-quota-exceeded', onUnavailable);
+    return () => {
+      window.removeEventListener('gmp-auth-failure', onUnavailable);
+      window.removeEventListener('gmp-quota-exceeded', onUnavailable);
+    };
+  }, []);
+
+  const safeUnits = Array.isArray(units) ? units : [];
+  const activeUnit = safeUnits.find((u) => u.id === selectedTab) || safeUnits[0];
 
   const handleGeocoded = useCallback((resolved: Record<string, google.maps.LatLngLiteral>) => {
     setGeocodedCoords((prev) => ({ ...prev, ...resolved }));
@@ -622,11 +670,14 @@ export function UnitsMapSection({
 
   const coordsById = useMemo(() => {
     const map: Record<string, google.maps.LatLngLiteral> = {};
-    for (const u of units) {
-      map[u.id] = geocodedCoords[u.id] || { lat: u.lat, lng: u.lng };
+    for (const u of safeUnits) {
+      map[u.id] = geocodedCoords[u.id] || {
+        lat: Number(u.lat) || -14.8655,
+        lng: Number(u.lng) || -40.8385,
+      };
     }
     return map;
-  }, [units, geocodedCoords]);
+  }, [safeUnits, geocodedCoords]);
 
   const handleFocusOnMap = useCallback((unitId: string) => {
     setSelectedTab(unitId);
@@ -635,7 +686,7 @@ export function UnitsMapSection({
 
   const handleUseMyLocation = () => {
     if (!navigator.geolocation) {
-      setRouteError('Geolocalização não suportada pelo seu navegador.');
+      setRouteError(dict.geoUnsupported);
       return;
     }
     setLocating(true);
@@ -648,7 +699,7 @@ export function UnitsMapSection({
         setLocating(false);
       },
       () => {
-        setRouteError('Não foi possível obter sua localização. Digite seu endereço de partida.');
+        setRouteError(dict.geoError);
         setLocating(false);
       },
       { enableHighAccuracy: true, timeout: 10000 }
@@ -658,7 +709,7 @@ export function UnitsMapSection({
   const handleTraceRoute = (e: React.FormEvent) => {
     e.preventDefault();
     if (!originInput.trim()) {
-      setRouteError('Digite um endereço de partida ou clique em "Usar minha localização".');
+      setRouteError(dict.originRequiredError);
       return;
     }
     setRouteError(null);
@@ -678,16 +729,19 @@ export function UnitsMapSection({
     []
   );
 
-  if (!units || units.length === 0) return null;
+  if (safeUnits.length === 0 || !activeUnit) return null;
 
-  const canRenderInteractiveMap = mapsActive && Boolean(mapsApiKey);
+  const canRenderInteractiveMap = mapsActive && Boolean(mapsApiKey) && !mapsUnavailable;
   const visibleUnits =
-    selectedTab === 'both' ? units : units.filter((u) => u.id === activeUnit?.id);
-  const activeUnitCoords = coordsById[activeUnit.id] || { lat: activeUnit.lat, lng: activeUnit.lng };
+    selectedTab === 'both' ? safeUnits : safeUnits.filter((u) => u.id === activeUnit.id);
+  const activeUnitCoords = coordsById[activeUnit.id] || {
+    lat: Number(activeUnit.lat) || -14.8655,
+    lng: Number(activeUnit.lng) || -40.8385,
+  };
   const originMarkerCoords =
     activeOrigin && typeof activeOrigin === 'object' ? activeOrigin : null;
 
-  const gridContent = (
+  const renderGridContent = (interactiveMapActive: boolean) => (
     <div className="mt-8 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
       {/* Left Column: Route Planner + Unit Card(s) */}
       <div className="flex flex-col gap-5 lg:col-span-5">
@@ -698,7 +752,7 @@ export function UnitsMapSection({
         >
           <div className="flex items-center justify-between gap-3">
             <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-              Trace rota até {activeUnit?.city || activeUnit?.name}
+              {dict.unitsRouteTitle(activeUnit?.city || activeUnit?.name || '')}
             </h3>
             <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
               <button
@@ -711,7 +765,7 @@ export function UnitsMapSection({
                 }`}
               >
                 <Bike className="h-3.5 w-3.5" />
-                Moto
+                {dict.modeMoto}
               </button>
               <button
                 type="button"
@@ -723,13 +777,13 @@ export function UnitsMapSection({
                 }`}
               >
                 <Car className="h-3.5 w-3.5" />
-                Carro
+                {dict.modeCar}
               </button>
             </div>
           </div>
 
           <div className="mt-3.5 space-y-2.5">
-            {canRenderInteractiveMap ? (
+            {interactiveMapActive ? (
               <OriginAutocompleteInput
                 value={originInput}
                 onChange={(next) => setOriginInput(next)}
@@ -745,13 +799,15 @@ export function UnitsMapSection({
                   setRouteError(null);
                 }}
                 biasCenter={activeUnitCoords}
+                placeholder={dict.originPlaceholder}
+                clearAddressLabel={dict.clearAddress}
               />
             ) : (
               <input
                 type="text"
                 value={originInput}
                 onChange={(e) => setOriginInput(e.target.value)}
-                placeholder="Digite seu endereço ou bairro de partida..."
+                placeholder={dict.originPlaceholderFallback}
                 className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
               />
             )}
@@ -764,7 +820,7 @@ export function UnitsMapSection({
                 className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
               >
                 <Crosshair className="h-3.5 w-3.5 text-[#E4002B]" />
-                {locating ? 'Localizando...' : 'Usar minha localização'}
+                {locating ? dict.locating : dict.useMyLocation}
               </button>
 
               <button
@@ -772,14 +828,14 @@ export function UnitsMapSection({
                 className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
               >
                 <Navigation className="h-3.5 w-3.5" />
-                Traçar rota no mapa
+                {dict.traceRouteBtn}
               </button>
             </div>
           </div>
 
           {routeSummary && (
             <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
-              <span className="font-medium">Rota calculada ({travelMode === 'moto' ? 'Moto' : 'Carro'})</span>
+              <span className="font-medium">{dict.routeCalculated(travelMode)}</span>
               <span className="font-mono font-semibold tabular-nums">
                 {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
               </span>
@@ -808,7 +864,7 @@ export function UnitsMapSection({
                   </p>
                 </div>
                 <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
-                  {unit.rating.toFixed(1)}
+                  {Number(unit.rating ?? 4.8).toFixed(1)}
                   <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
                 </span>
               </div>
@@ -820,7 +876,10 @@ export function UnitsMapSection({
                 </p>
                 <p className="flex items-center gap-2">
                   <Phone className="h-4 w-4 shrink-0 text-neutral-400" />
-                  <a href={`tel:${unit.phone.replace(/\D/g, '')}`} className="tabular-nums hover:underline">
+                  <a
+                    href={`tel:${(unit.phone || '').replace(/\D/g, '')}`}
+                    className="tabular-nums hover:underline"
+                  >
                     {unit.phone}
                   </a>
                 </p>
@@ -833,7 +892,7 @@ export function UnitsMapSection({
                   className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
                 >
                   <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
-                  Focar no mapa
+                  {dict.focusOnMap}
                 </button>
                 <a
                   href={unit.gmb_url || buildDirectMapsUrl(unit)}
@@ -842,7 +901,7 @@ export function UnitsMapSection({
                   className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
                 >
                   <ExternalLink className="h-3.5 w-3.5" />
-                  Abrir no Maps
+                  {dict.openInMaps}
                 </a>
                 <a
                   href={buildWhatsAppHref(
@@ -864,7 +923,7 @@ export function UnitsMapSection({
 
       {/* Right Column: Interactive Google Map */}
       <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
-        {canRenderInteractiveMap ? (
+        {interactiveMapActive ? (
           <>
             {/* Map/Satellite switcher */}
             <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
@@ -877,7 +936,7 @@ export function UnitsMapSection({
                     : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
                 }`}
               >
-                Mapa
+                {dict.mapView}
               </button>
               <button
                 type="button"
@@ -888,7 +947,7 @@ export function UnitsMapSection({
                     : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
                 }`}
               >
-                Satélite
+                {dict.satelliteView}
               </button>
             </div>
 
@@ -905,10 +964,10 @@ export function UnitsMapSection({
                 internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
                 style={{ width: '100%', height: '100%' }}
               >
-                <UnitAddressGeocoder units={units} onResolved={handleGeocoded} />
-                <MapCameraController units={units} coordsById={coordsById} selectedTab={selectedTab} />
+                <UnitAddressGeocoder units={safeUnits} onResolved={handleGeocoded} />
+                <MapCameraController units={safeUnits} coordsById={coordsById} selectedTab={selectedTab} />
                 {originMarkerCoords && (
-                  <AdvancedMarker position={originMarkerCoords} title="Seu ponto de partida">
+                  <AdvancedMarker position={originMarkerCoords} title={dict.yourStartPoint}>
                     <Pin
                       background="#16A34A"
                       borderColor="#FFFFFF"
@@ -917,13 +976,14 @@ export function UnitsMapSection({
                     />
                   </AdvancedMarker>
                 )}
-                {units.map((u) => (
+                {safeUnits.map((u) => (
                   <UnitMarker
                     key={u.id}
                     unit={u}
                     position={coordsById[u.id] || { lat: u.lat, lng: u.lng }}
                     isSelected={selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)}
                     isInfoOpen={infoOpenUnitId === u.id}
+                    openInMapsLabel={dict.openInMaps}
                     onSelect={() => {
                       setSelectedTab(u.id);
                       setInfoOpenUnitId(u.id);
@@ -946,10 +1006,10 @@ export function UnitsMapSection({
           <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
             <MapPin className="h-10 w-10 text-[#E4002B]" />
             <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
-              Visualização direta no Google Maps
+              {dict.directMapsTitle}
             </h4>
             <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
-              Abra a localização oficial da {activeUnit.name} ({formatUnitAddress(activeUnit)}) diretamente no Google Maps.
+              {dict.directMapsDesc(activeUnit.name, formatUnitAddress(activeUnit))}
             </p>
             <a
               href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
@@ -958,7 +1018,7 @@ export function UnitsMapSection({
               className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#E4002B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#C80024]"
             >
               <ExternalLink className="h-4 w-4" />
-              Abrir {activeUnit.city} no Google Maps
+              {dict.openCityInMaps(activeUnit.city)}
             </a>
           </div>
         )}
@@ -998,7 +1058,7 @@ export function UnitsMapSection({
           </div>
 
           <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-900">
-            {units.map((u) => {
+            {safeUnits.map((u) => {
               const shortCity = u.city || u.name;
               const active = selectedTab === u.id;
               return (
@@ -1028,22 +1088,32 @@ export function UnitsMapSection({
                   : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
               }`}
             >
-              Ver ambos
+              {dict.viewBothUnits}
             </button>
           </div>
         </div>
 
         {canRenderInteractiveMap ? (
-          <APIProvider
-            apiKey={mapsApiKey}
-            language="pt-BR"
-            region="BR"
-            libraries={['marker', 'routes', 'geocoding', 'places']}
+          <ErrorBoundary
+            screenName="Mapa das Unidades"
+            onError={(err) => {
+              console.error('[UnitsMapSection] Erro no mapa interativo:', err);
+              setMapsUnavailable(true);
+            }}
+            fallback={renderGridContent(false)}
           >
-            {gridContent}
-          </APIProvider>
+            <APIProvider
+              apiKey={mapsApiKey}
+              language={(LANGUAGE_META[language] || LANGUAGE_META.pt).htmlLang}
+              region="BR"
+              libraries={['marker', 'routes', 'geocoding', 'places']}
+              onError={() => setMapsUnavailable(true)}
+            >
+              {renderGridContent(true)}
+            </APIProvider>
+          </ErrorBoundary>
         ) : (
-          gridContent
+          renderGridContent(false)
         )}
       </div>
     </section>

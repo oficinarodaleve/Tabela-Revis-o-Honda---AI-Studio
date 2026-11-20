@@ -10,7 +10,9 @@ interface TabFaqsProps {
   onToast: (type: 'success' | 'error', msg: string) => void;
   autoSaveEnabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveStart?: () => void;
   onAutoSaveComplete?: () => void;
+  onAutoSaveError?: (msg?: string) => void;
 }
 
 export function TabFaqs({
@@ -19,7 +21,9 @@ export function TabFaqs({
   onToast,
   autoSaveEnabled = true,
   onDirtyChange,
+  onAutoSaveStart,
   onAutoSaveComplete,
+  onAutoSaveError,
 }: TabFaqsProps) {
   const [items, setItems] = useState<Array<{ id: number; question: string; answer: string }>>([]);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
@@ -44,6 +48,7 @@ export function TabFaqs({
     if (!validToAutoSave) return;
 
     const timer = setTimeout(async () => {
+      onAutoSaveStart?.();
       saveGestorDraftCache('faqs', items);
       try {
         const res = await adminFetch('/api/admin/faqs', {
@@ -51,17 +56,25 @@ export function TabFaqs({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ faqs: items }),
         });
-        if (res.ok) {
-          await onSaved();
-          onAutoSaveComplete?.();
-        }
+        if (!res.ok) throw new Error('Erro ao salvar perguntas.');
+        await onSaved();
+        onAutoSaveComplete?.();
       } catch {
-        // Cache local já salvo
+        onAutoSaveError?.('Erro ao salvar — tente novamente');
       }
-    }, 600);
+    }, 850);
 
     return () => clearTimeout(timer);
-  }, [autoSaveEnabled, isDirty, saving, items, onSaved, onAutoSaveComplete]);
+  }, [
+    autoSaveEnabled,
+    isDirty,
+    saving,
+    items,
+    onSaved,
+    onAutoSaveStart,
+    onAutoSaveComplete,
+    onAutoSaveError,
+  ]);
 
   const handleUpdate = (idx: number, patch: Partial<{ question: string; answer: string }>) => {
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));

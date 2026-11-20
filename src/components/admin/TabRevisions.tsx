@@ -15,7 +15,9 @@ interface TabRevisionsProps {
   onToast: (type: 'success' | 'error', msg: string) => void;
   autoSaveEnabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveStart?: () => void;
   onAutoSaveComplete?: () => void;
+  onAutoSaveError?: (msg?: string) => void;
 }
 
 export function TabRevisions({
@@ -27,7 +29,9 @@ export function TabRevisions({
   onToast,
   autoSaveEnabled = true,
   onDirtyChange,
+  onAutoSaveStart,
   onAutoSaveComplete,
+  onAutoSaveError,
 }: TabRevisionsProps) {
   const [selectedRev, setSelectedRev] = useState<number>(
     revisionTabs[0]?.revision_number ?? 1
@@ -104,28 +108,32 @@ export function TabRevisions({
   useEffect(() => {
     if (!autoSaveEnabled || dirtyModelIds.length === 0 || savingModelId !== null) return;
     const timer = setTimeout(async () => {
+      onAutoSaveStart?.();
       saveGestorDraftCache(`revisoes_rev_${selectedRev}`, draftItemsByModel);
       try {
         for (const modelId of dirtyModelIds) {
           const items = draftItemsByModel[modelId] || [];
-          await adminFetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
+          const res = await adminFetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ items }),
           });
+          if (!res.ok) throw new Error('Erro ao salvar revisão.');
         }
         await onSaved();
         onAutoSaveComplete?.();
       } catch {
-        // Fallback em cache local já salvo
+        onAutoSaveError?.('Erro ao salvar — tente novamente');
       }
-    }, 550);
+    }, 850);
     return () => clearTimeout(timer);
   }, [
     autoSaveEnabled,
     dirtyModelIds,
     draftItemsByModel,
+    onAutoSaveStart,
     onAutoSaveComplete,
+    onAutoSaveError,
     onSaved,
     savingModelId,
     selectedRev,

@@ -1,9 +1,19 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PublicBootstrapData } from './types';
-import { adminFetch, getAdminToken } from './utils/adminAuth';
+import { auth } from './lib/firebase';
+import { adminFetch, clearAdminToken, getAdminToken } from './utils/adminAuth';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { PublicPage } from './components/PublicPage';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { SeoHeadSync } from './components/SeoHeadSync';
+import { fetchWithRetry, normalizePublicBootstrapData } from './utils/bootstrapNormalize';
+import {
+  LANGUAGE_META,
+  SiteLanguage,
+  UI_TRANSLATIONS,
+  getInitialLanguage,
+  persistLanguage,
+} from './utils/i18n';
 
 export default function App() {
   const [route, setRoute] = useState<string>(() =>
@@ -14,7 +24,11 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
-    return localStorage.getItem('rodaleve_theme') === 'dark';
+    try {
+      return window.localStorage?.getItem('rodaleve_theme') === 'dark';
+    } catch {
+      return false;
+    }
   });
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => Boolean(getAdminToken()));
@@ -22,16 +36,32 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return window.location.search.includes('visual_editor=1');
   });
+  const [language, setLanguage] = useState<SiteLanguage>(() => getInitialLanguage());
+  const hasPublicDataRef = useRef(false);
 
-  const loadPublicData = useCallback(async () => {
+  const loadPublicData = useCallback(async (options?: { manualRetry?: boolean }) => {
+    if (options?.manualRetry) {
+      setError(null);
+      if (!hasPublicDataRef.current) {
+        setLoading(true);
+      }
+    }
     try {
-      const res = await fetch('/api/public/bootstrap');
-      if (!res.ok) throw new Error('Falha ao carregar dados da tabela de revisões.');
-      const json = (await res.json()) as PublicBootstrapData;
-      setPublicData(json);
+      const res = await fetchWithRetry(() => fetch('/api/public/bootstrap'), 2, 400);
+      if (!res.ok) {
+        throw new Error(`Falha ao carregar dados da tabela de revisões (HTTP ${res.status}).`);
+      }
+      const rawJson = (await res.json()) as unknown;
+      const normalized = normalizePublicBootstrapData(rawJson);
+      hasPublicDataRef.current = true;
+      setPublicData(normalized);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Erro ao carregar dados.');
+      const errMsg = e instanceof Error ? e.message : 'Erro ao carregar dados.';
+      console.error('[App] Falha ao carregar /api/public/bootstrap:', e);
+      if (!hasPublicDataRef.current) {
+        setError(errMsg);
+      }
     } finally {
       setLoading(false);
     }
@@ -41,11 +71,19 @@ export default function App() {
     void loadPublicData();
   }, [loadPublicData]);
 
-  // Verifica silenciosamente se há sessão administrativa válida (cookie ou token em memória/storage)
+  // Verifica silenciosamente se há sessão administrativa Firebase válida
   useEffect(() => {
     let active = true;
     (async () => {
       try {
+        await auth.authStateReady();
+        if (!active) return;
+        if (!auth.currentUser) {
+          clearAdminToken();
+          setIsAdminLoggedIn(false);
+          setIsEditMode(false);
+          return;
+        }
         const res = await adminFetch('/api/auth/me');
         if (!active) return;
         if (res.ok) {
@@ -88,8 +126,23 @@ export default function App() {
     } else {
       root.classList.remove('dark');
     }
-    localStorage.setItem('rodaleve_theme', darkMode ? 'dark' : 'light');
+    try {
+      window.localStorage?.setItem('rodaleve_theme', darkMode ? 'dark' : 'light');
+    } catch {
+      // Ignora bloqueio de storage em iframe/sandbox
+    }
   }, [darkMode, route]);
+
+  useEffect(() => {
+    const isGestorRoute = route.startsWith('/gestor');
+    const langMeta = LANGUAGE_META[language] || LANGUAGE_META.pt;
+    document.documentElement.lang = isGestorRoute ? 'pt-BR' : langMeta.htmlLang;
+  }, [language, route]);
+
+  const handleChangeLanguage = useCallback((nextLang: SiteLanguage) => {
+    setLanguage(nextLang);
+    persistLanguage(nextLang);
+  }, []);
 
   const navigate = useCallback((path: string) => {
     const [pathname] = path.split('?');
@@ -138,42 +191,59 @@ export default function App() {
       )}
 
       {isGestor ? (
-        <AdminPanel
-          onNavigate={navigate}
-          onPublicDataChanged={loadPublicData}
-          onOpenVisualEditor={enterEditMode}
-          onAuthChange={setIsAdminLoggedIn}
-        />
+        <ErrorBoundary
+          screenName="Gestor Rodaleve"
+          onReset={() => {
+            setError(null);
+          }}
+        >
+          <AdminPanel
+            onNavigate={navigate}
+            onPublicDataChanged={loadPublicData}
+            onOpenVisualEditor={enterEditMode}
+            onAuthChange={setIsAdminLoggedIn}
+          />
+        </ErrorBoundary>
       ) : loading ? (
         <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-500">
-          Carregando Tabela de Manutenção Rodaleve Honda...
+          {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).loadingTable}
         </div>
       ) : error || !publicData ? (
         <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[#FAFAFA] px-4 text-center">
           <p className="text-base font-bold text-neutral-900">
-            Não foi possível carregar os dados
+            {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).loadErrorTitle}
           </p>
           <p className="text-sm text-neutral-500">{error}</p>
           <button
             type="button"
-            onClick={() => void loadPublicData()}
+            onClick={() => void loadPublicData({ manualRetry: true })}
             className="rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white"
           >
-            Tentar novamente
+            {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).tryAgain}
           </button>
         </div>
       ) : (
-        <PublicPage
-          data={publicData}
-          darkMode={darkMode}
-          onToggleDarkMode={() => setDarkMode((prev) => !prev)}
-          onNavigate={navigate}
-          isAdminLoggedIn={isAdminLoggedIn}
-          isEditMode={isEditMode && isAdminLoggedIn}
-          onEnterEditMode={enterEditMode}
-          onExitEditModeToGestor={exitEditModeToGestor}
-          onPublicDataChanged={loadPublicData}
-        />
+        <ErrorBoundary
+          screenName="Página Pública"
+          onReset={() => {
+            setError(null);
+            return loadPublicData();
+          }}
+        >
+          <PublicPage
+            data={publicData}
+            language={language}
+            onChangeLanguage={handleChangeLanguage}
+            darkMode={darkMode}
+            onToggleDarkMode={() => setDarkMode((prev) => !prev)}
+            onNavigate={navigate}
+            isAdminLoggedIn={isAdminLoggedIn}
+            isEditMode={isEditMode && isAdminLoggedIn}
+            onEnterEditMode={enterEditMode}
+            onExitEditModeToGestor={exitEditModeToGestor}
+            onPublicDataChanged={loadPublicData}
+          />
+        </ErrorBoundary>
       )}
     </>
   );

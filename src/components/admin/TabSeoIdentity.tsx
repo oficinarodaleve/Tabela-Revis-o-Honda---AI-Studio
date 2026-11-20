@@ -1,21 +1,12 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, AlertTriangle, Check, CheckCircle2, Copy, Download, Image as ImageIcon, Plus, Save, Trash2, Upload } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CheckCircle2, Copy, Download, Image as ImageIcon, Plus, Save, Trash2, Upload } from 'lucide-react';
 import {
   FaqItem,
-  GoogleTagConfig,
-  MetaPixelConfig,
   SeoSettings,
-  TikTokPixelConfig,
   UnitLocation,
 } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
 import { saveGestorDraftCache } from '../../utils/gestorBackup';
-import {
-  sanitizeGoogleConversionLabel,
-  sanitizeGoogleTagId,
-  sanitizePixelId,
-  sanitizeTikTokPixelId,
-} from '../../utils/metaPixel';
 import { buildJsonLd } from '../SeoHeadSync';
 
 interface TabSeoIdentityProps {
@@ -25,43 +16,10 @@ interface TabSeoIdentityProps {
   onToast: (type: 'success' | 'error', msg: string) => void;
   autoSaveEnabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveStart?: () => void;
   onAutoSaveComplete?: () => void;
+  onAutoSaveError?: (msg?: string) => void;
 }
-
-const DEFAULT_META_PIXEL: MetaPixelConfig = {
-  enabled: false,
-  pixel_id: '',
-  events: {
-    page_view: true,
-    view_content: true,
-    lead_contact: true,
-  },
-  custom_code: '',
-};
-
-const DEFAULT_GOOGLE_TAG: GoogleTagConfig = {
-  enabled: false,
-  ga4_id: '',
-  ads_id: '',
-  conversion_label: '',
-  events: {
-    page_view: true,
-    view_content: true,
-    lead_contact: true,
-  },
-  custom_code: '',
-};
-
-const DEFAULT_TIKTOK_PIXEL: TikTokPixelConfig = {
-  enabled: false,
-  pixel_id: '',
-  events: {
-    page_view: true,
-    view_content: true,
-    lead_contact: true,
-  },
-  custom_code: '',
-};
 
 function normalizeSeoDraft(seo: SeoSettings): SeoSettings {
   return {
@@ -69,6 +27,9 @@ function normalizeSeoDraft(seo: SeoSettings): SeoSettings {
     logo_url: seo.logo_url || '',
     logo_alt: seo.logo_alt || 'Rodaleve Honda – Concessionária Autorizada',
     short_name: seo.short_name || 'Rodaleve',
+    gestor_logo_url: seo.gestor_logo_url ?? '/rodaleve-gestor-logo.svg',
+    gestor_title: seo.gestor_title ?? 'Gestor Rodaleve',
+    gestor_subtitle: seo.gestor_subtitle ?? 'Tabela de manutenção e revisões',
     meta_title: seo.meta_title || '',
     meta_description: seo.meta_description || '',
     meta_keywords: seo.meta_keywords || '',
@@ -154,6 +115,57 @@ function downloadTextFile(filename: string, content: string, mime = 'text/plain'
   URL.revokeObjectURL(url);
 }
 
+type SeoImageField = 'favicon' | 'logo' | 'gestor_logo' | 'og';
+
+const MAX_SEO_IMAGE_BYTES = 8 * 1024 * 1024;
+
+function validateSeoImageFile(field: SeoImageField, file: File): string | null {
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const mime = (file.type || '').toLowerCase();
+
+  const allowedExts =
+    field === 'favicon'
+      ? ['png', 'jpg', 'jpeg', 'webp', 'svg', 'ico']
+      : ['png', 'jpg', 'jpeg', 'webp', 'svg'];
+  const allowedMimes =
+    field === 'favicon'
+      ? [
+          'image/png',
+          'image/jpeg',
+          'image/jpg',
+          'image/webp',
+          'image/svg+xml',
+          'image/x-icon',
+          'image/vnd.microsoft.icon',
+        ]
+      : ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
+
+  if (!allowedExts.includes(ext) && !allowedMimes.includes(mime)) {
+    return field === 'favicon'
+      ? 'Formato inválido. Use PNG, JPG, WEBP, SVG ou ICO.'
+      : 'Formato inválido. Use PNG, JPG, WEBP ou SVG.';
+  }
+
+  if (file.size === 0) {
+    return 'O arquivo selecionado está vazio.';
+  }
+
+  if (file.size > MAX_SEO_IMAGE_BYTES) {
+    const sizeMb = (file.size / (1024 * 1024)).toFixed(1).replace('.', ',');
+    return `Arquivo muito grande (${sizeMb} MB). O limite máximo permitido é 8 MB.`;
+  }
+
+  return null;
+}
+
+function normalizeSeoImageInput(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return '';
+  if (trimmed.startsWith('uploads/')) return `/${trimmed}`;
+  if (trimmed.startsWith('src/assets/')) return `/${trimmed}`;
+  return trimmed;
+}
+
 export function TabSeoIdentity({
   seo,
   faqs = [],
@@ -161,150 +173,240 @@ export function TabSeoIdentity({
   onToast,
   autoSaveEnabled = true,
   onDirtyChange,
+  onAutoSaveStart,
   onAutoSaveComplete,
+  onAutoSaveError,
 }: TabSeoIdentityProps) {
   const normalizedIncoming = useMemo(() => normalizeSeoDraft(seo), [seo]);
+  const incomingSerialized = useMemo(() => JSON.stringify(normalizedIncoming), [normalizedIncoming]);
+
   const [draft, setDraft] = useState<SeoSettings>(() => normalizeSeoDraft(seo));
   const [saving, setSaving] = useState(false);
   const [justSavedMsg, setJustSavedMsg] = useState<string | null>(null);
   const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
-  const [uploadingField, setUploadingField] = useState<'favicon' | 'logo' | 'og' | null>(null);
+  const [uploadingField, setUploadingField] = useState<SeoImageField | null>(null);
+  const [localPreviews, setLocalPreviews] = useState<Partial<Record<SeoImageField, string>>>({});
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<SeoImageField, string>>>({});
 
   const faviconInputRef = useRef<HTMLInputElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
+  const gestorLogoInputRef = useRef<HTMLInputElement | null>(null);
   const ogInputRef = useRef<HTMLInputElement | null>(null);
-  const lastAutoSavedRef = useRef<string>('');
-
-  useEffect(() => {
-    setDraft(normalizedIncoming);
-    lastAutoSavedRef.current = JSON.stringify(normalizedIncoming);
-  }, [normalizedIncoming]);
+  const lastAutoSavedRef = useRef<string>(incomingSerialized);
+  const lastPropSerializedRef = useRef<string>(incomingSerialized);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const hasPendingChanges = useMemo(
-    () => JSON.stringify(draft) !== JSON.stringify(normalizedIncoming),
-    [draft, normalizedIncoming]
+    () => JSON.stringify(draft) !== incomingSerialized,
+    [draft, incomingSerialized]
   );
+
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const localPreviewsRef = useRef(localPreviews);
+  localPreviewsRef.current = localPreviews;
+  const hasPendingChangesRef = useRef(hasPendingChanges);
+  hasPendingChangesRef.current = hasPendingChanges;
+  const uploadingFieldRef = useRef(uploadingField);
+  uploadingFieldRef.current = uploadingField;
+
+  // Só sincroniza props externas se não houver upload ativo nem edições locais não salvas
+  useEffect(() => {
+    if (incomingSerialized === lastPropSerializedRef.current) return;
+    lastPropSerializedRef.current = incomingSerialized;
+    if (!hasPendingChangesRef.current && !uploadingFieldRef.current) {
+      setDraft(normalizedIncoming);
+      lastAutoSavedRef.current = incomingSerialized;
+    }
+  }, [incomingSerialized, normalizedIncoming]);
+
+  // Limpa object URLs ao desmontar
+  useEffect(() => {
+    return () => {
+      Object.values(localPreviewsRef.current).forEach((u) => {
+        if (u && u.startsWith('blob:')) URL.revokeObjectURL(u);
+      });
+    };
+  }, []);
 
   useEffect(() => {
     onDirtyChange?.(hasPendingChanges);
   }, [hasPendingChanges, onDirtyChange]);
 
+  const persistSeoNow = useCallback(
+    async (nextDraft: SeoSettings, isAuto: boolean) => {
+      const serialized = JSON.stringify(nextDraft);
+      if (isAuto) onAutoSaveStart?.();
+      saveGestorDraftCache('seo', nextDraft);
+      const res = await adminFetch('/api/admin/seo', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: serialized,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        let errMsg = 'Erro ao salvar SEO & Identidade.';
+        try {
+          const parsed = JSON.parse(errText) as { error?: string };
+          if (parsed.error) errMsg = parsed.error;
+        } catch {
+          // Mantém mensagem padrão
+        }
+        throw new Error(errMsg);
+      }
+      lastAutoSavedRef.current = serialized;
+      lastPropSerializedRef.current = serialized;
+      try {
+        window.localStorage?.setItem('rodaleve_seo_cache', serialized);
+      } catch {
+        // Ignora sandbox
+      }
+      await onSaved();
+      if (isAuto) onAutoSaveComplete?.();
+    },
+    [onAutoSaveComplete, onAutoSaveStart, onSaved]
+  );
+
   // Auto-save com debounce quando ativado
   useEffect(() => {
-    if (!autoSaveEnabled || !hasPendingChanges || saving) return;
+    if (!autoSaveEnabled || !hasPendingChanges || saving || uploadingField) return;
     const serialized = JSON.stringify(draft);
     if (serialized === lastAutoSavedRef.current) return;
 
-    const timer = setTimeout(async () => {
-      saveGestorDraftCache('seo', draft);
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
       try {
-        const res = await adminFetch('/api/admin/seo', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: serialized,
-        });
-        if (res.ok) {
-          lastAutoSavedRef.current = serialized;
-          try {
-            window.localStorage?.setItem('rodaleve_seo_cache', serialized);
-          } catch {
-            // Ignora sandbox
-          }
-          await onSaved();
-          onAutoSaveComplete?.();
-        }
+        await persistSeoNow(draft, true);
       } catch {
-        // Cache local já atualizado em memória/localStorage
+        onAutoSaveError?.('Erro ao salvar — tente novamente');
       }
-    }, 550);
+    }, 850);
 
-    return () => clearTimeout(timer);
-  }, [autoSaveEnabled, hasPendingChanges, saving, draft, onSaved, onAutoSaveComplete]);
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [
+    autoSaveEnabled,
+    hasPendingChanges,
+    saving,
+    uploadingField,
+    draft,
+    persistSeoNow,
+    onAutoSaveError,
+  ]);
 
   const update = (patch: Partial<SeoSettings>) => {
     setJustSavedMsg(null);
     setDraft((prev) => ({ ...prev, ...patch }));
   };
 
-  const pixelCfg = draft.meta_pixel || DEFAULT_META_PIXEL;
-  const updatePixel = (patch: Partial<MetaPixelConfig>) => {
-    update({
-      meta_pixel: {
-        ...pixelCfg,
-        ...patch,
-        events: {
-          ...pixelCfg.events,
-          ...(patch.events || {}),
-        },
-      },
+  const clearFieldPreviewAndError = (field: SeoImageField) => {
+    setFieldErrors((prev) => {
+      if (!prev[field]) return prev;
+      const copy = { ...prev };
+      delete copy[field];
+      return copy;
+    });
+    setLocalPreviews((prev) => {
+      const old = prev[field];
+      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      if (!old) return prev;
+      const copy = { ...prev };
+      delete copy[field];
+      return copy;
     });
   };
 
-  const googleTagCfg = draft.google_tag || DEFAULT_GOOGLE_TAG;
-  const updateGoogleTag = (patch: Partial<GoogleTagConfig>) => {
-    update({
-      google_tag: {
-        ...googleTagCfg,
-        ...patch,
-        events: {
-          ...googleTagCfg.events,
-          ...(patch.events || {}),
-        },
-      },
-    });
-  };
+  const handleUpload = async (field: SeoImageField, file: File) => {
+    const validationError = validateSeoImageFile(field, file);
+    if (validationError) {
+      setFieldErrors((prev) => ({ ...prev, [field]: validationError }));
+      onToast('error', validationError);
+      return;
+    }
 
-  const tiktokPixelCfg = draft.tiktok_pixel || DEFAULT_TIKTOK_PIXEL;
-  const updateTikTokPixel = (patch: Partial<TikTokPixelConfig>) => {
-    update({
-      tiktok_pixel: {
-        ...tiktokPixelCfg,
-        ...patch,
-        events: {
-          ...tiktokPixelCfg.events,
-          ...(patch.events || {}),
-        },
-      },
+    const tempObjectUrl = URL.createObjectURL(file);
+    setFieldErrors((prev) => {
+      const copy = { ...prev };
+      delete copy[field];
+      return copy;
     });
-  };
+    setLocalPreviews((prev) => {
+      const old = prev[field];
+      if (old && old.startsWith('blob:')) URL.revokeObjectURL(old);
+      return { ...prev, [field]: tempObjectUrl };
+    });
 
-  const handleUpload = async (field: 'favicon' | 'logo' | 'og', file: File) => {
     setUploadingField(field);
     try {
       const formData = new FormData();
       formData.append('file', file);
       const res = await adminFetch('/api/upload', { method: 'POST', body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao enviar arquivo.');
-      if (field === 'favicon') update({ favicon_url: data.url });
-      if (field === 'logo') update({ logo_url: data.url });
-      if (field === 'og') update({ og_image: data.url });
-      onToast('success', 'Arquivo enviado com sucesso.');
+      const rawText = await res.text();
+      let data: { url?: string; error?: string } = {};
+      try {
+        data = JSON.parse(rawText);
+      } catch {
+        data = {};
+      }
+      if (!res.ok || !data.url) {
+        throw new Error(
+          data.error ||
+            (res.status === 413
+              ? 'Arquivo muito grande para envio. Reduza a imagem para até 8 MB.'
+              : `Falha ao enviar arquivo (HTTP ${res.status}).`)
+        );
+      }
+
+      const uploadedUrl = data.url;
+      const patch: Partial<SeoSettings> =
+        field === 'favicon'
+          ? { favicon_url: uploadedUrl }
+          : field === 'logo'
+            ? { logo_url: uploadedUrl }
+            : field === 'gestor_logo'
+              ? { gestor_logo_url: uploadedUrl }
+              : { og_image: uploadedUrl };
+      const nextDraftSnapshot: SeoSettings = { ...draftRef.current, ...patch };
+      setJustSavedMsg(null);
+      setDraft(nextDraftSnapshot);
+
+      // Libera preview temporário e usa a URL persistente salva no servidor
+      setLocalPreviews((prev) => {
+        const copy = { ...prev };
+        delete copy[field];
+        return copy;
+      });
+      URL.revokeObjectURL(tempObjectUrl);
+
+      if (autoSaveEnabled) {
+        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+        await persistSeoNow(nextDraftSnapshot, true);
+        onToast('success', 'Imagem enviada e salva automaticamente!');
+      } else {
+        onToast('success', 'Imagem enviada! Clique em "Salvar Configurações" para publicar.');
+      }
     } catch (e) {
-      onToast('error', e instanceof Error ? e.message : 'Erro no upload.');
+      const errMsg = e instanceof Error ? e.message : 'Erro ao enviar imagem.';
+      setLocalPreviews((prev) => {
+        const copy = { ...prev };
+        delete copy[field];
+        return copy;
+      });
+      URL.revokeObjectURL(tempObjectUrl);
+      setFieldErrors((prev) => ({ ...prev, [field]: errMsg }));
+      onToast('error', errMsg);
     } finally {
       setUploadingField(null);
     }
   };
 
   const handleSave = async () => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     setSaving(true);
     setJustSavedMsg(null);
     try {
-      const res = await adminFetch('/api/admin/seo', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(draft),
-      });
-      if (!res.ok) throw new Error('Erro ao salvar SEO & Identidade.');
-      try {
-        window.localStorage?.setItem('rodaleve_seo_cache', JSON.stringify(draft));
-      } catch {
-        // Ignora bloqueio em sandbox
-      }
-      saveGestorDraftCache('seo', draft);
-      lastAutoSavedRef.current = JSON.stringify(draft);
-      await onSaved();
+      await persistSeoNow(draft, false);
       const msg = 'Configurações de SEO e Identidade salvas e publicadas!';
       setJustSavedMsg(msg);
       onToast('success', msg);
@@ -314,6 +416,12 @@ export function TabSeoIdentity({
       setSaving(false);
     }
   };
+
+  const faviconPreviewSrc = localPreviews.favicon || normalizeSeoImageInput(draft.favicon_url);
+  const logoPreviewSrc = localPreviews.logo || normalizeSeoImageInput(draft.logo_url);
+  const gestorLogoPreviewSrc =
+    localPreviews.gestor_logo || normalizeSeoImageInput(draft.gestor_logo_url || '');
+  const ogPreviewSrc = localPreviews.og || normalizeSeoImageInput(draft.og_image);
 
   const effectiveOgTitle = draft.og_same_title
     ? draft.meta_title
@@ -326,44 +434,6 @@ export function TabSeoIdentity({
     () => JSON.stringify(buildJsonLd(draft, faqs), null, 2),
     [draft, faqs]
   );
-
-  // Análise / Auditoria rápida checklist
-  const pixelActiveAndValid = Boolean(pixelCfg.enabled && sanitizePixelId(pixelCfg.pixel_id));
-  const auditItems = useMemo(() => {
-    const titleOk = draft.meta_title.trim().length > 0 && draft.meta_title.trim().length <= 60;
-    const descLen = draft.meta_description.trim().length;
-    const descOk = descLen >= 50 && descLen <= 155;
-    const faviconOk = Boolean(draft.favicon_url.trim());
-    const logoOk = Boolean(draft.logo_url.trim());
-    const ogImageOk = Boolean(draft.og_image.trim());
-    const altOk = Boolean(draft.logo_alt.trim());
-    const unitsOk =
-      draft.units.length > 0 &&
-      draft.units.every((u) => u.name.trim() && u.phone.trim() && u.city.trim());
-
-    return [
-      { label: 'Meta Title até 60 caracteres', ok: titleOk },
-      { label: 'Meta Description entre 50 e 155', ok: descOk },
-      { label: 'Favicon configurado', ok: faviconOk },
-      { label: 'Logo principal enviada', ok: logoOk },
-      { label: 'Imagem og:image (1200x630)', ok: ogImageOk },
-      { label: 'Alt text da logo preenchido', ok: altOk },
-      { label: 'Unidades com nome, telefone e cidade', ok: unitsOk },
-      {
-        label: pixelActiveAndValid
-          ? `Meta Pixel ativo (ID ${sanitizePixelId(pixelCfg.pixel_id)})`
-          : pixelCfg.enabled
-            ? 'Meta Pixel ativo, mas falta informar o Pixel ID'
-            : 'Meta Pixel inativo (pendente de ativação)',
-        ok: pixelActiveAndValid,
-      },
-    ];
-  }, [draft, pixelActiveAndValid, pixelCfg.enabled, pixelCfg.pixel_id]);
-
-  const auditScore = useMemo(() => {
-    const passed = auditItems.filter((i) => i.ok).length;
-    return Math.round((passed / auditItems.length) * 100);
-  }, [auditItems]);
 
   const handleUpdateUnit = (idx: number, patch: Partial<UnitLocation>) => {
     const next = draft.units.map((u, i) => (i === idx ? { ...u, ...patch } : u));
@@ -472,22 +542,46 @@ export function TabSeoIdentity({
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
                   <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-neutral-200 bg-white">
-                    {draft.favicon_url ? (
-                      <img src={draft.favicon_url} alt="Favicon" className="h-8 w-8 object-contain" />
+                    {faviconPreviewSrc ? (
+                      <img
+                        src={faviconPreviewSrc}
+                        alt="Favicon"
+                        referrerPolicy="no-referrer"
+                        onLoad={() =>
+                          setFieldErrors((prev) =>
+                            prev.favicon ? { ...prev, favicon: undefined } : prev
+                          )
+                        }
+                        onError={() =>
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            favicon:
+                              'Não foi possível carregar este favicon. Verifique a URL ou envie outra imagem.',
+                          }))
+                        }
+                        className="h-8 w-8 object-contain"
+                      />
                     ) : (
                       <span className="font-display text-xs font-extrabold text-[#E4002B]">R</span>
                     )}
                   </div>
                   <div>
                     <p className="text-xs font-bold text-neutral-800">Favicon</p>
-                    <p className="text-[11px] text-neutral-500">PNG/ICO/SVG 512x512 recomendado</p>
+                    <p className="text-[11px] text-neutral-500">
+                      PNG, JPG, WEBP, SVG ou ICO (até 8 MB · 512x512 recomendado)
+                    </p>
                   </div>
                 </div>
 
                 {/* Prévia da aba do navegador */}
                 <div className="flex items-center gap-2 rounded-t-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs shadow-xs">
-                  {draft.favicon_url ? (
-                    <img src={draft.favicon_url} alt="" className="h-3.5 w-3.5 object-contain" />
+                  {faviconPreviewSrc ? (
+                    <img
+                      src={faviconPreviewSrc}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      className="h-3.5 w-3.5 object-contain"
+                    />
                   ) : (
                     <span className="inline-block h-3 w-3 rounded-sm bg-[#E4002B]" />
                   )}
@@ -501,51 +595,81 @@ export function TabSeoIdentity({
                 <input
                   type="text"
                   value={draft.favicon_url}
-                  onChange={(e) => update({ favicon_url: e.target.value })}
+                  onChange={(e) => {
+                    clearFieldPreviewAndError('favicon');
+                    update({ favicon_url: normalizeSeoImageInput(e.target.value) });
+                  }}
                   placeholder="URL do favicon..."
                   className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-800"
                 />
                 <input
                   ref={faviconInputRef}
                   type="file"
-                  accept="image/*,.ico,.svg"
+                  accept=".png,.jpg,.jpeg,.webp,.svg,.ico,image/png,image/jpeg,image/webp,image/svg+xml,image/x-icon,image/vnd.microsoft.icon"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
+                    e.target.value = '';
                     if (f) void handleUpload('favicon', f);
                   }}
                 />
                 <button
                   type="button"
+                  disabled={uploadingField === 'favicon'}
                   onClick={() => faviconInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingField === 'favicon' ? 'Enviando...' : 'Enviar arquivo'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => update({ favicon_url: '' })}
-                  className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B]"
+                  disabled={uploadingField === 'favicon'}
+                  onClick={() => {
+                    clearFieldPreviewAndError('favicon');
+                    update({ favicon_url: '' });
+                  }}
+                  className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B] disabled:opacity-50"
                 >
                   Remover
                 </button>
               </div>
+              {fieldErrors.favicon && (
+                <p className="mt-2 text-[11px] font-medium text-[#E4002B]">{fieldErrors.favicon}</p>
+              )}
             </div>
 
             {/* Logo Principal */}
             <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4 space-y-3">
               <div className="flex items-center gap-3">
                 <div className="flex h-12 w-28 items-center justify-center overflow-hidden rounded-xl border border-neutral-200 bg-white px-2">
-                  {draft.logo_url ? (
-                    <img src={draft.logo_url} alt={draft.logo_alt} className="max-h-9 w-auto object-contain" />
+                  {logoPreviewSrc ? (
+                    <img
+                      src={logoPreviewSrc}
+                      alt={draft.logo_alt}
+                      referrerPolicy="no-referrer"
+                      onLoad={() =>
+                        setFieldErrors((prev) =>
+                          prev.logo ? { ...prev, logo: undefined } : prev
+                        )
+                      }
+                      onError={() =>
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          logo: 'Não foi possível carregar esta logo. Verifique a URL ou envie outra imagem.',
+                        }))
+                      }
+                      className="max-h-9 w-auto object-contain"
+                    />
                   ) : (
                     <span className="font-display text-sm font-extrabold text-[#E4002B]">RODALEVE</span>
                   )}
                 </div>
                 <div>
                   <p className="text-xs font-bold text-neutral-800">Logo principal</p>
-                  <p className="text-[11px] text-neutral-500">Exibida no cabeçalho e rodapé do site</p>
+                  <p className="text-[11px] text-neutral-500">
+                    Exibida no cabeçalho e rodapé do site (PNG, JPG, WEBP ou SVG até 8 MB)
+                  </p>
                 </div>
               </div>
 
@@ -553,36 +677,48 @@ export function TabSeoIdentity({
                 <input
                   type="text"
                   value={draft.logo_url}
-                  onChange={(e) => update({ logo_url: e.target.value })}
+                  onChange={(e) => {
+                    clearFieldPreviewAndError('logo');
+                    update({ logo_url: normalizeSeoImageInput(e.target.value) });
+                  }}
                   placeholder="Caminho ou URL da logo..."
                   className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-800"
                 />
                 <input
                   ref={logoInputRef}
                   type="file"
-                  accept="image/*,.svg"
+                  accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml"
                   className="hidden"
                   onChange={(e) => {
                     const f = e.target.files?.[0];
+                    e.target.value = '';
                     if (f) void handleUpload('logo', f);
                   }}
                 />
                 <button
                   type="button"
+                  disabled={uploadingField === 'logo'}
                   onClick={() => logoInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingField === 'logo' ? 'Enviando...' : 'Enviar arquivo'}
                 </button>
                 <button
                   type="button"
-                  onClick={() => update({ logo_url: '' })}
-                  className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B]"
+                  disabled={uploadingField === 'logo'}
+                  onClick={() => {
+                    clearFieldPreviewAndError('logo');
+                    update({ logo_url: '' });
+                  }}
+                  className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B] disabled:opacity-50"
                 >
                   Remover
                 </button>
               </div>
+              {fieldErrors.logo && (
+                <p className="text-[11px] font-medium text-[#E4002B]">{fieldErrors.logo}</p>
+              )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
@@ -605,6 +741,142 @@ export function TabSeoIdentity({
                     type="text"
                     value={draft.logo_alt}
                     onChange={(e) => update({ logo_alt: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Logo e Cabeçalho do Gestor */}
+            <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5">
+                  {gestorLogoPreviewSrc ? (
+                    <img
+                      src={gestorLogoPreviewSrc}
+                      alt={draft.gestor_title || 'Gestor Rodaleve'}
+                      referrerPolicy="no-referrer"
+                      onLoad={() =>
+                        setFieldErrors((prev) =>
+                          prev.gestor_logo ? { ...prev, gestor_logo: undefined } : prev
+                        )
+                      }
+                      onError={() =>
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          gestor_logo:
+                            'Não foi possível carregar a logo do Gestor. Verifique a URL ou envie outra imagem.',
+                        }))
+                      }
+                      className="max-h-[46px] w-auto max-w-[160px] object-contain"
+                    />
+                  ) : (
+                    <span className="font-display text-sm font-extrabold text-[#E4002B]">RODALEVE</span>
+                  )}
+                  <div className="border-l border-neutral-200 pl-3.5">
+                    <p className="text-sm font-bold leading-tight text-neutral-900">
+                      {draft.gestor_title || 'Gestor Rodaleve'}
+                    </p>
+                    <p className="text-[11px] text-neutral-500">
+                      {draft.gestor_subtitle || 'Tabela de manutenção e revisões'}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      clearFieldPreviewAndError('gestor_logo');
+                      update({
+                        gestor_logo_url: '/rodaleve-gestor-logo.svg',
+                        gestor_title: 'Gestor Rodaleve',
+                        gestor_subtitle: 'Tabela de manutenção e revisões',
+                      });
+                    }}
+                    className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-neutral-300 hover:text-neutral-900"
+                  >
+                    Restaurar padrão
+                  </button>
+                  <button
+                    type="button"
+                    disabled={saving}
+                    onClick={handleSave}
+                    className="inline-flex items-center gap-1 rounded-xl bg-[#E4002B] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#C80024] disabled:opacity-60"
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    Salvar
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <p className="text-xs font-bold text-neutral-800">
+                  Logo e identificação no topo do Gestor
+                </p>
+                <p className="text-[11px] text-neutral-500">
+                  Aceita PNG, SVG, WEBP ou JPG até 8 MB (preferencialmente com fundo transparente).
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  type="text"
+                  value={draft.gestor_logo_url || ''}
+                  onChange={(e) => {
+                    clearFieldPreviewAndError('gestor_logo');
+                    update({ gestor_logo_url: normalizeSeoImageInput(e.target.value) });
+                  }}
+                  placeholder="URL da logo do Gestor (ex.: /rodaleve-gestor-logo.svg ou https://...)"
+                  className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-800"
+                />
+                <input
+                  ref={gestorLogoInputRef}
+                  type="file"
+                  accept=".png,.svg,.webp,.jpg,.jpeg,image/png,image/svg+xml,image/webp,image/jpeg"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    e.target.value = '';
+                    if (f) void handleUpload('gestor_logo', f);
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={uploadingField === 'gestor_logo'}
+                  onClick={() => gestorLogoInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                >
+                  <Upload className="h-3.5 w-3.5" />
+                  {uploadingField === 'gestor_logo' ? 'Enviando...' : 'Enviar arquivo'}
+                </button>
+              </div>
+              {fieldErrors.gestor_logo && (
+                <p className="text-[11px] font-medium text-[#E4002B]">{fieldErrors.gestor_logo}</p>
+              )}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-600">
+                    Título do cabeçalho do Gestor
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.gestor_title || ''}
+                    onChange={(e) => update({ gestor_title: e.target.value })}
+                    placeholder="Gestor Rodaleve"
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-600">
+                    Subtítulo do cabeçalho do Gestor
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.gestor_subtitle || ''}
+                    onChange={(e) => update({ gestor_subtitle: e.target.value })}
+                    placeholder="Tabela de manutenção e revisões"
                     className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
                   />
                 </div>
@@ -741,10 +1013,27 @@ export function TabSeoIdentity({
                 <p className="text-xs font-bold text-neutral-800">
                   Imagem de compartilhamento (og:image, 1200x630)
                 </p>
+                <p className="mt-0.5 text-[11px] text-neutral-500">
+                  PNG, JPG, WEBP ou SVG (até 8 MB · ideal 1200x630 para WhatsApp e Facebook)
+                </p>
                 <div className="mt-2.5 flex flex-wrap items-center gap-3">
                   <div className="flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-neutral-200 bg-white">
-                    {draft.og_image ? (
-                      <img src={draft.og_image} alt="OG" className="h-full w-full object-cover" />
+                    {ogPreviewSrc ? (
+                      <img
+                        src={ogPreviewSrc}
+                        alt="OG"
+                        referrerPolicy="no-referrer"
+                        onLoad={() =>
+                          setFieldErrors((prev) => (prev.og ? { ...prev, og: undefined } : prev))
+                        }
+                        onError={() =>
+                          setFieldErrors((prev) => ({
+                            ...prev,
+                            og: 'Não foi possível carregar a imagem Open Graph. Verifique a URL ou envie outro arquivo.',
+                          }))
+                        }
+                        className="h-full w-full object-cover"
+                      />
                     ) : (
                       <ImageIcon className="h-5 w-5 text-neutral-300" />
                     )}
@@ -753,36 +1042,49 @@ export function TabSeoIdentity({
                     <input
                       type="text"
                       value={draft.og_image}
-                      onChange={(e) => update({ og_image: e.target.value })}
+                      onChange={(e) => {
+                        clearFieldPreviewAndError('og');
+                        update({ og_image: normalizeSeoImageInput(e.target.value) });
+                      }}
+                      placeholder="URL da imagem de compartilhamento..."
                       className="min-w-[180px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs"
                     />
                     <input
                       ref={ogInputRef}
                       type="file"
-                      accept="image/*"
+                      accept=".png,.jpg,.jpeg,.webp,.svg,image/png,image/jpeg,image/webp,image/svg+xml"
                       className="hidden"
                       onChange={(e) => {
                         const f = e.target.files?.[0];
+                        e.target.value = '';
                         if (f) void handleUpload('og', f);
                       }}
                     />
                     <button
                       type="button"
+                      disabled={uploadingField === 'og'}
                       onClick={() => ogInputRef.current?.click()}
-                      className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700"
+                      className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
                     >
                       <Upload className="h-3.5 w-3.5" />
                       {uploadingField === 'og' ? 'Enviando...' : 'Enviar'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => update({ og_image: '' })}
-                      className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B]"
+                      disabled={uploadingField === 'og'}
+                      onClick={() => {
+                        clearFieldPreviewAndError('og');
+                        update({ og_image: '' });
+                      }}
+                      className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B] disabled:opacity-50"
                     >
                       Remover
                     </button>
                   </div>
                 </div>
+                {fieldErrors.og && (
+                  <p className="mt-2 text-[11px] font-medium text-[#E4002B]">{fieldErrors.og}</p>
+                )}
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1154,468 +1456,10 @@ export function TabSeoIdentity({
               </div>
             </div>
           </div>
-
-          {/* Card 4: Meta Pixel (Facebook / Instagram) */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
-                  <Activity className="h-4 w-4" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-neutral-900">
-                    Meta Pixel (Facebook / Instagram)
-                  </h2>
-                  <p className="text-xs text-neutral-500">
-                    Rastreamento oficial automático de visualizações e agendamentos no site público.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={pixelCfg.enabled}
-                onClick={() => updatePixel({ enabled: !pixelCfg.enabled })}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
-                  pixelCfg.enabled
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                    : 'border-neutral-200 bg-neutral-100 text-neutral-600'
-                }`}
-              >
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    pixelCfg.enabled ? 'bg-emerald-500' : 'bg-neutral-400'
-                  }`}
-                />
-                {pixelCfg.enabled ? 'Ativo' : 'Inativo'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700">
-                  ID do Pixel (Pixel ID numérico)
-                </label>
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={pixelCfg.pixel_id}
-                  onChange={(e) =>
-                    updatePixel({
-                      pixel_id: sanitizePixelId(e.target.value),
-                    })
-                  }
-                  placeholder="Ex.: 1234567890123456"
-                  className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                />
-                <p className="mt-1 text-[11px] text-neutral-500">
-                  Apenas dígitos numéricos; espaços acidentais são removidos automaticamente.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3">
-                <p className="text-xs font-bold text-neutral-800">Eventos padrão disparados</p>
-                <div className="mt-2 space-y-1.5 text-xs text-neutral-700">
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={pixelCfg.events.page_view}
-                      onChange={(e) =>
-                        updatePixel({
-                          events: { ...pixelCfg.events, page_view: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">PageView</code> (visualização da página)
-                    </span>
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={pixelCfg.events.view_content}
-                      onChange={(e) =>
-                        updatePixel({
-                          events: { ...pixelCfg.events, view_content: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">ViewContent</code> (filtro / revisão / modelo)
-                    </span>
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={pixelCfg.events.lead_contact}
-                      onChange={(e) =>
-                        updatePixel({
-                          events: { ...pixelCfg.events, lead_contact: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">Lead / Contact</code> (clique no WhatsApp)
-                    </span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <details className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-xs">
-              <summary className="cursor-pointer font-semibold text-neutral-700">
-                Código base / complementar opcional (avançado)
-              </summary>
-              <p className="mt-1.5 text-[11px] text-neutral-500">
-                O script oficial (<code className="font-mono">fbq(&apos;init&apos;, PIXEL_ID)</code> +{' '}
-                <code className="font-mono">PageView</code>) já é injetado automaticamente ao ativar o Pixel. Use este campo apenas para comandos adicionais opcionais.
-              </p>
-              <textarea
-                rows={3}
-                value={pixelCfg.custom_code || ''}
-                onChange={(e) => updatePixel({ custom_code: e.target.value })}
-                placeholder="// Ex.: fbq('trackCustom', 'TabelaRevisoesHonda');"
-                className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-[11px]"
-              />
-            </details>
-          </div>
-
-          {/* Card 5: Tag do Google (Google Ads e GA4) */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
-                  <Activity className="h-4 w-4" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-neutral-900">
-                    Tag do Google (Google Ads e GA4)
-                  </h2>
-                  <p className="text-xs text-neutral-500">
-                    Injeção automática do <code className="font-mono">gtag.js</code> para Google Analytics 4 e conversões do Google Ads.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={googleTagCfg.enabled}
-                onClick={() => updateGoogleTag({ enabled: !googleTagCfg.enabled })}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
-                  googleTagCfg.enabled
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                    : 'border-neutral-200 bg-neutral-100 text-neutral-600'
-                }`}
-              >
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    googleTagCfg.enabled ? 'bg-emerald-500' : 'bg-neutral-400'
-                  }`}
-                />
-                {googleTagCfg.enabled ? 'Ativo' : 'Inativo'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div className="space-y-3">
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
-                    ID do Google Analytics 4 (GA4)
-                  </label>
-                  <input
-                    type="text"
-                    value={googleTagCfg.ga4_id}
-                    onChange={(e) =>
-                      updateGoogleTag({
-                        ga4_id: sanitizeGoogleTagId(e.target.value),
-                      })
-                    }
-                    placeholder="Ex.: G-XXXXXXXXXX"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
-                    ID do Google Ads
-                  </label>
-                  <input
-                    type="text"
-                    value={googleTagCfg.ads_id}
-                    onChange={(e) =>
-                      updateGoogleTag({
-                        ads_id: sanitizeGoogleTagId(e.target.value),
-                      })
-                    }
-                    placeholder="Ex.: AW-1234567890"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
-                    Rótulo de conversão Google Ads (opcional)
-                  </label>
-                  <input
-                    type="text"
-                    value={googleTagCfg.conversion_label || ''}
-                    onChange={(e) =>
-                      updateGoogleTag({
-                        conversion_label: sanitizeGoogleConversionLabel(e.target.value),
-                      })
-                    }
-                    placeholder="Ex.: AbC1dEfGhIjK_12345"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                  />
-                  <p className="mt-1 text-[11px] text-neutral-500">
-                    Dispara <code className="font-mono">gtag(&apos;event&apos;, &apos;conversion&apos;, &#123; send_to: &apos;AW-ID/ROTULO&apos; &#125;)</code> nos cliques de WhatsApp.
-                  </p>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3">
-                <p className="text-xs font-bold text-neutral-800">Eventos padrão disparados</p>
-                <div className="mt-2 space-y-1.5 text-xs text-neutral-700">
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={googleTagCfg.events.page_view}
-                      onChange={(e) =>
-                        updateGoogleTag({
-                          events: { ...googleTagCfg.events, page_view: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">page_view</code> (visualização da página)
-                    </span>
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={googleTagCfg.events.view_content}
-                      onChange={(e) =>
-                        updateGoogleTag({
-                          events: { ...googleTagCfg.events, view_content: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">view_item</code> (filtro / revisão / modelo)
-                    </span>
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={googleTagCfg.events.lead_contact}
-                      onChange={(e) =>
-                        updateGoogleTag({
-                          events: { ...googleTagCfg.events, lead_contact: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">generate_lead / conversion</code> (clique no WhatsApp)
-                    </span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <details className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-xs">
-              <summary className="cursor-pointer font-semibold text-neutral-700">
-                Código complementar opcional (avançado)
-              </summary>
-              <p className="mt-1.5 text-[11px] text-neutral-500">
-                A tag global <code className="font-mono">gtag(&apos;config&apos;, ID)</code> já é carregada automaticamente ao ativar. Use este campo apenas para comandos extras opcionais.
-              </p>
-              <textarea
-                rows={3}
-                value={googleTagCfg.custom_code || ''}
-                onChange={(e) => updateGoogleTag({ custom_code: e.target.value })}
-                placeholder="// Ex.: gtag('set', { currency: 'BRL' });"
-                className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-[11px]"
-              />
-            </details>
-          </div>
-
-          {/* Card 6: TikTok Pixel */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-900 text-white">
-                  <Activity className="h-4 w-4" />
-                </div>
-                <div>
-                  <h2 className="text-base font-bold text-neutral-900">
-                    TikTok Pixel
-                  </h2>
-                  <p className="text-xs text-neutral-500">
-                    Rastreamento oficial automático do TikTok Ads para visualizações e contatos via WhatsApp.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                role="switch"
-                aria-checked={tiktokPixelCfg.enabled}
-                onClick={() => updateTikTokPixel({ enabled: !tiktokPixelCfg.enabled })}
-                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
-                  tiktokPixelCfg.enabled
-                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
-                    : 'border-neutral-200 bg-neutral-100 text-neutral-600'
-                }`}
-              >
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${
-                    tiktokPixelCfg.enabled ? 'bg-emerald-500' : 'bg-neutral-400'
-                  }`}
-                />
-                {tiktokPixelCfg.enabled ? 'Ativo' : 'Inativo'}
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <div>
-                <label className="block text-xs font-semibold text-neutral-700">
-                  ID do TikTok Pixel (Pixel Code)
-                </label>
-                <input
-                  type="text"
-                  value={tiktokPixelCfg.pixel_id}
-                  onChange={(e) =>
-                    updateTikTokPixel({
-                      pixel_id: sanitizeTikTokPixelId(e.target.value),
-                    })
-                  }
-                  placeholder="Ex.: CXXXXXXXXXXXXXXXXX"
-                  className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                />
-                <p className="mt-1 text-[11px] text-neutral-500">
-                  Código alfanumérico exibido no TikTok Ads Manager; espaços são removidos automaticamente.
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3">
-                <p className="text-xs font-bold text-neutral-800">Eventos padrão disparados</p>
-                <div className="mt-2 space-y-1.5 text-xs text-neutral-700">
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={tiktokPixelCfg.events.page_view}
-                      onChange={(e) =>
-                        updateTikTokPixel({
-                          events: { ...tiktokPixelCfg.events, page_view: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">PageView</code> (<code className="font-mono">ttq.page()</code>)
-                    </span>
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={tiktokPixelCfg.events.view_content}
-                      onChange={(e) =>
-                        updateTikTokPixel({
-                          events: { ...tiktokPixelCfg.events, view_content: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">ViewContent</code> (filtro / revisão / modelo)
-                    </span>
-                  </label>
-
-                  <label className="flex cursor-pointer items-center gap-2">
-                    <input
-                      type="checkbox"
-                      checked={tiktokPixelCfg.events.lead_contact}
-                      onChange={(e) =>
-                        updateTikTokPixel({
-                          events: { ...tiktokPixelCfg.events, lead_contact: e.target.checked },
-                        })
-                      }
-                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
-                    />
-                    <span>
-                      <code className="font-mono font-semibold">Contact / SubmitForm</code> (clique no WhatsApp)
-                    </span>
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            <details className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-xs">
-              <summary className="cursor-pointer font-semibold text-neutral-700">
-                Código complementar opcional (avançado)
-              </summary>
-              <p className="mt-1.5 text-[11px] text-neutral-500">
-                O script oficial (<code className="font-mono">ttq.load(PIXEL_ID)</code> +{' '}
-                <code className="font-mono">ttq.page()</code>) já é injetado automaticamente ao ativar o TikTok Pixel. Use este campo apenas para comandos extras opcionais.
-              </p>
-              <textarea
-                rows={3}
-                value={tiktokPixelCfg.custom_code || ''}
-                onChange={(e) => updateTikTokPixel({ custom_code: e.target.value })}
-                placeholder="// Ex.: ttq.track('ClickButton');"
-                className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-[11px]"
-              />
-            </details>
-          </div>
         </div>
 
-        {/* Painel Lateral Direito: Análise rápida & Prévias */}
+        {/* Painel Lateral Direito: Prévias */}
         <div className="space-y-5 lg:col-span-4">
-          {/* Análise rápida */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-            <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-neutral-900">Análise rápida</h3>
-              <span className="font-mono text-sm font-extrabold text-emerald-600 tabular-nums">
-                {auditScore}/100
-              </span>
-            </div>
-
-            <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-neutral-100">
-              <div
-                className="h-full rounded-full bg-emerald-500 transition-all"
-                style={{ width: `${auditScore}%` }}
-              />
-            </div>
-
-            <ul className="mt-4 space-y-2 text-xs">
-              {auditItems.map((item) => (
-                <li key={item.label} className="flex items-center gap-2">
-                  {item.ok ? (
-                    <Check className="h-4 w-4 shrink-0 text-emerald-600" />
-                  ) : (
-                    <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
-                  )}
-                  <span className={item.ok ? 'text-neutral-700' : 'text-amber-800'}>
-                    {item.label}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
           {/* Pré-visualização no Google */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-5">
             <div className="flex items-center justify-between">
@@ -1647,10 +1491,29 @@ export function TabSeoIdentity({
                 previewDevice === 'mobile' ? 'max-w-[290px]' : ''
               }`}
             >
-              <p className="truncate text-[11px] text-neutral-600">
-                {draft.canonical_url || 'https://revisoes.rodaleve.com.br'}
-              </p>
-              <p className="mt-0.5 line-clamp-1 text-sm font-semibold text-[#1a0dab]">
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-neutral-50">
+                  {faviconPreviewSrc ? (
+                    <img
+                      src={faviconPreviewSrc}
+                      alt=""
+                      referrerPolicy="no-referrer"
+                      className="h-4 w-4 object-contain"
+                    />
+                  ) : (
+                    <span className="font-display text-[10px] font-extrabold text-[#E4002B]">R</span>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-[11px] font-medium leading-tight text-neutral-900">
+                    {draft.short_name || draft.company_name || 'Rodaleve Honda'}
+                  </p>
+                  <p className="truncate text-[10px] leading-tight text-neutral-500">
+                    {draft.canonical_url || 'https://revisoes.rodaleve.com.br'}
+                  </p>
+                </div>
+              </div>
+              <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-[#1a0dab]">
                 {draft.meta_title || 'Título do site'}
               </p>
               <p className="mt-1 line-clamp-2 text-xs leading-snug text-neutral-600">
@@ -1666,15 +1529,18 @@ export function TabSeoIdentity({
             </h3>
             <div className="mt-3 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
               <div className="aspect-[1200/630] w-full bg-neutral-200">
-                {draft.og_image ? (
+                {ogPreviewSrc && !fieldErrors.og ? (
                   <img
-                    src={draft.og_image}
+                    src={ogPreviewSrc}
                     alt="OG Preview"
+                    referrerPolicy="no-referrer"
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center text-xs text-neutral-400">
-                    Sem imagem og:image
+                  <div className="flex h-full items-center justify-center px-4 text-center text-xs text-neutral-500">
+                    {fieldErrors.og
+                      ? 'Falha ao carregar imagem og:image'
+                      : 'Sem imagem og:image'}
                   </div>
                 )}
               </div>

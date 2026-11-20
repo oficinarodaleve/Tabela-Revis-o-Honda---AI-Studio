@@ -1,10 +1,30 @@
 import { useEffect } from 'react';
 import { FaqItem, SeoSettings } from '../types';
 
+function resolveAbsoluteMediaUrl(rawUrl: string | undefined, canonicalBase?: string): string {
+  if (!rawUrl) return '';
+  const trimmed = rawUrl.trim();
+  if (!trimmed) return '';
+  if (
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('data:')
+  ) {
+    return trimmed;
+  }
+  const normalizedPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : (canonicalBase || '').replace(/\/+$/, '');
+  return origin ? `${origin}${normalizedPath}` : normalizedPath;
+}
+
 export function buildJsonLd(seo: SeoSettings, faqs: FaqItem[] = []) {
   const sameAs = [seo.instagram_url, seo.facebook_url, seo.youtube_url].filter(Boolean);
   const canonical = seo.canonical_url || (typeof window !== 'undefined' ? window.location.origin : '');
   const dealerType = seo.business_type || 'MotorcycleDealer';
+  const absoluteLogo = resolveAbsoluteMediaUrl(seo.logo_url, canonical);
 
   const schemas: Record<string, unknown>[] = [
     {
@@ -13,7 +33,7 @@ export function buildJsonLd(seo: SeoSettings, faqs: FaqItem[] = []) {
       name: seo.company_name || 'Rodaleve Honda',
       alternateName: seo.short_name || 'Rodaleve',
       url: canonical,
-      logo: seo.logo_url || undefined,
+      logo: absoluteLogo || undefined,
       sameAs: sameAs.length > 0 ? sameAs : undefined,
     },
     ...(seo.units || []).map((u) => ({
@@ -76,6 +96,11 @@ function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
   el.setAttribute('content', content);
 }
 
+function removeMeta(attr: 'name' | 'property', key: string) {
+  const el = document.head.querySelector(`meta[${attr}="${key}"]`);
+  if (el) el.remove();
+}
+
 export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?: FaqItem[] }) {
   useEffect(() => {
     if (!seo) return;
@@ -87,58 +112,76 @@ export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?
       // Ignora bloqueio em sandbox/iframe
     }
 
-    document.title = seo.meta_title || 'Rodaleve Honda – Tabela de Manutenção e Revisões';
-    upsertMeta('name', 'description', seo.meta_description || '');
-    upsertMeta('name', 'keywords', seo.meta_keywords || '');
-    upsertMeta('name', 'author', seo.author_brand || seo.company_name || 'Rodaleve Honda');
-    upsertMeta('name', 'robots', seo.robots_policy || 'index, follow');
+    try {
+      document.title = seo.meta_title || 'Rodaleve Honda – Tabela de Manutenção e Revisões';
+      upsertMeta('name', 'description', seo.meta_description || '');
+      upsertMeta('name', 'keywords', seo.meta_keywords || '');
+      upsertMeta('name', 'author', seo.author_brand || seo.company_name || 'Rodaleve Honda');
+      upsertMeta('name', 'robots', seo.robots_policy || 'index, follow');
 
-    const ogTitle = seo.og_same_title ? seo.meta_title : seo.og_title || seo.meta_title;
-    const ogDesc = seo.og_same_description ? seo.meta_description : seo.og_description || seo.meta_description;
+      const ogTitle = seo.og_same_title ? seo.meta_title : seo.og_title || seo.meta_title;
+      const ogDesc = seo.og_same_description ? seo.meta_description : seo.og_description || seo.meta_description;
+      const resolvedOgImage = resolveAbsoluteMediaUrl(seo.og_image, seo.canonical_url);
 
-    upsertMeta('property', 'og:type', seo.og_type || 'website');
-    upsertMeta('property', 'og:title', ogTitle || '');
-    upsertMeta('property', 'og:description', ogDesc || '');
-    upsertMeta('property', 'og:site_name', seo.company_name || seo.short_name || 'Rodaleve Honda');
-    if (seo.og_image) upsertMeta('property', 'og:image', seo.og_image);
-
-    upsertMeta('name', 'twitter:card', seo.twitter_card || 'summary_large_image');
-    upsertMeta('name', 'twitter:title', ogTitle || '');
-    upsertMeta('name', 'twitter:description', ogDesc || '');
-    if (seo.og_image) upsertMeta('name', 'twitter:image', seo.og_image);
-
-    // Canonical
-    const canonicalUrl = seo.canonical_url || `${window.location.origin}${window.location.pathname}`;
-    let canonicalLink = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
-    if (!canonicalLink) {
-      canonicalLink = document.createElement('link');
-      canonicalLink.rel = 'canonical';
-      document.head.appendChild(canonicalLink);
-    }
-    canonicalLink.href = canonicalUrl;
-
-    // Favicon
-    let iconLink = document.head.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
-    if (seo.favicon_url) {
-      if (!iconLink) {
-        iconLink = document.createElement('link');
-        iconLink.rel = 'icon';
-        document.head.appendChild(iconLink);
+      upsertMeta('property', 'og:type', seo.og_type || 'website');
+      upsertMeta('property', 'og:title', ogTitle || '');
+      upsertMeta('property', 'og:description', ogDesc || '');
+      upsertMeta('property', 'og:site_name', seo.company_name || seo.short_name || 'Rodaleve Honda');
+      if (resolvedOgImage) {
+        upsertMeta('property', 'og:image', resolvedOgImage);
+      } else {
+        removeMeta('property', 'og:image');
       }
-      iconLink.href = seo.favicon_url;
-    } else if (iconLink) {
-      iconLink.remove();
-    }
 
-    // JSON-LD Schema.org (Organization + MotorcycleDealer + FAQPage)
-    let ldScript = document.head.querySelector('script[data-rodaleve-jsonld="true"]') as HTMLScriptElement | null;
-    if (!ldScript) {
-      ldScript = document.createElement('script');
-      ldScript.type = 'application/ld+json';
-      ldScript.setAttribute('data-rodaleve-jsonld', 'true');
-      document.head.appendChild(ldScript);
+      upsertMeta('name', 'twitter:card', seo.twitter_card || 'summary_large_image');
+      upsertMeta('name', 'twitter:title', ogTitle || '');
+      upsertMeta('name', 'twitter:description', ogDesc || '');
+      if (resolvedOgImage) {
+        upsertMeta('name', 'twitter:image', resolvedOgImage);
+      } else {
+        removeMeta('name', 'twitter:image');
+      }
+
+      // Canonical
+      const canonicalUrl = seo.canonical_url || `${window.location.origin}${window.location.pathname}`;
+      let canonicalLink = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
+      if (!canonicalLink) {
+        canonicalLink = document.createElement('link');
+        canonicalLink.rel = 'canonical';
+        document.head.appendChild(canonicalLink);
+      }
+      canonicalLink.href = canonicalUrl;
+
+      // Favicon
+      let iconLink = document.head.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
+      const resolvedFavicon = seo.favicon_url?.trim()
+        ? seo.favicon_url.trim().startsWith('uploads/')
+          ? `/${seo.favicon_url.trim()}`
+          : seo.favicon_url.trim()
+        : '';
+      if (resolvedFavicon) {
+        if (!iconLink) {
+          iconLink = document.createElement('link');
+          iconLink.rel = 'icon';
+          document.head.appendChild(iconLink);
+        }
+        iconLink.href = resolvedFavicon;
+      } else if (iconLink) {
+        iconLink.remove();
+      }
+
+      // JSON-LD Schema.org (Organization + MotorcycleDealer + FAQPage)
+      let ldScript = document.head.querySelector('script[data-rodaleve-jsonld="true"]') as HTMLScriptElement | null;
+      if (!ldScript) {
+        ldScript = document.createElement('script');
+        ldScript.type = 'application/ld+json';
+        ldScript.setAttribute('data-rodaleve-jsonld', 'true');
+        document.head.appendChild(ldScript);
+      }
+      ldScript.textContent = JSON.stringify(buildJsonLd(seo, faqs));
+    } catch {
+      // Ignore transient DOM head update issues
     }
-    ldScript.textContent = JSON.stringify(buildJsonLd(seo, faqs));
   }, [seo, faqs]);
 
   return null;

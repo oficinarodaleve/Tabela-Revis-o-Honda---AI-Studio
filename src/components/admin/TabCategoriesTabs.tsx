@@ -11,7 +11,9 @@ interface TabCategoriesTabsProps {
   onToast: (type: 'success' | 'error', msg: string) => void;
   autoSaveEnabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveStart?: () => void;
   onAutoSaveComplete?: () => void;
+  onAutoSaveError?: (msg?: string) => void;
 }
 
 export function TabCategoriesTabs({
@@ -21,7 +23,9 @@ export function TabCategoriesTabs({
   onToast,
   autoSaveEnabled = true,
   onDirtyChange,
+  onAutoSaveStart,
   onAutoSaveComplete,
+  onAutoSaveError,
 }: TabCategoriesTabsProps) {
   const [segDrafts, setSegDrafts] = useState<Array<{ slug: string; name: string; visible: boolean }>>([]);
   const [tabDrafts, setTabDrafts] = useState<
@@ -66,6 +70,7 @@ export function TabCategoriesTabs({
     if (segDrafts.some((s) => !s.name.trim())) return;
 
     const timer = setTimeout(async () => {
+      onAutoSaveStart?.();
       saveGestorDraftCache('categorias', { segments: segDrafts, revision_tabs: tabDrafts });
       try {
         const res = await adminFetch('/api/admin/categories', {
@@ -73,17 +78,26 @@ export function TabCategoriesTabs({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ segments: segDrafts, revision_tabs: tabDrafts }),
         });
-        if (res.ok) {
-          await onSaved();
-          onAutoSaveComplete?.();
-        }
+        if (!res.ok) throw new Error('Erro ao salvar categorias.');
+        await onSaved();
+        onAutoSaveComplete?.();
       } catch {
-        // Cache local já salvo
+        onAutoSaveError?.('Erro ao salvar — tente novamente');
       }
-    }, 550);
+    }, 850);
 
     return () => clearTimeout(timer);
-  }, [autoSaveEnabled, isDirty, saving, segDrafts, tabDrafts, onSaved, onAutoSaveComplete]);
+  }, [
+    autoSaveEnabled,
+    isDirty,
+    saving,
+    segDrafts,
+    tabDrafts,
+    onSaved,
+    onAutoSaveStart,
+    onAutoSaveComplete,
+    onAutoSaveError,
+  ]);
 
   const handleAddSegment = () => {
     if (!newSegName.trim()) return;

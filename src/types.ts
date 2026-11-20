@@ -126,6 +126,9 @@ export interface SeoSettings {
   logo_url: string;
   logo_alt: string;
   short_name?: string;
+  gestor_logo_url?: string;
+  gestor_title?: string;
+  gestor_subtitle?: string;
   meta_title: string;
   meta_description: string;
   meta_keywords: string;
@@ -177,10 +180,71 @@ export interface CustomIntegration {
   active: boolean;
 }
 
+export interface TrackingPixelsAdminConfig {
+  gtm: {
+    enabled: boolean;
+    container_id: string;
+  };
+  ga4: {
+    enabled: boolean;
+    measurement_id: string;
+  };
+  google_ads: {
+    enabled: boolean;
+    ads_id: string;
+    conversion_label: string;
+  };
+  meta_pixel: {
+    enabled: boolean;
+    pixel_id: string;
+    has_capi_token: boolean;
+    capi_token_masked: string;
+    domain_verification: string;
+  };
+  tiktok_pixel: {
+    enabled: boolean;
+    pixel_id: string;
+    has_events_token: boolean;
+    events_token_masked: string;
+  };
+  google_search_console?: {
+    verification_code: string;
+  };
+}
+
+export interface PublicTrackingConfig {
+  gtm: {
+    enabled: boolean;
+    container_id: string;
+  };
+  ga4: {
+    enabled: boolean;
+    measurement_id: string;
+  };
+  google_ads: {
+    enabled: boolean;
+    ads_id: string;
+    conversion_label: string;
+  };
+  meta_pixel: {
+    enabled: boolean;
+    pixel_id: string;
+    domain_verification: string;
+  };
+  tiktok_pixel: {
+    enabled: boolean;
+    pixel_id: string;
+  };
+  google_search_console?: {
+    verification_code: string;
+  };
+}
+
 export interface IntegrationsData {
   google_maps: GoogleMapsIntegration;
   microwork: MicroWorkConfig;
   custom_integrations: CustomIntegration[];
+  tracking_pixels?: TrackingPixelsAdminConfig;
 }
 
 export type TextAlignOption = 'left' | 'center' | 'right';
@@ -226,6 +290,7 @@ export interface PageSectionBlock {
 }
 
 export interface VisualBuilderConfig {
+  sectionsVersion?: number;
   sections: PageSectionBlock[];
   siteContent: Record<string, EditableTextEntry>;
   modelOrder: number[];
@@ -247,6 +312,7 @@ export interface PublicBootstrapData {
     api_key: string;
   };
   public_integrations: CustomIntegration[];
+  tracking_config?: PublicTrackingConfig;
   visual_builder?: VisualBuilderConfig | null;
 }
 

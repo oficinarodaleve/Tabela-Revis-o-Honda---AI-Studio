@@ -1,7 +1,8 @@
 import { Part, RevisionPart } from '../types';
 
 export function formatBRL(value: number): string {
-  return value.toLocaleString('pt-BR', {
+  const safeValue = Number.isFinite(Number(value)) ? Number(value) : 0;
+  return safeValue.toLocaleString('pt-BR', {
     style: 'currency',
     currency: 'BRL',
     minimumFractionDigits: 2,
@@ -29,23 +30,26 @@ export function formatDateTimeBR(isoOrText: string): string {
  * For all other units (UN, L, JG, PAR, KIT, G, SRV, or custom), line total is quantity * part.price.
  */
 export function computeLineTotal(part: Part, quantity: number): number {
-  if (!part || quantity <= 0) return 0;
+  const qty = Number(quantity);
+  const price = Number(part?.price);
+  if (!part || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(price)) return 0;
   if (part.unit === 'ML') {
-    return Number(((quantity / 100) * part.price).toFixed(2));
+    return Number(((qty / 100) * price).toFixed(2));
   }
-  return Number((quantity * part.price).toFixed(2));
+  return Number((qty * price).toFixed(2));
 }
 
 export function formatPartQuantity(part: Part, quantity: number): string {
-  if (part.unit === 'ML') {
-    const liters = quantity / 1000;
-    if (quantity >= 1000 && quantity % 100 === 0) {
-      return `${liters.toLocaleString('pt-BR', { minimumFractionDigits: liters % 1 === 0 ? 0 : 1, maximumFractionDigits: 1 })}L (${quantity} ml)`;
+  const qty = Number.isFinite(Number(quantity)) ? Number(quantity) : 0;
+  if (part?.unit === 'ML') {
+    const liters = qty / 1000;
+    if (qty >= 1000 && qty % 100 === 0) {
+      return `${liters.toLocaleString('pt-BR', { minimumFractionDigits: liters % 1 === 0 ? 0 : 1, maximumFractionDigits: 1 })}L (${qty} ml)`;
     }
-    return `${quantity} ml`;
+    return `${qty} ml`;
   }
-  const unitLabel = (part.unit || 'UN').toLowerCase();
-  return `${quantity} ${unitLabel}`;
+  const unitLabel = (part?.unit || 'UN').toLowerCase();
+  return `${qty} ${unitLabel}`;
 }
 
 export interface ComputedRevisionSummary {
@@ -64,8 +68,10 @@ export function computeModelRevision(
   revisionParts: RevisionPart[],
   partsMap: Record<string, Part>
 ): ComputedRevisionSummary {
-  const matching = revisionParts.filter(
-    (rp) => rp.model_id === modelId && rp.revision_number === revisionNumber
+  const safeRevisionParts = Array.isArray(revisionParts) ? revisionParts : [];
+  const safePartsMap = partsMap && typeof partsMap === 'object' ? partsMap : {};
+  const matching = safeRevisionParts.filter(
+    (rp) => rp && rp.model_id === modelId && rp.revision_number === revisionNumber
   );
 
   let totalWithOptionals = 0;
@@ -73,7 +79,7 @@ export function computeModelRevision(
   const items: ComputedRevisionSummary['items'] = [];
 
   for (const rp of matching) {
-    const part = partsMap[rp.part_code];
+    const part = safePartsMap[rp.part_code];
     if (!part) continue;
     const lineTotal = computeLineTotal(part, rp.quantity);
     items.push({ revisionPart: rp, part, lineTotal });

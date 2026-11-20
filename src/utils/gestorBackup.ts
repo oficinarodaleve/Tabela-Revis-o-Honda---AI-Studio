@@ -12,7 +12,7 @@ import {
 } from '../types';
 import { adminFetch } from './adminAuth';
 import { computeModelRevision } from './pricing';
-import { loadLocalVisualConfig } from './visualBuilder';
+import { createDefaultVisualConfig, loadLocalVisualConfig } from './visualBuilder';
 
 const AUTOSAVE_PREF_KEY = 'rodaleve_gestor_autosave';
 const DRAFT_CACHE_PREFIX = 'rodaleve_gestor_draft_';
@@ -64,6 +64,7 @@ export interface GestorExportSource {
   last_price_sync: string;
   integrations: IntegrationsData;
   visual_builder?: Partial<VisualBuilderConfig> | null;
+  embedded_uploads?: Record<string, string>;
 }
 
 export interface BackupRestorePayload {
@@ -74,8 +75,86 @@ export interface BackupRestorePayload {
   revision_parts?: RevisionPart[];
   faqs?: FaqItem[];
   seo?: SeoSettings;
+  gestor_branding?: {
+    gestor_logo_url?: string;
+    gestor_title?: string;
+    gestor_subtitle?: string;
+  };
   integrations?: Partial<IntegrationsData>;
   visual_builder?: Partial<VisualBuilderConfig> | null;
+  embedded_uploads?: Record<string, string>;
+}
+
+function extractUploadFilename(url: string | undefined): string | null {
+  if (!url || typeof url !== 'string') return null;
+  const trimmed = url.trim();
+  if (!trimmed || trimmed.startsWith('data:')) return null;
+  const match = /(?:^|\/)uploads\/([^/?#]+)/i.exec(trimmed);
+  return match?.[1] || null;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Falha ao converter imagem para backup.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+export async function collectEmbeddedUploads(
+  source: GestorExportSource
+): Promise<Record<string, string>> {
+  const urls = new Set<string>();
+  const addUrl = (u?: string) => {
+    if (u && /(?:^|\/)uploads\//i.test(u.trim())) {
+      urls.add(u.trim());
+    }
+  };
+
+  addUrl(source.seo?.favicon_url);
+  addUrl(source.seo?.logo_url);
+  addUrl(source.seo?.gestor_logo_url);
+  addUrl(source.seo?.og_image);
+
+  for (const m of source.models || []) {
+    addUrl(m.image_url);
+  }
+  if (source.visual_builder?.imageOverrides) {
+    for (const v of Object.values(source.visual_builder.imageOverrides)) {
+      addUrl(v);
+    }
+  }
+  for (const s of source.visual_builder?.sections || []) {
+    addUrl(s.customData?.image_url);
+  }
+
+  const embedded: Record<string, string> = {};
+  await Promise.all(
+    Array.from(urls).map(async (rawUrl) => {
+      const filename = extractUploadFilename(rawUrl);
+      if (!filename) return;
+      const fetchPath = rawUrl.startsWith('http')
+        ? rawUrl
+        : rawUrl.startsWith('/')
+          ? rawUrl
+          : `/${rawUrl}`;
+      try {
+        const res = await fetch(fetchPath);
+        if (!res.ok) return;
+        const blob = await res.blob();
+        if (blob.size > 8 * 1024 * 1024) return;
+        const dataUrl = await blobToDataUrl(blob);
+        if (dataUrl.startsWith('data:')) {
+          embedded[filename] = dataUrl;
+        }
+      } catch {
+        // Ignora silenciosamente se URL externa ou bloqueada
+      }
+    })
+  );
+
+  return embedded;
 }
 
 export function buildGestorBackupFiles(source: GestorExportSource): Record<string, string> {
@@ -169,9 +248,13 @@ export function buildGestorBackupFiles(source: GestorExportSource): Record<strin
       ...c,
       value: /secret|token|webhook/i.test(c.name) ? '•••• (protegido)' : c.value,
     })),
+    tracking_pixels: source.integrations.tracking_pixels,
   };
 
-  const visualBuilderData = source.visual_builder || loadLocalVisualConfig() || null;
+  const visualBuilderData =
+    source.visual_builder ||
+    loadLocalVisualConfig() ||
+    createDefaultVisualConfig(source.models.map((m) => m.id));
   const siteConteudoELayoutJson = {
     exported_at: exportedAt,
     visual_builder: visualBuilderData,
@@ -200,7 +283,46 @@ export function buildGestorBackupFiles(source: GestorExportSource): Record<strin
     visual_builder: visualBuilderData,
   };
 
+  const configGestorJson = {
+    backup_version: '1.0',
+    exported_at: exportedAt,
+    gestor_branding: {
+      gestor_logo_url: source.seo.gestor_logo_url || '/rodaleve-gestor-logo.svg',
+      gestor_title: source.seo.gestor_title || 'Gestor Rodaleve',
+      gestor_subtitle: source.seo.gestor_subtitle || 'Tabela de manutenção e revisões',
+    },
+    seo: source.seo,
+    integrations: integracoesSeguras,
+    segments: source.segments,
+    revision_tabs: source.revision_tabs,
+    parts: source.parts,
+    models: source.models,
+    revision_parts: source.revision_parts,
+    faqs: source.faqs,
+    visual_builder: visualBuilderData,
+    embedded_uploads:
+      source.embedded_uploads && Object.keys(source.embedded_uploads).length > 0
+        ? source.embedded_uploads
+        : undefined,
+  };
+
+  const siteConfigJson = {
+    backup_version: '1.0',
+    exported_at: exportedAt,
+    brand: source.seo.company_name || 'Rodaleve Honda',
+    seo: source.seo,
+    units: source.seo.units,
+    tracking_pixels: integracoesSeguras.tracking_pixels,
+    visual_builder: visualBuilderData,
+    faqs: source.faqs,
+    segments: source.segments,
+    revision_tabs: source.revision_tabs,
+    models: source.models,
+  };
+
   return {
+    'config-gestor.json': JSON.stringify(configGestorJson, null, 2),
+    'site-config.json': JSON.stringify(siteConfigJson, null, 2),
     'revisoes.json': JSON.stringify(revisoesJson, null, 2),
     'precos-e-pecas.json': JSON.stringify(precosEPecasJson, null, 2),
     'modelos-e-fotos.json': JSON.stringify(modelosEFotosJson, null, 2),
@@ -222,6 +344,15 @@ function triggerBlobDownload(blob: Blob, filename: string): void {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export function exportGestorConfigJson(source: GestorExportSource): string {
+  const files = buildGestorBackupFiles(source);
+  const jsonContent = files['config-gestor.json'];
+  const blob = new Blob([jsonContent], { type: 'application/json;charset=utf-8' });
+  const filename = 'configuracoes-gestor.json';
+  triggerBlobDownload(blob, filename);
+  return filename;
 }
 
 export async function exportGestorBackupZip(source: GestorExportSource): Promise<string> {
@@ -269,41 +400,205 @@ export async function exportFullSiteZip(source: GestorExportSource): Promise<str
   return filename;
 }
 
-export async function parseBackupFile(file: File): Promise<BackupRestorePayload> {
+export interface ParsedBackupSummary {
+  fileName: string;
+  format: 'json' | 'zip';
+  backupVersion: string;
+  exportedAt: string | null;
+  sections: string[];
+  counts: {
+    models: number;
+    parts: number;
+    revision_parts: number;
+    faqs: number;
+    segments: number;
+    revision_tabs: number;
+    units: number;
+  };
+}
+
+export interface ParsedBackupResult {
+  payload: BackupRestorePayload;
+  summary: ParsedBackupSummary;
+}
+
+function validateAndSummarizePayload(
+  raw: BackupRestorePayload & { backup_version?: string; exported_at?: string },
+  fileName: string,
+  format: 'json' | 'zip'
+): ParsedBackupResult {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Estrutura de backup inválida: o arquivo não contém um objeto JSON válido.');
+  }
+
+  const payload: BackupRestorePayload = {
+    segments: Array.isArray(raw.segments) ? raw.segments : undefined,
+    revision_tabs: Array.isArray(raw.revision_tabs) ? raw.revision_tabs : undefined,
+    parts: Array.isArray(raw.parts) ? raw.parts : undefined,
+    models: Array.isArray(raw.models) ? raw.models : undefined,
+    revision_parts: Array.isArray(raw.revision_parts) ? raw.revision_parts : undefined,
+    faqs: Array.isArray(raw.faqs) ? raw.faqs : undefined,
+    seo: raw.seo && typeof raw.seo === 'object' ? raw.seo : undefined,
+    gestor_branding:
+      raw.gestor_branding && typeof raw.gestor_branding === 'object'
+        ? raw.gestor_branding
+        : undefined,
+    integrations:
+      raw.integrations && typeof raw.integrations === 'object' ? raw.integrations : undefined,
+    visual_builder:
+      raw.visual_builder && typeof raw.visual_builder === 'object'
+        ? raw.visual_builder
+        : undefined,
+    embedded_uploads:
+      raw.embedded_uploads && typeof raw.embedded_uploads === 'object'
+        ? raw.embedded_uploads
+        : undefined,
+  };
+
+  const sections: string[] = [];
+  if (payload.models?.length) sections.push(`Modelos (${payload.models.length})`);
+  if (payload.parts?.length) sections.push(`Peças (${payload.parts.length})`);
+  if (payload.revision_parts?.length) sections.push(`Itens de Revisão (${payload.revision_parts.length})`);
+  if (payload.segments?.length) sections.push(`Segmentos (${payload.segments.length})`);
+  if (payload.revision_tabs?.length) sections.push(`Abas de Revisão (${payload.revision_tabs.length})`);
+  if (payload.faqs?.length) sections.push(`Perguntas Frequentes (${payload.faqs.length})`);
+  if (payload.seo) sections.push('SEO, Logo & Unidades');
+  if (payload.integrations) sections.push('Integrações, APIs & Pixels');
+  if (payload.visual_builder) sections.push('Ordem dos Blocos e Layout Visual');
+  const embeddedCount = payload.embedded_uploads
+    ? Object.keys(payload.embedded_uploads).length
+    : 0;
+  if (embeddedCount > 0) sections.push(`Imagens Anexas (${embeddedCount})`);
+
+  if (sections.length === 0) {
+    throw new Error(
+      'Arquivo reconhecido, mas nenhuma seção válida do Gestor Rodaleve (modelos, peças, SEO, integrações ou FAQs) foi encontrada.'
+    );
+  }
+
+  return {
+    payload,
+    summary: {
+      fileName,
+      format,
+      backupVersion: String(raw.backup_version || '1.0'),
+      exportedAt: typeof raw.exported_at === 'string' ? raw.exported_at : null,
+      sections,
+      counts: {
+        models: payload.models?.length || 0,
+        parts: payload.parts?.length || 0,
+        revision_parts: payload.revision_parts?.length || 0,
+        faqs: payload.faqs?.length || 0,
+        segments: payload.segments?.length || 0,
+        revision_tabs: payload.revision_tabs?.length || 0,
+        units: Array.isArray(payload.seo?.units) ? payload.seo.units.length : 0,
+      },
+    },
+  };
+}
+
+export async function parseAndValidateBackupFile(file: File): Promise<ParsedBackupResult> {
   const lower = file.name.toLowerCase();
 
   if (lower.endsWith('.json')) {
-    const text = await file.text();
-    const parsed = JSON.parse(text) as BackupRestorePayload & {
-      seo?: SeoSettings;
-      visual_builder?: VisualBuilderConfig | null;
-    };
-    return {
-      segments: parsed.segments,
-      revision_tabs: parsed.revision_tabs,
-      parts: parsed.parts,
-      models: parsed.models,
-      revision_parts: parsed.revision_parts,
-      faqs: parsed.faqs,
-      seo: parsed.seo,
-      integrations: parsed.integrations,
-      visual_builder: parsed.visual_builder,
-    };
+    let parsed: BackupRestorePayload & { backup_version?: string; exported_at?: string };
+    try {
+      const text = await file.text();
+      parsed = JSON.parse(text) as BackupRestorePayload & {
+        backup_version?: string;
+        exported_at?: string;
+      };
+    } catch {
+      throw new Error('O arquivo JSON está corrompido ou com sintaxe inválida.');
+    }
+    return validateAndSummarizePayload(parsed, file.name, 'json');
   }
 
   if (lower.endsWith('.zip')) {
-    const zip = await JSZip.loadAsync(file);
+    let zip: JSZip;
+    try {
+      zip = await JSZip.loadAsync(file);
+    } catch {
+      throw new Error('Não foi possível abrir o arquivo .zip. Verifique se o pacote não está corrompido.');
+    }
 
     const readJson = async <T,>(name: string): Promise<T | null> => {
       const entry = zip.file(name) || zip.file(`backup-gestor/${name}`);
       if (!entry) return null;
-      const content = await entry.async('string');
-      return JSON.parse(content) as T;
+      try {
+        const content = await entry.async('string');
+        return JSON.parse(content) as T;
+      } catch {
+        throw new Error(`O arquivo interno "${name}" dentro do ZIP está inválido ou corrompido.`);
+      }
     };
 
-    const resumo = await readJson<BackupRestorePayload>('resumo-geral.json');
+    const extractZipUploads = async (): Promise<Record<string, string>> => {
+      const uploadsMap: Record<string, string> = {};
+      const extMime: Record<string, string> = {
+        png: 'image/png',
+        jpg: 'image/jpeg',
+        jpeg: 'image/jpeg',
+        webp: 'image/webp',
+        svg: 'image/svg+xml',
+        ico: 'image/x-icon',
+        gif: 'image/gif',
+      };
+      const entries = Object.values(zip.files).filter(
+        (f) => !f.dir && /^(?:data\/)?uploads\/[^/]+$/i.test(f.name)
+      );
+      for (const entry of entries) {
+        const filename = entry.name.split('/').pop() || '';
+        const ext = filename.split('.').pop()?.toLowerCase() || '';
+        const mime = extMime[ext];
+        if (!filename || !mime) continue;
+        try {
+          const b64 = await entry.async('base64');
+          uploadsMap[filename] = `data:${mime};base64,${b64}`;
+        } catch {
+          // Ignora arquivo corrompido individualmente
+        }
+      }
+      return uploadsMap;
+    };
+
+    const zipEmbeddedUploads = await extractZipUploads();
+
+    const configGestor = await readJson<
+      BackupRestorePayload & { backup_version?: string; exported_at?: string }
+    >('config-gestor.json');
+    if (
+      configGestor &&
+      (configGestor.models || configGestor.parts || configGestor.seo || configGestor.faqs)
+    ) {
+      return validateAndSummarizePayload(
+        {
+          ...configGestor,
+          embedded_uploads: {
+            ...zipEmbeddedUploads,
+            ...(configGestor.embedded_uploads || {}),
+          },
+        },
+        file.name,
+        'zip'
+      );
+    }
+
+    const resumo = await readJson<
+      BackupRestorePayload & { backup_version?: string; exported_at?: string }
+    >('resumo-geral.json');
     if (resumo && (resumo.models || resumo.parts || resumo.seo || resumo.faqs)) {
-      return resumo;
+      return validateAndSummarizePayload(
+        {
+          ...resumo,
+          embedded_uploads: {
+            ...zipEmbeddedUploads,
+            ...(resumo.embedded_uploads || {}),
+          },
+        },
+        file.name,
+        'zip'
+      );
     }
 
     const rev = await readJson<{ revision_parts?: RevisionPart[] }>('revisoes.json');
@@ -313,24 +608,36 @@ export async function parseBackupFile(file: File): Promise<BackupRestorePayload>
     const cats = await readJson<{ segments?: Segment[]; revision_tabs?: RevisionTab[] }>(
       'categorias-e-abas.json'
     );
-    const seo = await readJson<{ seo?: SeoSettings }>('seo-e-identidade.json');
+    const seo = await readJson<{ seo?: SeoSettings; exported_at?: string }>('seo-e-identidade.json');
     const ints = await readJson<Partial<IntegrationsData>>('integracoes-e-apis.json');
     const layout = await readJson<{ visual_builder?: VisualBuilderConfig | null }>(
       'site-conteudo-e-layout.json'
     );
 
-    return {
-      segments: cats?.segments,
-      revision_tabs: cats?.revision_tabs,
-      parts: pecas?.parts,
-      models: mods?.models,
-      revision_parts: rev?.revision_parts,
-      faqs: faqs?.faqs,
-      seo: seo?.seo,
-      integrations: ints || undefined,
-      visual_builder: layout?.visual_builder,
-    };
+    return validateAndSummarizePayload(
+      {
+        exported_at: seo?.exported_at,
+        segments: cats?.segments,
+        revision_tabs: cats?.revision_tabs,
+        parts: pecas?.parts,
+        models: mods?.models,
+        revision_parts: rev?.revision_parts,
+        faqs: faqs?.faqs,
+        seo: seo?.seo,
+        integrations: ints || undefined,
+        visual_builder: layout?.visual_builder,
+        embedded_uploads:
+          Object.keys(zipEmbeddedUploads).length > 0 ? zipEmbeddedUploads : undefined,
+      },
+      file.name,
+      'zip'
+    );
   }
 
-  throw new Error('Formato não suportado. Selecione um arquivo .zip ou .json de backup.');
+  throw new Error('Formato não suportado. Selecione um arquivo .zip ou .json de backup do Gestor.');
+}
+
+export async function parseBackupFile(file: File): Promise<BackupRestorePayload> {
+  const { payload } = await parseAndValidateBackupFile(file);
+  return payload;
 }

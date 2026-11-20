@@ -1,16 +1,12 @@
-import { db, getLastPriceSync } from './db.ts';
-
-interface MicroWorkConfigRow {
-  config_json: string;
-  secret_value: string;
-  active: number;
-}
-
-interface PartRow {
-  code: string;
-  price: number;
-  mode: string;
-}
+import { eq } from 'drizzle-orm';
+import { db } from '../db/index.ts';
+import {
+  ensureDatabaseSeeded,
+  getIntegrationRow,
+  getLastPriceSync,
+  upsertSettingValue,
+} from '../db/repository.ts';
+import { integrations, partPrices, parts } from '../db/schema.ts';
 
 export interface SyncResult {
   success: boolean;
@@ -26,12 +22,11 @@ function normalizeCode(code: string): string {
 
 export async function syncMicroWorkPrices(manualTrigger = false): Promise<SyncResult> {
   const nowIso = new Date().toISOString();
-  const row = db
-    .prepare('SELECT config_json, secret_value, active FROM integrations WHERE key = ?')
-    .get('microwork') as MicroWorkConfigRow | undefined;
+  await ensureDatabaseSeeded();
 
+  const row = await getIntegrationRow('microwork');
   const config = row
-    ? JSON.parse(row.config_json)
+    ? JSON.parse(row.configJson)
     : {
         auto_sync_enabled: true,
         update_mode: 'auto_api',
@@ -39,10 +34,12 @@ export async function syncMicroWorkPrices(manualTrigger = false): Promise<SyncRe
         frequency: 'weekly',
       };
 
-  const token = (row?.secret_value || process.env.MICROWORK_TOKEN || '').trim();
+  const token = (row?.secretValue || process.env.MICROWORK_TOKEN || '').trim();
   const endpointUrl = (config.endpoint_url || '').trim();
 
-  const parts = db.prepare('SELECT code, price, mode FROM parts').all() as PartRow[];
+  const allParts = await db
+    .select({ code: parts.code, price: parts.price, mode: parts.mode })
+    .from(parts);
 
   // If no endpoint URL is configured, preserve all last saved prices safely
   if (!endpointUrl) {
@@ -50,30 +47,34 @@ export async function syncMicroWorkPrices(manualTrigger = false): Promise<SyncRe
       ? 'Endpoint MicroWork não configurado. Últimos preços salvos mantidos com segurança.'
       : 'Rotina semanal executada: sem endpoint MicroWork configurado, últimos preços salvos mantidos.';
 
-    db.prepare(
-      `UPDATE parts SET sync_status = CASE WHEN mode = 'manual' THEN 'Manual' ELSE 'Preservado (sem endpoint)' END`
-    ).run();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(parts)
+        .set({ syncStatus: 'Manual' })
+        .where(eq(parts.mode, 'manual'));
+      await tx
+        .update(parts)
+        .set({ syncStatus: 'Preservado (sem endpoint)' })
+        .where(eq(parts.mode, 'auto'));
 
-    const updatedConfig = {
-      ...config,
-      last_sync_at: nowIso,
-      last_sync_result: message,
-    };
-    db.prepare('UPDATE integrations SET config_json = ?, updated_at = ? WHERE key = ?').run(
-      JSON.stringify(updatedConfig),
-      nowIso,
-      'microwork'
-    );
-    db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
-      'last_price_sync',
-      JSON.stringify({ timestamp: nowIso })
-    );
+      const updatedConfig = {
+        ...config,
+        last_sync_at: nowIso,
+        last_sync_result: message,
+      };
+      await tx
+        .update(integrations)
+        .set({ configJson: JSON.stringify(updatedConfig), updatedAt: nowIso })
+        .where(eq(integrations.key, 'microwork'));
+    });
+
+    await upsertSettingValue('last_price_sync', JSON.stringify({ timestamp: nowIso }));
 
     return {
       success: true,
       timestamp: nowIso,
       updatedCount: 0,
-      preservedCount: parts.length,
+      preservedCount: allParts.length,
       message,
     };
   }
@@ -116,26 +117,33 @@ export async function syncMicroWorkPrices(manualTrigger = false): Promise<SyncRe
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : 'Falha na consulta';
     const message = `Falha ao consultar MicroWork (${errMsg}). Últimos preços salvos mantidos.`;
-    db.prepare(
-      `UPDATE parts SET sync_status = CASE WHEN mode = 'manual' THEN 'Manual' ELSE 'Erro MicroWork · preço mantido' END`
-    ).run();
 
-    const updatedConfig = {
-      ...config,
-      last_sync_at: nowIso,
-      last_sync_result: message,
-    };
-    db.prepare('UPDATE integrations SET config_json = ?, updated_at = ? WHERE key = ?').run(
-      JSON.stringify(updatedConfig),
-      nowIso,
-      'microwork'
-    );
+    await db.transaction(async (tx) => {
+      await tx
+        .update(parts)
+        .set({ syncStatus: 'Manual' })
+        .where(eq(parts.mode, 'manual'));
+      await tx
+        .update(parts)
+        .set({ syncStatus: 'Erro MicroWork · preço mantido' })
+        .where(eq(parts.mode, 'auto'));
+
+      const updatedConfig = {
+        ...config,
+        last_sync_at: nowIso,
+        last_sync_result: message,
+      };
+      await tx
+        .update(integrations)
+        .set({ configJson: JSON.stringify(updatedConfig), updatedAt: nowIso })
+        .where(eq(integrations.key, 'microwork'));
+    });
 
     return {
       success: false,
       timestamp: nowIso,
       updatedCount: 0,
-      preservedCount: parts.length,
+      preservedCount: allParts.length,
       message,
     };
   }
@@ -143,36 +151,44 @@ export async function syncMicroWorkPrices(manualTrigger = false): Promise<SyncRe
   let updatedCount = 0;
   let preservedCount = 0;
 
-  const updatePartStmt = db.prepare(
-    'UPDATE parts SET price = ?, microwork_price = ?, sync_status = ?, updated_at = ? WHERE code = ?'
-  );
-  const updateStatusStmt = db.prepare(
-    'UPDATE parts SET microwork_price = ?, sync_status = ? WHERE code = ?'
-  );
-  const insertPriceHistory = db.prepare(
-    'INSERT INTO part_prices (part_code, price, updated_at, source) VALUES (?, ?, ?, ?)'
-  );
-
-  const tx = db.transaction(() => {
-    for (const part of parts) {
+  await db.transaction(async (tx) => {
+    for (const part of allParts) {
       const mwPrice = remoteMap[normalizeCode(part.code)];
       if (part.mode === 'manual') {
         preservedCount += 1;
-        updateStatusStmt.run(mwPrice ?? null, 'Manual (preservado)', part.code);
+        await tx
+          .update(parts)
+          .set({ microworkPrice: mwPrice ?? null, syncStatus: 'Manual (preservado)' })
+          .where(eq(parts.code, part.code));
         continue;
       }
 
       if (mwPrice && Number.isFinite(mwPrice) && mwPrice > 0) {
         updatedCount += 1;
-        updatePartStmt.run(mwPrice, mwPrice, 'Atualizado MicroWork', nowIso, part.code);
-        insertPriceHistory.run(part.code, mwPrice, nowIso, 'microwork');
+        await tx
+          .update(parts)
+          .set({
+            price: mwPrice,
+            microworkPrice: mwPrice,
+            syncStatus: 'Atualizado MicroWork',
+            updatedAt: nowIso,
+          })
+          .where(eq(parts.code, part.code));
+        await tx.insert(partPrices).values({
+          partCode: part.code,
+          price: mwPrice,
+          updatedAt: nowIso,
+          source: 'microwork',
+        });
       } else {
         preservedCount += 1;
-        updateStatusStmt.run(null, 'Não encontrado/zero · mantido', part.code);
+        await tx
+          .update(parts)
+          .set({ microworkPrice: null, syncStatus: 'Não encontrado/zero · mantido' })
+          .where(eq(parts.code, part.code));
       }
     }
   });
-  tx();
 
   const message = `Sincronização concluída: ${updatedCount} atualizada(s), ${preservedCount} preservada(s).`;
   const updatedConfig = {
@@ -180,15 +196,11 @@ export async function syncMicroWorkPrices(manualTrigger = false): Promise<SyncRe
     last_sync_at: nowIso,
     last_sync_result: message,
   };
-  db.prepare('UPDATE integrations SET config_json = ?, updated_at = ? WHERE key = ?').run(
-    JSON.stringify(updatedConfig),
-    nowIso,
-    'microwork'
-  );
-  db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
-    'last_price_sync',
-    JSON.stringify({ timestamp: nowIso })
-  );
+  await db
+    .update(integrations)
+    .set({ configJson: JSON.stringify(updatedConfig), updatedAt: nowIso })
+    .where(eq(integrations.key, 'microwork'));
+  await upsertSettingValue('last_price_sync', JSON.stringify({ timestamp: nowIso }));
 
   return {
     success: true,
@@ -204,15 +216,14 @@ export function startWeeklySyncScheduler() {
 
   const checkAndRun = async () => {
     try {
-      const row = db
-        .prepare('SELECT config_json FROM integrations WHERE key = ?')
-        .get('microwork') as { config_json: string } | undefined;
+      const row = await getIntegrationRow('microwork');
       if (!row) return;
-      const cfg = JSON.parse(row.config_json);
+      const cfg = JSON.parse(row.configJson);
       if (!cfg.auto_sync_enabled || cfg.update_mode !== 'auto_api') return;
 
-      const lastSync = new Date(cfg.last_sync_at || getLastPriceSync()).getTime();
-      const intervalMs = cfg.frequency === 'daily' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
+      const lastSync = new Date(cfg.last_sync_at || (await getLastPriceSync())).getTime();
+      const intervalMs =
+        cfg.frequency === 'daily' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
       if (Date.now() - lastSync >= intervalMs) {
         await syncMicroWorkPrices(false);
       }

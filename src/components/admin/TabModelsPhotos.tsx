@@ -11,7 +11,9 @@ interface TabModelsPhotosProps {
   onToast: (type: 'success' | 'error', msg: string) => void;
   autoSaveEnabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveStart?: () => void;
   onAutoSaveComplete?: () => void;
+  onAutoSaveError?: (msg?: string) => void;
 }
 
 export function TabModelsPhotos({
@@ -21,7 +23,9 @@ export function TabModelsPhotos({
   onToast,
   autoSaveEnabled = true,
   onDirtyChange,
+  onAutoSaveStart,
   onAutoSaveComplete,
+  onAutoSaveError,
 }: TabModelsPhotosProps) {
   const [drafts, setDrafts] = useState<Record<number, MotoModel>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -65,6 +69,7 @@ export function TabModelsPhotos({
       return;
     }
     const timer = setTimeout(async () => {
+      onAutoSaveStart?.();
       saveGestorDraftCache('modelos', drafts);
       try {
         let savedAny = false;
@@ -76,22 +81,25 @@ export function TabModelsPhotos({
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(draft),
           });
-          if (res.ok) savedAny = true;
+          if (!res.ok) throw new Error('Erro ao salvar modelo.');
+          savedAny = true;
         }
         if (savedAny) {
           await onSaved();
           onAutoSaveComplete?.();
         }
       } catch {
-        // Cache local já salvo
+        onAutoSaveError?.('Erro ao salvar — tente novamente');
       }
-    }, 600);
+    }, 850);
     return () => clearTimeout(timer);
   }, [
     autoSaveEnabled,
     dirtyModelIds,
     drafts,
+    onAutoSaveStart,
     onAutoSaveComplete,
+    onAutoSaveError,
     onSaved,
     savingId,
     uploadingId,

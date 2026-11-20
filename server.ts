@@ -1,24 +1,47 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import express, { type NextFunction, type Request, type Response } from 'express';
+import { and, asc, eq, max, sql } from 'drizzle-orm';
+import express, { type Response } from 'express';
 import JSZip from 'jszip';
 import multer from 'multer';
+import { db } from './src/db/index.ts';
 import {
-  db,
+  DEFAULT_TRACKING_PIXELS_CONFIG,
+  deleteSettingKey,
+  ensureDatabaseSeeded,
+  getAdminTrackingPixelsConfig,
+  getIntegrationRow,
   getLastPriceSync,
+  getPublicTrackingConfig,
   getSeoSettings,
   getVisualBuilderConfig,
-  initDatabase,
+  listAllModelsOrdered,
+  listFaqsOrdered,
+  listPartsOrdered,
+  listRevisionPartsOrdered,
+  listRevisionTabsOrdered,
+  listSegmentsOrdered,
+  listVisibleModelsOrdered,
   maskSecret,
-  verifyPassword,
-} from './src/server/db.ts';
-import { INITIAL_SEO_SETTINGS } from './src/server/seedData.ts';
+  upsertSettingValue,
+} from './src/db/repository.ts';
+import {
+  faqs,
+  integrations,
+  models,
+  partPrices,
+  parts,
+  revisionParts,
+  revisionTabs,
+  segments,
+  siteSettings,
+} from './src/db/schema.ts';
+import { type AuthRequest, requireAuth } from './src/middleware/auth.ts';
 import { startWeeklySyncScheduler, syncMicroWorkPrices } from './src/server/microwork.ts';
+import { INITIAL_SEO_SETTINGS } from './src/server/seedData.ts';
 
-initDatabase();
 startWeeklySyncScheduler();
 
 const app = express();
@@ -29,10 +52,31 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
+const MIME_TO_EXT: Record<string, string> = {
+  'image/png': '.png',
+  'image/jpeg': '.jpg',
+  'image/jpg': '.jpg',
+  'image/webp': '.webp',
+  'image/svg+xml': '.svg',
+  'image/x-icon': '.ico',
+  'image/vnd.microsoft.icon': '.ico',
+  'image/gif': '.gif',
+};
+
+const ALLOWED_UPLOAD_EXTS = new Set(['.png', '.svg', '.webp', '.jpg', '.jpeg', '.ico', '.gif']);
+
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
+  destination: (_req, _file, cb) => {
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+    }
+    cb(null, UPLOADS_DIR);
+  },
   filename: (_req, file, cb) => {
-    const ext = path.extname(file.originalname) || '.png';
+    const rawExt = path.extname(file.originalname || '').toLowerCase();
+    const ext = ALLOWED_UPLOAD_EXTS.has(rawExt)
+      ? rawExt
+      : MIME_TO_EXT[(file.mimetype || '').toLowerCase()] || '.png';
     const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
     cb(null, safeName);
   },
@@ -41,368 +85,336 @@ const storage = multer.diskStorage({
 const upload = multer({
   storage,
   limits: { fileSize: 8 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    const mime = (file.mimetype || '').toLowerCase();
+    const isImageMime = mime.startsWith('image/');
+    if (ALLOWED_UPLOAD_EXTS.has(ext) || isImageMime) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error('Formato inválido. Envie apenas imagens PNG, JPG, WEBP, SVG ou ICO.'));
+  },
 });
 
-app.use(express.json({ limit: '4mb' }));
-app.use('/uploads', express.static(UPLOADS_DIR));
-
-function parseCookies(req: Request): Record<string, string> {
-  const header = req.headers.cookie;
-  if (!header) return {};
-  const result: Record<string, string> = {};
-  for (const part of header.split(';')) {
-    const idx = part.indexOf('=');
-    if (idx > 0) {
-      const k = part.slice(0, idx).trim();
-      const v = decodeURIComponent(part.slice(idx + 1).trim());
-      result[k] = v;
-    }
-  }
-  return result;
-}
-
-interface AuthedRequest extends Request {
-  adminUser?: {
-    id: number;
-    email: string;
-    name: string;
-    role: string;
-  };
-}
-
-function extractSessionToken(req: Request): string | null {
-  const authHeader = req.headers.authorization;
-  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
-    const token = authHeader.slice(7).trim();
-    if (token) return token;
-  }
-  const cookies = parseCookies(req);
-  return cookies.rodaleve_session || null;
-}
-
-function getAuthenticatedAdmin(req: Request) {
-  const token = extractSessionToken(req);
-  if (!token) return null;
-
-  const row = db
-    .prepare(
-      `SELECT a.id, a.email, a.name, a.role, s.expires_at
-       FROM sessions s
-       JOIN admins a ON a.id = s.admin_id
-       WHERE s.token = ?`
-    )
-    .get(token) as
-    | { id: number; email: string; name: string; role: string; expires_at: string }
-    | undefined;
-
-  if (!row) return null;
-  if (new Date(row.expires_at).getTime() < Date.now()) {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-    return null;
-  }
-
-  return { id: row.id, email: row.email, name: row.name, role: row.role };
-}
-
-function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction) {
-  const admin = getAuthenticatedAdmin(req);
-  if (!admin) {
-    res.status(401).json({ error: 'Não autorizado. Faça login para continuar.' });
-    return;
-  }
-  req.adminUser = admin;
+app.use(express.json({ limit: '25mb' }));
+app.use('/uploads', (_req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
-}
+});
+app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1d' }));
 
-function formatModelRow(row: Record<string, unknown>) {
+function formatModelRow(row: typeof models.$inferSelect) {
   return {
-    id: Number(row.id),
-    name: String(row.name),
-    segment_slug: String(row.segment_slug),
-    image_url: String(row.image_url || ''),
+    id: row.id,
+    name: row.name,
+    segment_slug: row.segmentSlug,
+    image_url: row.imageUrl || '',
     hidden: Boolean(row.hidden),
-    sort_order: Number(row.sort_order),
+    sort_order: row.sortOrder,
   };
 }
 
-function formatPartRow(row: Record<string, unknown>) {
+function formatPartRow(row: typeof parts.$inferSelect) {
   return {
-    code: String(row.code),
-    description: String(row.description),
-    unit: String(row.unit || 'UN').trim() || 'UN',
-    default_qty: Number(row.default_qty),
+    code: row.code,
+    description: row.description,
+    unit: (row.unit || 'UN').trim() || 'UN',
+    default_qty: Number(row.defaultQty),
     price: Number(row.price),
-    mode: String(row.mode) === 'manual' ? 'manual' : 'auto',
-    is_optional: Boolean(row.is_optional),
-    microwork_price: row.microwork_price !== null && row.microwork_price !== undefined ? Number(row.microwork_price) : null,
-    sync_status: String(row.sync_status || ''),
-    updated_at: String(row.updated_at || ''),
+    mode: row.mode === 'manual' ? 'manual' : 'auto',
+    is_optional: Boolean(row.isOptional),
+    microwork_price:
+      row.microworkPrice !== null && row.microworkPrice !== undefined
+        ? Number(row.microworkPrice)
+        : null,
+    sync_status: row.syncStatus || '',
+    updated_at: row.updatedAt || '',
   };
 }
 
-function formatSegmentRow(row: Record<string, unknown>) {
+function formatSegmentRow(row: typeof segments.$inferSelect) {
   return {
-    id: Number(row.id),
-    slug: String(row.slug),
-    name: String(row.name),
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
     visible: Boolean(row.visible),
-    sort_order: Number(row.sort_order),
+    sort_order: row.sortOrder,
   };
 }
 
-function formatRevisionTabRow(row: Record<string, unknown>) {
+function formatRevisionTabRow(row: typeof revisionTabs.$inferSelect) {
   return {
-    id: Number(row.id),
-    revision_number: Number(row.revision_number),
-    label: String(row.label),
-    subtitle: String(row.subtitle || ''),
+    id: row.id,
+    revision_number: row.revisionNumber,
+    label: row.label,
+    subtitle: row.subtitle || '',
     visible: Boolean(row.visible),
-    sort_order: Number(row.sort_order),
+    sort_order: row.sortOrder,
   };
+}
+
+function formatRevisionPartRow(row: typeof revisionParts.$inferSelect) {
+  return {
+    id: row.id,
+    model_id: row.modelId,
+    revision_number: row.revisionNumber,
+    part_code: row.partCode,
+    quantity: Number(row.quantity),
+  };
+}
+
+function formatFaqRow(row: typeof faqs.$inferSelect) {
+  return {
+    id: row.id,
+    question: row.question,
+    answer: row.answer,
+    sort_order: row.sortOrder,
+  };
+}
+
+function extractGoogleSiteVerificationCode(raw: unknown): string {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (!trimmed) return '';
+  let candidate = trimmed;
+  if (/<meta\b/i.test(trimmed) || /\bcontent\s*=/i.test(trimmed)) {
+    const match = /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'/>]+))/i.exec(trimmed);
+    if (!match) return '';
+    candidate = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+  }
+  return candidate.replace(/[^A-Za-z0-9_-]/g, '');
 }
 
 // Dynamic SEO technical files
-app.get('/robots.txt', (_req, res) => {
-  const seo = getSeoSettings();
-  res.type('text/plain').send(seo.robots_txt || 'User-agent: *\nAllow: /');
+app.get('/robots.txt', async (_req, res) => {
+  try {
+    const seo = await getSeoSettings();
+    res.type('text/plain').send(seo.robots_txt || INITIAL_SEO_SETTINGS.robots_txt);
+  } catch {
+    res.type('text/plain').send(INITIAL_SEO_SETTINGS.robots_txt);
+  }
 });
 
-app.get('/sitemap.xml', (_req, res) => {
-  const seo = getSeoSettings();
-  res.type('application/xml').send(seo.sitemap_xml || '');
+app.get('/sitemap.xml', async (_req, res) => {
+  try {
+    const seo = await getSeoSettings();
+    res.type('application/xml').send(seo.sitemap_xml || INITIAL_SEO_SETTINGS.sitemap_xml);
+  } catch {
+    res.type('application/xml').send(INITIAL_SEO_SETTINGS.sitemap_xml);
+  }
 });
 
-// Auth endpoints
-app.post('/api/auth/login', (req, res) => {
-  const { email, password } = req.body as { email?: string; password?: string };
-  const cleanEmail = (email || '').trim().toLowerCase();
-  const cleanPassword = (password || '').trim();
-
-  if (!cleanEmail || !cleanPassword) {
-    res.status(400).json({ error: 'Informe e-mail e senha.' });
-    return;
-  }
-
-  const admin = db
-    .prepare('SELECT id, email, password_hash, name, role FROM admins WHERE lower(trim(email)) = ?')
-    .get(cleanEmail) as
-    | { id: number; email: string; password_hash: string; name: string; role: string }
-    | undefined;
-
-  if (!admin || !verifyPassword(cleanPassword, admin.password_hash)) {
-    res.status(401).json({ error: 'E-mail ou senha inválidos. Verifique os dados e tente novamente.' });
-    return;
-  }
-
-  const token = crypto.randomBytes(32).toString('hex');
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-  db.prepare('INSERT INTO sessions (token, admin_id, expires_at) VALUES (?, ?, ?)').run(
-    token,
-    admin.id,
-    expiresAt
-  );
-
-  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  const cookieAttrs = isHttps
-    ? 'Path=/; HttpOnly; SameSite=None; Secure'
-    : 'Path=/; HttpOnly; SameSite=Lax';
-  res.setHeader(
-    'Set-Cookie',
-    `rodaleve_session=${encodeURIComponent(token)}; ${cookieAttrs}; Max-Age=${7 * 24 * 60 * 60}`
-  );
-  res.json({
-    token,
-    user: { id: admin.id, email: admin.email, name: admin.name, role: admin.role },
-  });
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  const token = extractSessionToken(req);
-  if (token) {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
-  }
-  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
-  const cookieAttrs = isHttps
-    ? 'Path=/; HttpOnly; SameSite=None; Secure'
-    : 'Path=/; HttpOnly; SameSite=Lax';
-  res.setHeader('Set-Cookie', `rodaleve_session=; ${cookieAttrs}; Max-Age=0`);
+// Auth endpoints (Firebase Authentication)
+app.post('/api/auth/logout', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', (req, res) => {
-  const admin = getAuthenticatedAdmin(req);
-  if (!admin) {
-    res.status(401).json({ error: 'Não autenticado' });
-    return;
-  }
-  res.json({ user: admin });
+app.get('/api/auth/me', requireAuth, (req: AuthRequest, res: Response) => {
+  res.json({ user: req.adminUser });
 });
 
 // Public Bootstrap
-app.get('/api/public/bootstrap', (_req, res) => {
-  const models = db
-    .prepare('SELECT * FROM models WHERE hidden = 0 ORDER BY sort_order ASC, id ASC')
-    .all()
-    .map((r) => formatModelRow(r as Record<string, unknown>));
+app.get('/api/public/bootstrap', async (_req, res) => {
+  try {
+    const [
+      modelRows,
+      segmentRows,
+      revisionTabRows,
+      partRows,
+      revisionPartRows,
+      faqRows,
+      seo,
+      lastPriceSync,
+      mapsRow,
+      customRow,
+      trackingConfig,
+      visualBuilder,
+    ] = await Promise.all([
+      listVisibleModelsOrdered(),
+      listSegmentsOrdered(true),
+      listRevisionTabsOrdered(true),
+      listPartsOrdered(false),
+      listRevisionPartsOrdered(),
+      listFaqsOrdered(),
+      getSeoSettings(),
+      getLastPriceSync(),
+      getIntegrationRow('google_maps'),
+      getIntegrationRow('custom_integrations'),
+      getPublicTrackingConfig(),
+      getVisualBuilderConfig(),
+    ]);
 
-  const segments = db
-    .prepare('SELECT * FROM segments WHERE visible = 1 ORDER BY sort_order ASC, id ASC')
-    .all()
-    .map((r) => formatSegmentRow(r as Record<string, unknown>));
+    const mapsCfg = mapsRow ? JSON.parse(mapsRow.configJson) : { custom_api_key: '' };
+    const envMapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
+    const resolvedMapsKey = (mapsCfg.custom_api_key || '').trim() || envMapsKey;
 
-  const revisionTabs = db
-    .prepare('SELECT * FROM revision_tabs WHERE visible = 1 ORDER BY sort_order ASC, revision_number ASC')
-    .all()
-    .map((r) => formatRevisionTabRow(r as Record<string, unknown>));
+    const allCustom = customRow
+      ? (JSON.parse(customRow.configJson) as Array<{
+          id: string;
+          name: string;
+          value: string;
+          active: boolean;
+        }>)
+      : [];
+    const publicIntegrations = allCustom.filter(
+      (item) =>
+        item.active &&
+        !item.name.toLowerCase().includes('webhook') &&
+        !item.name.toLowerCase().includes('secret')
+    );
 
-  const parts = db
-    .prepare('SELECT * FROM parts ORDER BY code ASC')
-    .all()
-    .map((r) => formatPartRow(r as Record<string, unknown>));
-
-  const revisionParts = db.prepare('SELECT * FROM revision_parts ORDER BY id ASC').all();
-  const faqs = db.prepare('SELECT * FROM faqs ORDER BY sort_order ASC, id ASC').all();
-  const seo = getSeoSettings();
-  const lastPriceSync = getLastPriceSync();
-
-  const mapsRow = db
-    .prepare('SELECT config_json, active FROM integrations WHERE key = ?')
-    .get('google_maps') as { config_json: string; active: number } | undefined;
-  const mapsCfg = mapsRow ? JSON.parse(mapsRow.config_json) : { custom_api_key: '' };
-  const envMapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
-  const resolvedMapsKey = (mapsCfg.custom_api_key || '').trim() || envMapsKey;
-
-  const customRow = db
-    .prepare('SELECT config_json FROM integrations WHERE key = ?')
-    .get('custom_integrations') as { config_json: string } | undefined;
-  const allCustom = customRow ? (JSON.parse(customRow.config_json) as Array<{ id: string; name: string; value: string; active: boolean }>) : [];
-  const publicIntegrations = allCustom.filter(
-    (item) => item.active && !item.name.toLowerCase().includes('webhook') && !item.name.toLowerCase().includes('secret')
-  );
-
-  res.json({
-    models,
-    segments,
-    revision_tabs: revisionTabs,
-    parts,
-    revision_parts: revisionParts,
-    faqs,
-    seo,
-    last_price_sync: lastPriceSync,
-    maps_config: {
-      active: mapsRow ? Boolean(mapsRow.active) : true,
-      api_key: resolvedMapsKey,
-    },
-    public_integrations: publicIntegrations,
-    visual_builder: getVisualBuilderConfig(),
-  });
+    res.json({
+      models: modelRows.map(formatModelRow),
+      segments: segmentRows.map(formatSegmentRow),
+      revision_tabs: revisionTabRows.map(formatRevisionTabRow),
+      parts: partRows.map(formatPartRow),
+      revision_parts: revisionPartRows.map(formatRevisionPartRow),
+      faqs: faqRows.map(formatFaqRow),
+      seo,
+      last_price_sync: lastPriceSync,
+      maps_config: {
+        active: mapsRow ? Boolean(mapsRow.active) : true,
+        api_key: resolvedMapsKey,
+      },
+      public_integrations: publicIntegrations,
+      tracking_config: trackingConfig,
+      visual_builder: visualBuilder,
+    });
+  } catch (err) {
+    console.error('Error in /api/public/bootstrap:', err);
+    res.status(500).json({ error: 'Falha ao carregar os dados públicos da tabela.' });
+  }
 });
 
 // Admin Bootstrap
-app.get('/api/admin/bootstrap', requireAdmin, (_req, res) => {
-  const models = db
-    .prepare('SELECT * FROM models ORDER BY sort_order ASC, id ASC')
-    .all()
-    .map((r) => formatModelRow(r as Record<string, unknown>));
+app.get('/api/admin/bootstrap', requireAuth, async (_req: AuthRequest, res: Response) => {
+  try {
+    const [
+      modelRows,
+      segmentRows,
+      revisionTabRows,
+      partRows,
+      revisionPartRows,
+      faqRows,
+      seo,
+      lastPriceSync,
+      mapsRow,
+      mwRow,
+      customRow,
+      trackingPixels,
+    ] = await Promise.all([
+      listAllModelsOrdered(),
+      listSegmentsOrdered(false),
+      listRevisionTabsOrdered(false),
+      listPartsOrdered(true),
+      listRevisionPartsOrdered(),
+      listFaqsOrdered(),
+      getSeoSettings(),
+      getLastPriceSync(),
+      getIntegrationRow('google_maps'),
+      getIntegrationRow('microwork'),
+      getIntegrationRow('custom_integrations'),
+      getAdminTrackingPixelsConfig(),
+    ]);
 
-  const segments = db
-    .prepare('SELECT * FROM segments ORDER BY sort_order ASC, id ASC')
-    .all()
-    .map((r) => formatSegmentRow(r as Record<string, unknown>));
+    const mapsCfg = mapsRow ? JSON.parse(mapsRow.configJson) : { custom_api_key: '' };
+    const mwCfg = mwRow ? JSON.parse(mwRow.configJson) : {};
+    const effectiveToken = mwRow?.secretValue || process.env.MICROWORK_TOKEN || '';
+    const customIntegrations = customRow ? JSON.parse(customRow.configJson) : [];
 
-  const revisionTabs = db
-    .prepare('SELECT * FROM revision_tabs ORDER BY sort_order ASC, revision_number ASC')
-    .all()
-    .map((r) => formatRevisionTabRow(r as Record<string, unknown>));
-
-  const parts = db
-    .prepare('SELECT * FROM parts ORDER BY description ASC, code ASC')
-    .all()
-    .map((r) => formatPartRow(r as Record<string, unknown>));
-
-  const revisionParts = db.prepare('SELECT * FROM revision_parts ORDER BY id ASC').all();
-  const faqs = db.prepare('SELECT * FROM faqs ORDER BY sort_order ASC, id ASC').all();
-  const seo = getSeoSettings();
-  const lastPriceSync = getLastPriceSync();
-
-  const mapsRow = db
-    .prepare('SELECT config_json, active FROM integrations WHERE key = ?')
-    .get('google_maps') as { config_json: string; active: number } | undefined;
-  const mapsCfg = mapsRow ? JSON.parse(mapsRow.config_json) : { custom_api_key: '' };
-
-  const mwRow = db
-    .prepare('SELECT config_json, secret_value FROM integrations WHERE key = ?')
-    .get('microwork') as { config_json: string; secret_value: string } | undefined;
-  const mwCfg = mwRow ? JSON.parse(mwRow.config_json) : {};
-  const effectiveToken = mwRow?.secret_value || process.env.MICROWORK_TOKEN || '';
-
-  const customRow = db
-    .prepare('SELECT config_json FROM integrations WHERE key = ?')
-    .get('custom_integrations') as { config_json: string } | undefined;
-  const customIntegrations = customRow ? JSON.parse(customRow.config_json) : [];
-
-  res.json({
-    models,
-    segments,
-    revision_tabs: revisionTabs,
-    parts,
-    revision_parts: revisionParts,
-    faqs,
-    seo,
-    last_price_sync: lastPriceSync,
-    integrations: {
-      google_maps: {
-        active: mapsRow ? Boolean(mapsRow.active) : true,
-        custom_api_key: mapsCfg.custom_api_key || '',
+    res.json({
+      models: modelRows.map(formatModelRow),
+      segments: segmentRows.map(formatSegmentRow),
+      revision_tabs: revisionTabRows.map(formatRevisionTabRow),
+      parts: partRows.map(formatPartRow),
+      revision_parts: revisionPartRows.map(formatRevisionPartRow),
+      faqs: faqRows.map(formatFaqRow),
+      seo,
+      last_price_sync: lastPriceSync,
+      integrations: {
+        google_maps: {
+          active: mapsRow ? Boolean(mapsRow.active) : true,
+          custom_api_key: mapsCfg.custom_api_key || '',
+        },
+        microwork: {
+          auto_sync_enabled: Boolean(mwCfg.auto_sync_enabled ?? true),
+          update_mode: mwCfg.update_mode || 'auto_api',
+          endpoint_url: mwCfg.endpoint_url || '',
+          has_token: Boolean(effectiveToken),
+          token_masked: maskSecret(effectiveToken),
+          frequency: mwCfg.frequency || 'weekly',
+          last_sync_at: mwCfg.last_sync_at || lastPriceSync,
+          last_sync_result: mwCfg.last_sync_result || 'Pronto',
+        },
+        custom_integrations: customIntegrations,
+        tracking_pixels: trackingPixels,
       },
-      microwork: {
-        auto_sync_enabled: Boolean(mwCfg.auto_sync_enabled ?? true),
-        update_mode: mwCfg.update_mode || 'auto_api',
-        endpoint_url: mwCfg.endpoint_url || '',
-        has_token: Boolean(effectiveToken),
-        token_masked: maskSecret(effectiveToken),
-        frequency: mwCfg.frequency || 'weekly',
-        last_sync_at: mwCfg.last_sync_at || lastPriceSync,
-        last_sync_result: mwCfg.last_sync_result || 'Pronto',
-      },
-      custom_integrations: customIntegrations,
-    },
-  });
+    });
+  } catch (err) {
+    console.error('Error in /api/admin/bootstrap:', err);
+    res.status(500).json({ error: 'Falha ao carregar os dados administrativos.' });
+  }
 });
 
 // Aba 1: Revisões (update model + revision parts)
-app.put('/api/admin/revisions/:modelId/:revisionNumber', requireAdmin, (req, res) => {
-  const modelId = Number(req.params.modelId);
-  const revisionNumber = Number(req.params.revisionNumber);
-  const { items } = req.body as { items: Array<{ part_code: string; quantity: number }> };
+app.put(
+  '/api/admin/revisions/:modelId/:revisionNumber',
+  requireAuth,
+  async (req: AuthRequest, res: Response) => {
+    const modelId = Number(req.params.modelId);
+    const revisionNumber = Number(req.params.revisionNumber);
+    const { items } = req.body as { items: Array<{ part_code: string; quantity: number }> };
 
-  if (!Number.isFinite(modelId) || !Number.isFinite(revisionNumber) || !Array.isArray(items)) {
-    res.status(400).json({ error: 'Dados inválidos.' });
-    return;
-  }
-
-  const delStmt = db.prepare('DELETE FROM revision_parts WHERE model_id = ? AND revision_number = ?');
-  const insStmt = db.prepare(
-    'INSERT INTO revision_parts (model_id, revision_number, part_code, quantity) VALUES (?, ?, ?, ?)'
-  );
-
-  const tx = db.transaction(() => {
-    delStmt.run(modelId, revisionNumber);
-    for (const item of items) {
-      if (!item.part_code || Number(item.quantity) <= 0) continue;
-      insStmt.run(modelId, revisionNumber, item.part_code, Number(item.quantity));
+    if (!Number.isFinite(modelId) || !Number.isFinite(revisionNumber) || !Array.isArray(items)) {
+      res.status(400).json({ error: 'Dados inválidos.' });
+      return;
     }
-  });
-  tx();
 
-  const updated = db
-    .prepare('SELECT * FROM revision_parts WHERE model_id = ? AND revision_number = ? ORDER BY id ASC')
-    .all(modelId, revisionNumber);
+    try {
+      await ensureDatabaseSeeded();
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(revisionParts)
+          .where(
+            and(
+              eq(revisionParts.modelId, modelId),
+              eq(revisionParts.revisionNumber, revisionNumber)
+            )
+          );
+        const rows = items
+          .filter((item) => item.part_code && Number(item.quantity) > 0)
+          .map((item) => ({
+            modelId,
+            revisionNumber,
+            partCode: item.part_code,
+            quantity: Number(item.quantity),
+          }));
+        if (rows.length > 0) {
+          await tx.insert(revisionParts).values(rows);
+        }
+      });
 
-  res.json({ ok: true, items: updated });
-});
+      const updated = await db
+        .select()
+        .from(revisionParts)
+        .where(
+          and(
+            eq(revisionParts.modelId, modelId),
+            eq(revisionParts.revisionNumber, revisionNumber)
+          )
+        )
+        .orderBy(asc(revisionParts.id));
 
-app.post('/api/admin/revisions/clone', requireAdmin, (req, res) => {
+      res.json({ ok: true, items: updated.map(formatRevisionPartRow) });
+    } catch (err) {
+      console.error('Error updating revision parts:', err);
+      res.status(500).json({ error: 'Falha ao salvar itens da revisão.' });
+    }
+  }
+);
+
+app.post('/api/admin/revisions/clone', requireAuth, async (req: AuthRequest, res: Response) => {
   const { source_revision, target_revision } = req.body as {
     source_revision?: number;
     target_revision?: number;
@@ -415,33 +427,45 @@ app.post('/api/admin/revisions/clone', requireAdmin, (req, res) => {
     return;
   }
 
-  const sourceItems = db
-    .prepare('SELECT model_id, part_code, quantity FROM revision_parts WHERE revision_number = ? ORDER BY id ASC')
-    .all(src) as Array<{ model_id: number; part_code: string; quantity: number }>;
+  try {
+    await ensureDatabaseSeeded();
+    const sourceItems = await db
+      .select({
+        modelId: revisionParts.modelId,
+        partCode: revisionParts.partCode,
+        quantity: revisionParts.quantity,
+      })
+      .from(revisionParts)
+      .where(eq(revisionParts.revisionNumber, src))
+      .orderBy(asc(revisionParts.id));
 
-  const delStmt = db.prepare('DELETE FROM revision_parts WHERE revision_number = ?');
-  const insStmt = db.prepare(
-    'INSERT INTO revision_parts (model_id, revision_number, part_code, quantity) VALUES (?, ?, ?, ?)'
-  );
+    await db.transaction(async (tx) => {
+      await tx.delete(revisionParts).where(eq(revisionParts.revisionNumber, tgt));
+      const rows = sourceItems.map((item) => ({
+        modelId: item.modelId,
+        revisionNumber: tgt,
+        partCode: item.partCode,
+        quantity: item.quantity,
+      }));
+      for (let i = 0; i < rows.length; i += 400) {
+        await tx.insert(revisionParts).values(rows.slice(i, i + 400));
+      }
+    });
 
-  const tx = db.transaction(() => {
-    delStmt.run(tgt);
-    for (const item of sourceItems) {
-      insStmt.run(item.model_id, tgt, item.part_code, item.quantity);
-    }
-  });
-  tx();
-
-  res.json({
-    ok: true,
-    copied_count: sourceItems.length,
-    source_revision: src,
-    target_revision: tgt,
-  });
+    res.json({
+      ok: true,
+      copied_count: sourceItems.length,
+      source_revision: src,
+      target_revision: tgt,
+    });
+  } catch (err) {
+    console.error('Error cloning revision:', err);
+    res.status(500).json({ error: 'Falha ao clonar revisão.' });
+  }
 });
 
 // Aba 2: Preços e Peças
-app.post('/api/admin/parts', requireAdmin, (req, res) => {
+app.post('/api/admin/parts', requireAuth, async (req: AuthRequest, res: Response) => {
   const { code, description, unit, default_qty, price, mode, is_optional } = req.body as {
     code?: string;
     description?: string;
@@ -457,47 +481,56 @@ app.post('/api/admin/parts', requireAdmin, (req, res) => {
     return;
   }
 
-  const nowIso = new Date().toISOString();
-  const cleanCode = code.trim();
-  const existing = db.prepare('SELECT code FROM parts WHERE code = ?').get(cleanCode);
-  if (existing) {
-    res.status(409).json({ error: 'Já existe uma peça cadastrada com este código.' });
-    return;
+  try {
+    await ensureDatabaseSeeded();
+    const nowIso = new Date().toISOString();
+    const cleanCode = code.trim();
+    const existing = await db.select({ code: parts.code }).from(parts).where(eq(parts.code, cleanCode));
+    if (existing.length > 0) {
+      res.status(409).json({ error: 'Já existe uma peça cadastrada com este código.' });
+      return;
+    }
+
+    const numPrice = Number(price || 0);
+    const partMode = mode === 'manual' ? 'manual' : 'auto';
+    const status = partMode === 'manual' ? 'Manual' : 'Aguardando sync';
+    const cleanUnit = (unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN';
+
+    const [created] = await db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(parts)
+        .values({
+          code: cleanCode,
+          description: description.trim(),
+          unit: cleanUnit,
+          defaultQty: Number(default_qty || (cleanUnit === 'ML' ? 1000 : 1)),
+          price: numPrice,
+          mode: partMode,
+          isOptional: is_optional ? 1 : 0,
+          microworkPrice: null,
+          syncStatus: status,
+          updatedAt: nowIso,
+        })
+        .returning();
+
+      await tx.insert(partPrices).values({
+        partCode: cleanCode,
+        price: numPrice,
+        updatedAt: nowIso,
+        source: 'manual_create',
+      });
+
+      return inserted;
+    });
+
+    res.json({ part: formatPartRow(created) });
+  } catch (err) {
+    console.error('Error creating part:', err);
+    res.status(500).json({ error: 'Falha ao cadastrar peça.' });
   }
-
-  const numPrice = Number(price || 0);
-  const partMode = mode === 'manual' ? 'manual' : 'auto';
-  const status = partMode === 'manual' ? 'Manual' : 'Aguardando sync';
-
-  const cleanUnit = (unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN';
-
-  db.prepare(
-    `INSERT INTO parts (code, description, unit, default_qty, price, mode, is_optional, microwork_price, sync_status, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
-  ).run(
-    cleanCode,
-    description.trim(),
-    cleanUnit,
-    Number(default_qty || (cleanUnit === 'ML' ? 1000 : 1)),
-    numPrice,
-    partMode,
-    is_optional ? 1 : 0,
-    status,
-    nowIso
-  );
-
-  db.prepare('INSERT INTO part_prices (part_code, price, updated_at, source) VALUES (?, ?, ?, ?)').run(
-    cleanCode,
-    numPrice,
-    nowIso,
-    'manual_create'
-  );
-
-  const created = db.prepare('SELECT * FROM parts WHERE code = ?').get(cleanCode) as Record<string, unknown>;
-  res.json({ part: formatPartRow(created) });
 });
 
-app.put('/api/admin/parts/batch', requireAdmin, (req, res) => {
+app.put('/api/admin/parts/batch', requireAuth, async (req: AuthRequest, res: Response) => {
   const { changes } = req.body as {
     changes: Array<{
       original_code: string;
@@ -515,67 +548,103 @@ app.put('/api/admin/parts/batch', requireAdmin, (req, res) => {
     return;
   }
 
-  const nowIso = new Date().toISOString();
-  const updatePart = db.prepare(
-    `UPDATE parts SET code = ?, description = ?, unit = ?, price = ?, mode = ?, is_optional = ?, sync_status = ?, updated_at = ?
-     WHERE code = ?`
-  );
-  const updateRevCode = db.prepare('UPDATE revision_parts SET part_code = ? WHERE part_code = ?');
-  const insertHist = db.prepare(
-    'INSERT INTO part_prices (part_code, price, updated_at, source) VALUES (?, ?, ?, ?)'
-  );
+  try {
+    await ensureDatabaseSeeded();
+    const nowIso = new Date().toISOString();
 
-  const tx = db.transaction(() => {
-    for (const c of changes) {
-      const nextCode = c.code.trim();
-      const origCode = c.original_code.trim();
-      if (!nextCode || !origCode) continue;
+    await db.transaction(async (tx) => {
+      for (const c of changes) {
+        const nextCode = c.code.trim();
+        const origCode = c.original_code.trim();
+        if (!nextCode || !origCode) continue;
 
-      if (nextCode !== origCode) {
-        updateRevCode.run(nextCode, origCode);
+        const nextStatus = c.mode === 'manual' ? 'Manual' : 'Atualizado no Gestor';
+        const cleanUnit = (c.unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN';
+
+        if (nextCode !== origCode) {
+          const linkedRevParts = await tx
+            .select()
+            .from(revisionParts)
+            .where(eq(revisionParts.partCode, origCode));
+          const [oldPart] = await tx.select().from(parts).where(eq(parts.code, origCode));
+          if (oldPart) {
+            await tx.insert(parts).values({
+              code: nextCode,
+              description: c.description.trim(),
+              unit: cleanUnit,
+              defaultQty: oldPart.defaultQty,
+              price: Number(c.price || 0),
+              mode: c.mode === 'manual' ? 'manual' : 'auto',
+              isOptional: c.is_optional ? 1 : 0,
+              microworkPrice: oldPart.microworkPrice,
+              syncStatus: nextStatus,
+              updatedAt: nowIso,
+            });
+            for (const rp of linkedRevParts) {
+              await tx
+                .update(revisionParts)
+                .set({ partCode: nextCode })
+                .where(eq(revisionParts.id, rp.id));
+            }
+            await tx.delete(parts).where(eq(parts.code, origCode));
+          }
+        } else {
+          await tx
+            .update(parts)
+            .set({
+              description: c.description.trim(),
+              unit: cleanUnit,
+              price: Number(c.price || 0),
+              mode: c.mode === 'manual' ? 'manual' : 'auto',
+              isOptional: c.is_optional ? 1 : 0,
+              syncStatus: nextStatus,
+              updatedAt: nowIso,
+            })
+            .where(eq(parts.code, origCode));
+        }
+
+        await tx.insert(partPrices).values({
+          partCode: nextCode,
+          price: Number(c.price || 0),
+          updatedAt: nowIso,
+          source: 'gestor_edit',
+        });
       }
-      const nextStatus = c.mode === 'manual' ? 'Manual' : 'Atualizado no Gestor';
-      const cleanUnit = (c.unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN';
-      updatePart.run(
-        nextCode,
-        c.description.trim(),
-        cleanUnit,
-        Number(c.price || 0),
-        c.mode === 'manual' ? 'manual' : 'auto',
-        c.is_optional ? 1 : 0,
-        nextStatus,
-        nowIso,
-        origCode
-      );
-      insertHist.run(nextCode, Number(c.price || 0), nowIso, 'gestor_edit');
-    }
-  });
-  tx();
+    });
 
-  const parts = db
-    .prepare('SELECT * FROM parts ORDER BY description ASC, code ASC')
-    .all()
-    .map((r) => formatPartRow(r as Record<string, unknown>));
-  res.json({ ok: true, parts });
+    const partRows = await listPartsOrdered(true);
+    res.json({ ok: true, parts: partRows.map(formatPartRow) });
+  } catch (err) {
+    console.error('Error updating parts batch:', err);
+    res.status(500).json({ error: 'Falha ao atualizar peças em lote.' });
+  }
 });
 
-app.delete('/api/admin/parts/:code', requireAdmin, (req, res) => {
-  const code = decodeURIComponent(req.params.code);
-  db.prepare('DELETE FROM parts WHERE code = ?').run(code);
-  res.json({ ok: true });
+app.delete('/api/admin/parts/:code', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    await ensureDatabaseSeeded();
+    const code = decodeURIComponent(req.params.code);
+    await db.delete(parts).where(eq(parts.code, code));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error deleting part:', err);
+    res.status(500).json({ error: 'Falha ao remover peça.' });
+  }
 });
 
-app.post('/api/admin/prices/sync', requireAdmin, async (_req, res) => {
-  const result = await syncMicroWorkPrices(true);
-  const parts = db
-    .prepare('SELECT * FROM parts ORDER BY description ASC, code ASC')
-    .all()
-    .map((r) => formatPartRow(r as Record<string, unknown>));
-  res.json({ result, parts });
+app.post('/api/admin/prices/sync', requireAuth, async (_req: AuthRequest, res: Response) => {
+  try {
+    const result = await syncMicroWorkPrices(true);
+    const partRows = await listPartsOrdered(true);
+    res.json({ result, parts: partRows.map(formatPartRow) });
+  } catch (err) {
+    console.error('Error syncing prices:', err);
+    res.status(500).json({ error: 'Falha ao sincronizar preços com o ERP.' });
+  }
 });
 
 // Aba 3: Modelos e Fotos
-app.post('/api/admin/models', requireAdmin, (req, res) => {
+app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Response) => {
   const { name, segment_slug, image_url, hidden } = req.body as {
     name?: string;
     segment_slug?: string;
@@ -587,18 +656,31 @@ app.post('/api/admin/models', requireAdmin, (req, res) => {
     return;
   }
 
-  const maxSort = (db.prepare('SELECT COALESCE(MAX(sort_order), 0) as m FROM models').get() as { m: number }).m;
-  const result = db
-    .prepare('INSERT INTO models (name, segment_slug, image_url, hidden, sort_order) VALUES (?, ?, ?, ?, ?)')
-    .run(name.trim(), segment_slug || 'cub_scooter', image_url || '', hidden ? 1 : 0, maxSort + 1);
+  try {
+    await ensureDatabaseSeeded();
+    const [{ maxSort }] = await db
+      .select({ maxSort: max(models.sortOrder) })
+      .from(models);
 
-  const created = db
-    .prepare('SELECT * FROM models WHERE id = ?')
-    .get(Number(result.lastInsertRowid)) as Record<string, unknown>;
-  res.json({ model: formatModelRow(created) });
+    const [created] = await db
+      .insert(models)
+      .values({
+        name: name.trim(),
+        segmentSlug: segment_slug || 'cub_scooter',
+        imageUrl: image_url || '',
+        hidden: hidden ? 1 : 0,
+        sortOrder: Number(maxSort ?? 0) + 1,
+      })
+      .returning();
+
+    res.json({ model: formatModelRow(created) });
+  } catch (err) {
+    console.error('Error creating model:', err);
+    res.status(500).json({ error: 'Falha ao criar modelo.' });
+  }
 });
 
-app.put('/api/admin/models/:id', requireAdmin, (req, res) => {
+app.put('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
   const { name, segment_slug, image_url, hidden } = req.body as {
     name: string;
@@ -611,147 +693,225 @@ app.put('/api/admin/models/:id', requireAdmin, (req, res) => {
     return;
   }
 
-  db.prepare('UPDATE models SET name = ?, segment_slug = ?, image_url = ?, hidden = ? WHERE id = ?').run(
-    name.trim(),
-    segment_slug,
-    image_url || '',
-    hidden ? 1 : 0,
-    id
-  );
-  const updated = db.prepare('SELECT * FROM models WHERE id = ?').get(id) as Record<string, unknown>;
-  res.json({ model: formatModelRow(updated) });
+  try {
+    await ensureDatabaseSeeded();
+    const [updated] = await db
+      .update(models)
+      .set({
+        name: name.trim(),
+        segmentSlug: segment_slug,
+        imageUrl: image_url || '',
+        hidden: hidden ? 1 : 0,
+      })
+      .where(eq(models.id, id))
+      .returning();
+
+    if (!updated) {
+      res.status(404).json({ error: 'Modelo não encontrado.' });
+      return;
+    }
+
+    res.json({ model: formatModelRow(updated) });
+  } catch (err) {
+    console.error('Error updating model:', err);
+    res.status(500).json({ error: 'Falha ao atualizar modelo.' });
+  }
 });
 
-app.delete('/api/admin/models/:id', requireAdmin, (req, res) => {
-  const id = Number(req.params.id);
-  db.prepare('DELETE FROM models WHERE id = ?').run(id);
-  res.json({ ok: true });
+app.delete('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    await ensureDatabaseSeeded();
+    const id = Number(req.params.id);
+    await db.delete(models).where(eq(models.id, id));
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error deleting model:', err);
+    res.status(500).json({ error: 'Falha ao excluir modelo.' });
+  }
 });
 
 // Aba 4: Perguntas Frequentes
-app.put('/api/admin/faqs', requireAdmin, (req, res) => {
-  const { faqs } = req.body as { faqs: Array<{ id?: number; question: string; answer: string }> };
-  if (!Array.isArray(faqs)) {
+app.put('/api/admin/faqs', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { faqs: incomingFaqs } = req.body as {
+    faqs: Array<{ id?: number; question: string; answer: string }>;
+  };
+  if (!Array.isArray(incomingFaqs)) {
     res.status(400).json({ error: 'Formato inválido.' });
     return;
   }
 
-  const delStmt = db.prepare('DELETE FROM faqs');
-  const insStmt = db.prepare('INSERT INTO faqs (question, answer, sort_order) VALUES (?, ?, ?)');
-
-  const tx = db.transaction(() => {
-    delStmt.run();
-    faqs.forEach((f, idx) => {
-      if (!f.question.trim() && !f.answer.trim()) return;
-      insStmt.run(f.question.trim(), f.answer.trim(), idx + 1);
+  try {
+    await ensureDatabaseSeeded();
+    await db.transaction(async (tx) => {
+      await tx.delete(faqs);
+      const rows = incomingFaqs
+        .filter((f) => f.question.trim() || f.answer.trim())
+        .map((f, idx) => ({
+          question: f.question.trim(),
+          answer: f.answer.trim(),
+          sortOrder: idx + 1,
+        }));
+      if (rows.length > 0) {
+        await tx.insert(faqs).values(rows);
+      }
     });
-  });
-  tx();
 
-  const updated = db.prepare('SELECT * FROM faqs ORDER BY sort_order ASC, id ASC').all();
-  res.json({ ok: true, faqs: updated });
+    const updated = await listFaqsOrdered();
+    res.json({ ok: true, faqs: updated.map(formatFaqRow) });
+  } catch (err) {
+    console.error('Error updating FAQs:', err);
+    res.status(500).json({ error: 'Falha ao salvar perguntas frequentes.' });
+  }
 });
 
 // Aba 5: Categorias e Abas
-app.put('/api/admin/categories', requireAdmin, (req, res) => {
-  const { segments, revision_tabs } = req.body as {
+app.put('/api/admin/categories', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { segments: incomingSegs, revision_tabs: incomingTabs } = req.body as {
     segments: Array<{ slug: string; name: string; visible: boolean }>;
-    revision_tabs: Array<{ revision_number: number; label: string; subtitle: string; visible: boolean }>;
+    revision_tabs: Array<{
+      revision_number: number;
+      label: string;
+      subtitle: string;
+      visible: boolean;
+    }>;
   };
 
-  if (!Array.isArray(segments) || !Array.isArray(revision_tabs)) {
+  if (!Array.isArray(incomingSegs) || !Array.isArray(incomingTabs)) {
     res.status(400).json({ error: 'Dados inválidos.' });
     return;
   }
 
-  const tx = db.transaction(() => {
-    db.prepare('DELETE FROM segments').run();
-    const insSeg = db.prepare('INSERT INTO segments (slug, name, visible, sort_order) VALUES (?, ?, ?, ?)');
-    segments.forEach((s, idx) => {
-      if (!s.slug.trim() || !s.name.trim()) return;
-      insSeg.run(s.slug.trim(), s.name.trim(), s.visible ? 1 : 0, idx + 1);
+  try {
+    await ensureDatabaseSeeded();
+    await db.transaction(async (tx) => {
+      await tx.delete(segments);
+      const segRows = incomingSegs
+        .filter((s) => s.slug.trim() && s.name.trim())
+        .map((s, idx) => ({
+          slug: s.slug.trim(),
+          name: s.name.trim(),
+          visible: s.visible ? 1 : 0,
+          sortOrder: idx + 1,
+        }));
+      if (segRows.length > 0) {
+        await tx.insert(segments).values(segRows);
+      }
+
+      await tx.delete(revisionTabs);
+      const tabRows = incomingTabs.map((t, idx) => ({
+        revisionNumber: Number(t.revision_number),
+        label: t.label.trim() || `${t.revision_number}ª Revisão`,
+        subtitle: t.subtitle || '',
+        visible: t.visible ? 1 : 0,
+        sortOrder: idx + 1,
+      }));
+      if (tabRows.length > 0) {
+        await tx.insert(revisionTabs).values(tabRows);
+      }
     });
 
-    db.prepare('DELETE FROM revision_tabs').run();
-    const insTab = db.prepare(
-      'INSERT INTO revision_tabs (revision_number, label, subtitle, visible, sort_order) VALUES (?, ?, ?, ?, ?)'
-    );
-    revision_tabs.forEach((t, idx) => {
-      insTab.run(
-        Number(t.revision_number),
-        t.label.trim() || `${t.revision_number}ª Revisão`,
-        t.subtitle || '',
-        t.visible ? 1 : 0,
-        idx + 1
-      );
+    const [updatedSegments, updatedTabs] = await Promise.all([
+      listSegmentsOrdered(false),
+      listRevisionTabsOrdered(false),
+    ]);
+
+    res.json({
+      ok: true,
+      segments: updatedSegments.map(formatSegmentRow),
+      revision_tabs: updatedTabs.map(formatRevisionTabRow),
     });
-  });
-  tx();
-
-  const updatedSegments = db
-    .prepare('SELECT * FROM segments ORDER BY sort_order ASC, id ASC')
-    .all()
-    .map((r) => formatSegmentRow(r as Record<string, unknown>));
-  const updatedTabs = db
-    .prepare('SELECT * FROM revision_tabs ORDER BY sort_order ASC, revision_number ASC')
-    .all()
-    .map((r) => formatRevisionTabRow(r as Record<string, unknown>));
-
-  res.json({ ok: true, segments: updatedSegments, revision_tabs: updatedTabs });
+  } catch (err) {
+    console.error('Error updating categories:', err);
+    res.status(500).json({ error: 'Falha ao salvar categorias e abas.' });
+  }
 });
 
 // Aba 6: SEO & Identidade
-app.put('/api/admin/seo', requireAdmin, (req, res) => {
+app.put('/api/admin/seo', requireAuth, async (req: AuthRequest, res: Response) => {
   const seoPayload = req.body;
   if (!seoPayload || typeof seoPayload !== 'object') {
     res.status(400).json({ error: 'Configurações de SEO inválidas.' });
     return;
   }
 
-  const incomingPixel = (seoPayload as { meta_pixel?: Record<string, unknown> }).meta_pixel;
-  const incomingGoogleTag = (seoPayload as { google_tag?: Record<string, unknown> }).google_tag;
-  const incomingTikTok = (seoPayload as { tiktok_pixel?: Record<string, unknown> }).tiktok_pixel;
-  const mergedSeo = {
-    ...INITIAL_SEO_SETTINGS,
-    ...seoPayload,
-    meta_pixel: {
-      ...INITIAL_SEO_SETTINGS.meta_pixel,
-      ...(incomingPixel || {}),
-      events: {
-        ...INITIAL_SEO_SETTINGS.meta_pixel.events,
-        ...((incomingPixel?.events as Record<string, boolean>) || {}),
+  try {
+    const incomingPixel = (seoPayload as { meta_pixel?: Record<string, unknown> }).meta_pixel;
+    const incomingGoogleTag = (seoPayload as { google_tag?: Record<string, unknown> }).google_tag;
+    const incomingTikTok = (seoPayload as { tiktok_pixel?: Record<string, unknown> }).tiktok_pixel;
+    const mergedSeo = {
+      ...INITIAL_SEO_SETTINGS,
+      ...seoPayload,
+      meta_pixel: {
+        ...INITIAL_SEO_SETTINGS.meta_pixel,
+        ...(incomingPixel || {}),
+        events: {
+          ...INITIAL_SEO_SETTINGS.meta_pixel.events,
+          ...((incomingPixel?.events as Record<string, boolean>) || {}),
+        },
       },
-    },
-    google_tag: {
-      ...INITIAL_SEO_SETTINGS.google_tag,
-      ...(incomingGoogleTag || {}),
-      events: {
-        ...INITIAL_SEO_SETTINGS.google_tag.events,
-        ...((incomingGoogleTag?.events as Record<string, boolean>) || {}),
+      google_tag: {
+        ...INITIAL_SEO_SETTINGS.google_tag,
+        ...(incomingGoogleTag || {}),
+        events: {
+          ...INITIAL_SEO_SETTINGS.google_tag.events,
+          ...((incomingGoogleTag?.events as Record<string, boolean>) || {}),
+        },
       },
-    },
-    tiktok_pixel: {
-      ...INITIAL_SEO_SETTINGS.tiktok_pixel,
-      ...(incomingTikTok || {}),
-      events: {
-        ...INITIAL_SEO_SETTINGS.tiktok_pixel.events,
-        ...((incomingTikTok?.events as Record<string, boolean>) || {}),
+      tiktok_pixel: {
+        ...INITIAL_SEO_SETTINGS.tiktok_pixel,
+        ...(incomingTikTok || {}),
+        events: {
+          ...INITIAL_SEO_SETTINGS.tiktok_pixel.events,
+          ...((incomingTikTok?.events as Record<string, boolean>) || {}),
+        },
       },
-    },
-    units: Array.isArray((seoPayload as { units?: unknown[] }).units)
-      ? (seoPayload as { units: unknown[] }).units
-      : INITIAL_SEO_SETTINGS.units,
-  };
+      units: Array.isArray((seoPayload as { units?: unknown[] }).units)
+        ? (seoPayload as { units: unknown[] }).units
+        : INITIAL_SEO_SETTINGS.units,
+    };
 
-  db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
-    'seo',
-    JSON.stringify(mergedSeo)
-  );
-  res.json({ ok: true, seo: mergedSeo });
+    await upsertSettingValue('seo', JSON.stringify(mergedSeo));
+    res.json({ ok: true, seo: mergedSeo });
+  } catch (err) {
+    console.error('Error saving SEO settings:', err);
+    res.status(500).json({ error: 'Falha ao salvar configurações de SEO.' });
+  }
+});
+
+// Cabeçalho e Logo do Gestor (atualização direta pelo topo do painel ou SEO)
+app.put('/api/admin/gestor-branding', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { gestor_logo_url, gestor_title, gestor_subtitle } = req.body as {
+    gestor_logo_url?: string;
+    gestor_title?: string;
+    gestor_subtitle?: string;
+  };
+  try {
+    const currentSeo = await getSeoSettings();
+    const nextSeo = {
+      ...currentSeo,
+      gestor_logo_url:
+        typeof gestor_logo_url === 'string'
+          ? gestor_logo_url.trim()
+          : currentSeo.gestor_logo_url || INITIAL_SEO_SETTINGS.gestor_logo_url,
+      gestor_title:
+        typeof gestor_title === 'string' && gestor_title.trim()
+          ? gestor_title.trim()
+          : INITIAL_SEO_SETTINGS.gestor_title,
+      gestor_subtitle:
+        typeof gestor_subtitle === 'string' && gestor_subtitle.trim()
+          ? gestor_subtitle.trim()
+          : INITIAL_SEO_SETTINGS.gestor_subtitle,
+    };
+    await upsertSettingValue('seo', JSON.stringify(nextSeo));
+    res.json({ ok: true, seo: nextSeo });
+  } catch (err) {
+    console.error('Error updating gestor branding:', err);
+    res.status(500).json({ error: 'Falha ao salvar identificação do Gestor.' });
+  }
 });
 
 // Backup & Restore (Gestor)
-app.post('/api/admin/backup/restore', requireAdmin, (req, res) => {
+app.post('/api/admin/backup/restore', requireAuth, async (req: AuthRequest, res: Response) => {
   const payload = req.body as Record<string, unknown>;
   if (!payload || typeof payload !== 'object') {
     res.status(400).json({ error: 'Arquivo de backup inválido.' });
@@ -760,183 +920,401 @@ app.post('/api/admin/backup/restore', requireAdmin, (req, res) => {
 
   const nowIso = new Date().toISOString();
 
-  const tx = db.transaction(() => {
-    if (Array.isArray(payload.segments) && payload.segments.length > 0) {
-      db.prepare('DELETE FROM segments').run();
-      const insSeg = db.prepare(
-        'INSERT INTO segments (slug, name, visible, sort_order) VALUES (?, ?, ?, ?)'
-      );
-      payload.segments.forEach((s: Record<string, unknown>, idx: number) => {
-        if (!s.slug || !s.name) return;
-        insSeg.run(
-          String(s.slug),
-          String(s.name),
-          s.visible === false || s.visible === 0 ? 0 : 1,
-          Number(s.sort_order ?? idx + 1)
-        );
-      });
+  const restoredUploadNames = new Set<string>();
+  if (payload.embedded_uploads && typeof payload.embedded_uploads === 'object') {
+    if (!fs.existsSync(UPLOADS_DIR)) {
+      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
     }
+    for (const [rawName, dataUrl] of Object.entries(
+      payload.embedded_uploads as Record<string, unknown>
+    )) {
+      if (typeof dataUrl !== 'string') continue;
+      const safeFile = path.basename(String(rawName || '')).replace(/[^a-zA-Z0-9._-]/g, '_');
+      const ext = path.extname(safeFile).toLowerCase();
+      if (!safeFile || !ALLOWED_UPLOAD_EXTS.has(ext)) continue;
 
-    if (Array.isArray(payload.revision_tabs) && payload.revision_tabs.length > 0) {
-      db.prepare('DELETE FROM revision_tabs').run();
-      const insTab = db.prepare(
-        'INSERT INTO revision_tabs (revision_number, label, subtitle, visible, sort_order) VALUES (?, ?, ?, ?, ?)'
-      );
-      payload.revision_tabs.forEach((t: Record<string, unknown>, idx: number) => {
-        const revNum = Number(t.revision_number);
-        if (!revNum) return;
-        insTab.run(
-          revNum,
-          String(t.label || `${revNum}ª Revisão`),
-          String(t.subtitle || ''),
-          t.visible === false || t.visible === 0 ? 0 : 1,
-          Number(t.sort_order ?? idx + 1)
-        );
-      });
-    }
-
-    if (Array.isArray(payload.parts) && payload.parts.length > 0) {
-      const upsertPart = db.prepare(
-        `INSERT OR REPLACE INTO parts (code, description, unit, default_qty, price, mode, is_optional, microwork_price, sync_status, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      );
-      for (const p of payload.parts as Array<Record<string, unknown>>) {
-        if (!p.code || !p.description) continue;
-        upsertPart.run(
-          String(p.code).trim(),
-          String(p.description).trim(),
-          String(p.unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN',
-          Number(p.default_qty ?? 1),
-          Number(p.price ?? 0),
-          p.mode === 'manual' ? 'manual' : 'auto',
-          p.is_optional ? 1 : 0,
-          p.microwork_price != null ? Number(p.microwork_price) : null,
-          String(p.sync_status || 'Restaurado'),
-          String(p.updated_at || nowIso)
-        );
+      const b64Match = /^data:([^;]+);base64,(.+)$/i.exec(dataUrl.trim());
+      const utf8Match = /^data:([^,]+),(.+)$/i.exec(dataUrl.trim());
+      try {
+        if (b64Match) {
+          fs.writeFileSync(path.join(UPLOADS_DIR, safeFile), Buffer.from(b64Match[2], 'base64'));
+          restoredUploadNames.add(safeFile);
+        } else if (utf8Match) {
+          fs.writeFileSync(
+            path.join(UPLOADS_DIR, safeFile),
+            Buffer.from(decodeURIComponent(utf8Match[2]), 'utf8')
+          );
+          restoredUploadNames.add(safeFile);
+        }
+      } catch {
+        // Ignora entrada de upload corrompida individualmente
       }
     }
+  }
 
-    if (Array.isArray(payload.models) && payload.models.length > 0) {
-      db.prepare('DELETE FROM revision_parts').run();
-      db.prepare('DELETE FROM models').run();
-      const insModel = db.prepare(
-        'INSERT INTO models (id, name, segment_slug, image_url, hidden, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
-      );
-      for (const m of payload.models as Array<Record<string, unknown>>) {
-        if (!m.name) continue;
-        insModel.run(
-          Number(m.id),
-          String(m.name).trim(),
-          String(m.segment_slug || 'cub_scooter'),
-          String(m.image_url || ''),
-          m.hidden ? 1 : 0,
-          Number(m.sort_order ?? 0)
-        );
+  const normalizeRestoredMediaUrl = (rawUrl: unknown): string => {
+    if (typeof rawUrl !== 'string') return '';
+    const trimmed = rawUrl.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('data:image/')) return trimmed;
+    if (trimmed.startsWith('uploads/')) return `/${trimmed}`;
+    if (trimmed.startsWith('src/assets/')) return `/${trimmed}`;
+    const uploadsMatch = /\/uploads\/([^/?#]+)/i.exec(trimmed);
+    if (uploadsMatch?.[1]) {
+      const filename = path.basename(uploadsMatch[1]);
+      if (
+        restoredUploadNames.has(filename) ||
+        fs.existsSync(path.join(UPLOADS_DIR, filename))
+      ) {
+        return `/uploads/${filename}`;
       }
     }
+    return trimmed;
+  };
 
-    if (Array.isArray(payload.revision_parts)) {
-      db.prepare('DELETE FROM revision_parts').run();
-      const insRev = db.prepare(
-        'INSERT INTO revision_parts (model_id, revision_number, part_code, quantity) VALUES (?, ?, ?, ?)'
-      );
-      for (const rp of payload.revision_parts as Array<Record<string, unknown>>) {
-        const modelExists = db.prepare('SELECT id FROM models WHERE id = ?').get(Number(rp.model_id));
-        const partExists = db.prepare('SELECT code FROM parts WHERE code = ?').get(String(rp.part_code));
-        if (!modelExists || !partExists) continue;
-        insRev.run(
-          Number(rp.model_id),
-          Number(rp.revision_number),
-          String(rp.part_code),
-          Number(rp.quantity ?? 1)
+  try {
+    await ensureDatabaseSeeded();
+    await db.transaction(async (tx) => {
+      if (Array.isArray(payload.segments) && payload.segments.length > 0) {
+        await tx.delete(segments);
+        const segRows = (payload.segments as Array<Record<string, unknown>>)
+          .filter((s) => s.slug && s.name)
+          .map((s, idx) => ({
+            slug: String(s.slug),
+            name: String(s.name),
+            visible: s.visible === false || s.visible === 0 ? 0 : 1,
+            sortOrder: Number(s.sort_order ?? idx + 1),
+          }));
+        if (segRows.length > 0) {
+          await tx.insert(segments).values(segRows);
+        }
+      }
+
+      if (Array.isArray(payload.revision_tabs) && payload.revision_tabs.length > 0) {
+        await tx.delete(revisionTabs);
+        const tabRows = (payload.revision_tabs as Array<Record<string, unknown>>)
+          .filter((t) => Number(t.revision_number))
+          .map((t, idx) => {
+            const revNum = Number(t.revision_number);
+            return {
+              revisionNumber: revNum,
+              label: String(t.label || `${revNum}ª Revisão`),
+              subtitle: String(t.subtitle || ''),
+              visible: t.visible === false || t.visible === 0 ? 0 : 1,
+              sortOrder: Number(t.sort_order ?? idx + 1),
+            };
+          });
+        if (tabRows.length > 0) {
+          await tx.insert(revisionTabs).values(tabRows);
+        }
+      }
+
+      if (Array.isArray(payload.parts) && payload.parts.length > 0) {
+        for (const p of payload.parts as Array<Record<string, unknown>>) {
+          if (!p.code || !p.description) continue;
+          const partCode = String(p.code).trim();
+          const rowValues = {
+            code: partCode,
+            description: String(p.description).trim(),
+            unit: String(p.unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN',
+            defaultQty: Number(p.default_qty ?? 1),
+            price: Number(p.price ?? 0),
+            mode: p.mode === 'manual' ? 'manual' : 'auto',
+            isOptional: p.is_optional ? 1 : 0,
+            microworkPrice: p.microwork_price != null ? Number(p.microwork_price) : null,
+            syncStatus: String(p.sync_status || 'Restaurado'),
+            updatedAt: String(p.updated_at || nowIso),
+          };
+          await tx
+            .insert(parts)
+            .values(rowValues)
+            .onConflictDoUpdate({
+              target: parts.code,
+              set: {
+                description: rowValues.description,
+                unit: rowValues.unit,
+                defaultQty: rowValues.defaultQty,
+                price: rowValues.price,
+                mode: rowValues.mode,
+                isOptional: rowValues.isOptional,
+                microworkPrice: rowValues.microworkPrice,
+                syncStatus: rowValues.syncStatus,
+                updatedAt: rowValues.updatedAt,
+              },
+            });
+        }
+      }
+
+      if (Array.isArray(payload.models) && payload.models.length > 0) {
+        await tx.delete(revisionParts);
+        await tx.delete(models);
+        const modelRows = (payload.models as Array<Record<string, unknown>>)
+          .filter((m) => Boolean(m.name))
+          .map((m) => ({
+            id: Number(m.id),
+            name: String(m.name).trim(),
+            segmentSlug: String(m.segment_slug || 'cub_scooter'),
+            imageUrl: normalizeRestoredMediaUrl(m.image_url),
+            hidden: m.hidden ? 1 : 0,
+            sortOrder: Number(m.sort_order ?? 0),
+          }));
+        if (modelRows.length > 0) {
+          await tx.insert(models).values(modelRows);
+        }
+        await tx.execute(
+          sql`SELECT setval(pg_get_serial_sequence('models', 'id'), COALESCE((SELECT MAX(id) FROM models), 1), true)`
         );
       }
-    }
 
-    if (Array.isArray(payload.faqs)) {
-      db.prepare('DELETE FROM faqs').run();
-      const insFaq = db.prepare('INSERT INTO faqs (question, answer, sort_order) VALUES (?, ?, ?)');
-      payload.faqs.forEach((f: Record<string, unknown>, idx: number) => {
-        if (!f.question) return;
-        insFaq.run(String(f.question), String(f.answer || ''), Number(f.sort_order ?? idx + 1));
-      });
-    }
+      if (Array.isArray(payload.revision_parts)) {
+        await tx.delete(revisionParts);
+        const existingModels = await tx.select({ id: models.id }).from(models);
+        const existingParts = await tx.select({ code: parts.code }).from(parts);
+        const modelSet = new Set(existingModels.map((m) => m.id));
+        const partSet = new Set(existingParts.map((p) => p.code));
 
-    if (payload.seo && typeof payload.seo === 'object') {
-      const mergedSeo = {
-        ...INITIAL_SEO_SETTINGS,
-        ...(payload.seo as Record<string, unknown>),
-      };
-      db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
-        'seo',
-        JSON.stringify(mergedSeo)
-      );
-    }
-
-    if (payload.visual_builder && typeof payload.visual_builder === 'object') {
-      db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
-        'visual_builder',
-        JSON.stringify(payload.visual_builder)
-      );
-    }
-
-    if (payload.integrations && typeof payload.integrations === 'object') {
-      const ints = payload.integrations as Record<string, Record<string, unknown>>;
-      if (ints.google_maps) {
-        db.prepare(
-          'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(
-          'google_maps',
-          'Google Maps Platform',
-          JSON.stringify({ custom_api_key: String(ints.google_maps.custom_api_key || '') }),
-          '',
-          ints.google_maps.active ? 1 : 0,
-          nowIso
-        );
+        const rpRows = (payload.revision_parts as Array<Record<string, unknown>>)
+          .filter((rp) => modelSet.has(Number(rp.model_id)) && partSet.has(String(rp.part_code)))
+          .map((rp) => ({
+            modelId: Number(rp.model_id),
+            revisionNumber: Number(rp.revision_number),
+            partCode: String(rp.part_code),
+            quantity: Number(rp.quantity ?? 1),
+          }));
+        for (let i = 0; i < rpRows.length; i += 400) {
+          await tx.insert(revisionParts).values(rpRows.slice(i, i + 400));
+        }
       }
-      if (ints.microwork) {
-        const existingMw = db
-          .prepare('SELECT secret_value FROM integrations WHERE key = ?')
-          .get('microwork') as { secret_value: string } | undefined;
-        db.prepare(
-          'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(
-          'microwork',
-          'ERP MicroWork',
-          JSON.stringify({
+
+      if (Array.isArray(payload.faqs)) {
+        await tx.delete(faqs);
+        const faqRows = (payload.faqs as Array<Record<string, unknown>>)
+          .filter((f) => Boolean(f.question))
+          .map((f, idx) => ({
+            question: String(f.question),
+            answer: String(f.answer || ''),
+            sortOrder: Number(f.sort_order ?? idx + 1),
+          }));
+        if (faqRows.length > 0) {
+          await tx.insert(faqs).values(faqRows);
+        }
+      }
+
+      if (payload.seo && typeof payload.seo === 'object') {
+        const incomingSeo = payload.seo as Record<string, unknown>;
+        const brandingOverride =
+          payload.gestor_branding && typeof payload.gestor_branding === 'object'
+            ? (payload.gestor_branding as Record<string, unknown>)
+            : {};
+        const mergedSeo = {
+          ...INITIAL_SEO_SETTINGS,
+          ...incomingSeo,
+          favicon_url: normalizeRestoredMediaUrl(incomingSeo.favicon_url),
+          logo_url: normalizeRestoredMediaUrl(incomingSeo.logo_url),
+          gestor_logo_url: normalizeRestoredMediaUrl(
+            incomingSeo.gestor_logo_url ??
+              brandingOverride.gestor_logo_url ??
+              INITIAL_SEO_SETTINGS.gestor_logo_url
+          ),
+          gestor_title: String(
+            incomingSeo.gestor_title ||
+              brandingOverride.gestor_title ||
+              INITIAL_SEO_SETTINGS.gestor_title
+          ),
+          gestor_subtitle: String(
+            incomingSeo.gestor_subtitle ||
+              brandingOverride.gestor_subtitle ||
+              INITIAL_SEO_SETTINGS.gestor_subtitle
+          ),
+          og_image: normalizeRestoredMediaUrl(incomingSeo.og_image),
+        };
+        await tx
+          .insert(siteSettings)
+          .values({ key: 'seo', value: JSON.stringify(mergedSeo) })
+          .onConflictDoUpdate({
+            target: siteSettings.key,
+            set: { value: JSON.stringify(mergedSeo) },
+          });
+      }
+
+      if (payload.visual_builder && typeof payload.visual_builder === 'object') {
+        const vb = { ...(payload.visual_builder as Record<string, unknown>) };
+        if (vb.imageOverrides && typeof vb.imageOverrides === 'object') {
+          const nextOverrides: Record<string, unknown> = {};
+          for (const [k, v] of Object.entries(vb.imageOverrides as Record<string, unknown>)) {
+            nextOverrides[k] = typeof v === 'string' ? normalizeRestoredMediaUrl(v) : v;
+          }
+          vb.imageOverrides = nextOverrides;
+        }
+        await tx
+          .insert(siteSettings)
+          .values({ key: 'visual_builder', value: JSON.stringify(vb) })
+          .onConflictDoUpdate({
+            target: siteSettings.key,
+            set: { value: JSON.stringify(vb) },
+          });
+      }
+
+      if (payload.integrations && typeof payload.integrations === 'object') {
+        const ints = payload.integrations as Record<string, Record<string, unknown>>;
+        if (ints.google_maps) {
+          const cfg = JSON.stringify({
+            custom_api_key: String(ints.google_maps.custom_api_key || ''),
+          });
+          const activeVal = ints.google_maps.active ? 1 : 0;
+          await tx
+            .insert(integrations)
+            .values({
+              key: 'google_maps',
+              name: 'Google Maps Platform',
+              configJson: cfg,
+              secretValue: '',
+              active: activeVal,
+              updatedAt: nowIso,
+            })
+            .onConflictDoUpdate({
+              target: integrations.key,
+              set: { configJson: cfg, active: activeVal, updatedAt: nowIso },
+            });
+        }
+        if (ints.microwork) {
+          const existingMw = await tx
+            .select({ secretValue: integrations.secretValue })
+            .from(integrations)
+            .where(eq(integrations.key, 'microwork'));
+          const cfg = JSON.stringify({
             auto_sync_enabled: Boolean(ints.microwork.auto_sync_enabled),
             update_mode: ints.microwork.update_mode === 'manual' ? 'manual' : 'auto_api',
             endpoint_url: String(ints.microwork.endpoint_url || ''),
             frequency: ints.microwork.frequency === 'daily' ? 'daily' : 'weekly',
             last_sync_at: String(ints.microwork.last_sync_at || nowIso),
             last_sync_result: String(ints.microwork.last_sync_result || 'Restaurado via backup'),
-          }),
-          existingMw?.secret_value || '',
-          1,
-          nowIso
-        );
+          });
+          await tx
+            .insert(integrations)
+            .values({
+              key: 'microwork',
+              name: 'ERP MicroWork',
+              configJson: cfg,
+              secretValue: existingMw[0]?.secretValue || '',
+              active: 1,
+              updatedAt: nowIso,
+            })
+            .onConflictDoUpdate({
+              target: integrations.key,
+              set: { configJson: cfg, updatedAt: nowIso },
+            });
+        }
+        if (Array.isArray(ints.custom_integrations)) {
+          const existingCustomRows = await tx
+            .select({ configJson: integrations.configJson })
+            .from(integrations)
+            .where(eq(integrations.key, 'custom_integrations'));
+          let existingCustomList: Array<{ id?: string; name?: string; value?: string }> = [];
+          try {
+            existingCustomList = existingCustomRows[0]
+              ? JSON.parse(existingCustomRows[0].configJson)
+              : [];
+          } catch {
+            existingCustomList = [];
+          }
+          const sanitizedCustom = (
+            ints.custom_integrations as Array<{
+              id?: string;
+              name?: string;
+              value?: string;
+              active?: boolean;
+            }>
+          ).map((item) => {
+            if (item.value === '•••• (protegido)') {
+              const match = existingCustomList.find(
+                (ex) => (item.id && ex.id === item.id) || (item.name && ex.name === item.name)
+              );
+              return { ...item, value: match?.value ?? '' };
+            }
+            return item;
+          });
+          const cfg = JSON.stringify(sanitizedCustom);
+          await tx
+            .insert(integrations)
+            .values({
+              key: 'custom_integrations',
+              name: 'Outras chaves e webhooks',
+              configJson: cfg,
+              secretValue: '',
+              active: 1,
+              updatedAt: nowIso,
+            })
+            .onConflictDoUpdate({
+              target: integrations.key,
+              set: { configJson: cfg, updatedAt: nowIso },
+            });
+        }
+        if (ints.tracking_pixels && typeof ints.tracking_pixels === 'object') {
+          const tp = ints.tracking_pixels as Record<string, Record<string, unknown>>;
+          const existingTp = await tx
+            .select({ secretValue: integrations.secretValue })
+            .from(integrations)
+            .where(eq(integrations.key, 'tracking_pixels'));
+          const nextTpCfg = {
+            gtm: {
+              enabled: Boolean(tp.gtm?.enabled),
+              container_id: String(tp.gtm?.container_id || '').trim().toUpperCase(),
+            },
+            ga4: {
+              enabled: Boolean(tp.ga4?.enabled),
+              measurement_id: String(tp.ga4?.measurement_id || '').trim().toUpperCase(),
+            },
+            google_ads: {
+              enabled: Boolean(tp.google_ads?.enabled),
+              ads_id: String(tp.google_ads?.ads_id || '').trim().toUpperCase(),
+              conversion_label: String(tp.google_ads?.conversion_label || '').trim(),
+            },
+            meta_pixel: {
+              enabled: Boolean(tp.meta_pixel?.enabled),
+              pixel_id: String(tp.meta_pixel?.pixel_id || '').replace(/\D/g, ''),
+              domain_verification: String(tp.meta_pixel?.domain_verification || '').trim(),
+            },
+            tiktok_pixel: {
+              enabled: Boolean(tp.tiktok_pixel?.enabled),
+              pixel_id: String(tp.tiktok_pixel?.pixel_id || '').trim().toUpperCase(),
+            },
+            google_search_console: {
+              verification_code: extractGoogleSiteVerificationCode(
+                (tp.google_search_console as { verification_code?: unknown } | undefined)
+                  ?.verification_code
+              ),
+            },
+          };
+          const cfg = JSON.stringify(nextTpCfg);
+          await tx
+            .insert(integrations)
+            .values({
+              key: 'tracking_pixels',
+              name: 'Pixels, Tags & Rastreamento',
+              configJson: cfg,
+              secretValue:
+                existingTp[0]?.secretValue ||
+                JSON.stringify({ meta_capi_token: '', tiktok_events_token: '' }),
+              active: 1,
+              updatedAt: nowIso,
+            })
+            .onConflictDoUpdate({
+              target: integrations.key,
+              set: { configJson: cfg, updatedAt: nowIso },
+            });
+        }
       }
-      if (Array.isArray(ints.custom_integrations)) {
-        db.prepare(
-          'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-        ).run(
-          'custom_integrations',
-          'Outras chaves e webhooks',
-          JSON.stringify(ints.custom_integrations),
-          '',
-          1,
-          nowIso
-        );
-      }
-    }
-  });
+    });
 
-  tx();
-  res.json({ ok: true });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error restoring backup:', err);
+    res.status(500).json({ error: 'Falha ao restaurar backup no banco de dados.' });
+  }
 });
 
-// Exportar Estrutura Completa do Site + Banco + Assets + Backup Gestor (.zip)
+// Exportar Estrutura Completa do Site + Snapshot Cloud SQL + Assets + Backup Gestor (.zip)
 const ZIP_IGNORED_DIRS = new Set([
   'node_modules',
   'dist',
@@ -956,11 +1334,9 @@ function shouldSkipZipEntry(relPath: string, isDir: boolean): boolean {
   }
 
   if (baseName === '.DS_Store' || baseName.endsWith('.log')) return true;
-  // Nunca incluir segredos locais (.env, .env.local, etc.), mantendo .env.example
   if (baseName === '.env' || (baseName.startsWith('.env.') && baseName !== '.env.example')) {
     return true;
   }
-  // O banco SQLite é incluído via snapshot atômico db.backup()
   if (
     normalized === 'data/rodaleve.db' ||
     normalized === 'data/rodaleve.db-wal' ||
@@ -988,29 +1364,53 @@ function addWorkspaceDirToZip(zip: JSZip, rootDir: string, currentDir: string): 
   }
 }
 
-app.post('/api/admin/export-site-zip', requireAdmin, async (req, res) => {
+app.post('/api/admin/export-site-zip', requireAuth, async (req: AuthRequest, res: Response) => {
   const rootDir = process.cwd();
   const zip = new JSZip();
 
   try {
     addWorkspaceDirToZip(zip, rootDir, rootDir);
 
-    // Snapshot consistente do banco SQLite atual
-    const tmpDbPath = path.join(
-      os.tmpdir(),
-      `rodaleve-export-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`
-    );
-    try {
-      await db.backup(tmpDbPath);
-      const dbBuffer = fs.readFileSync(tmpDbPath);
-      zip.file('data/rodaleve.db', dbBuffer);
-    } finally {
-      if (fs.existsSync(tmpDbPath)) {
-        fs.unlinkSync(tmpDbPath);
-      }
-    }
+    // Snapshot consistente dos dados atuais do Cloud SQL (PostgreSQL)
+    const [
+      modelRows,
+      segmentRows,
+      revisionTabRows,
+      partRows,
+      revisionPartRows,
+      faqRows,
+      seo,
+      visualBuilder,
+    ] = await Promise.all([
+      listAllModelsOrdered(),
+      listSegmentsOrdered(false),
+      listRevisionTabsOrdered(false),
+      listPartsOrdered(false),
+      listRevisionPartsOrdered(),
+      listFaqsOrdered(),
+      getSeoSettings(),
+      getVisualBuilderConfig(),
+    ]);
 
-    // Inclui os arquivos JSON estruturados do Gestor em backup-gestor/
+    zip.file(
+      'backup-gestor/cloudsql-snapshot.json',
+      JSON.stringify(
+        {
+          exported_at: new Date().toISOString(),
+          models: modelRows.map(formatModelRow),
+          segments: segmentRows.map(formatSegmentRow),
+          revision_tabs: revisionTabRows.map(formatRevisionTabRow),
+          parts: partRows.map(formatPartRow),
+          revision_parts: revisionPartRows.map(formatRevisionPartRow),
+          faqs: faqRows.map(formatFaqRow),
+          seo,
+          visual_builder: visualBuilder,
+        },
+        null,
+        2
+      )
+    );
+
     const backupFiles = (req.body as { backup_files?: Record<string, unknown> })?.backup_files;
     if (backupFiles && typeof backupFiles === 'object') {
       for (const [name, content] of Object.entries(backupFiles)) {
@@ -1020,13 +1420,12 @@ app.post('/api/admin/export-site-zip', requireAdmin, async (req, res) => {
       }
     }
 
-    // Inclui README.md caso não exista na raiz para facilitar importação em outras plataformas
     if (!zip.file('README.md')) {
       zip.file(
         'README.md',
         `# Rodaleve Honda — Tabela de Manutenção e Revisões + Rodaleve Gestor
 
-Pacote completo exportado com toda a estrutura do site (frontend React + Vite + Tailwind, backend Express + SQLite, imagens enviadas e backup do Gestor).
+Pacote completo exportado com toda a estrutura do site (frontend React + Vite + Tailwind, backend Express + PostgreSQL/Drizzle, imagens enviadas e backup do Gestor).
 
 ## Como executar em outra plataforma
 
@@ -1034,11 +1433,7 @@ Pacote completo exportado com toda a estrutura do site (frontend React + Vite + 
    \`\`\`bash
    npm install
    \`\`\`
-2. (Opcional) Configure as variáveis de ambiente copiando \`.env.example\` para \`.env\`:
-   - \`PORT\` (padrão \`3000\`)
-   - \`VITE_GOOGLE_MAPS_API_KEY\` (opcional, caso não use a chave configurada no Gestor)
-   - \`MICROWORK_TOKEN\` (opcional, sincronização ERP)
-   - \`SESSION_SECRET\`
+2. Configure as variáveis de ambiente copiando \`.env.example\` para \`.env\` (incluindo \`SQL_HOST\`, \`SQL_DB_NAME\`, \`SQL_USER\`, \`SQL_PASSWORD\`, \`SQL_ADMIN_USER\`, \`SQL_ADMIN_PASSWORD\`).
 3. Ambiente de desenvolvimento:
    \`\`\`bash
    npm run dev
@@ -1048,14 +1443,6 @@ Pacote completo exportado com toda a estrutura do site (frontend React + Vite + 
    npm run build
    npm start
    \`\`\`
-
-## Estrutura incluída neste ZIP
-
-- \`src/\`: código-fonte completo do site público e do painel Rodaleve Gestor
-- \`server.ts\`: servidor Express com APIs públicas, autenticação e integração com banco SQLite
-- \`public/\` e \`data/uploads/\`: ativos estáticos e imagens enviadas no Gestor
-- \`data/rodaleve.db\`: snapshot completo do banco SQLite com todos os dados atuais
-- \`backup-gestor/\`: arquivos JSON organizados por aba (também compatíveis com o botão **Importar** do Gestor)
 `
       );
     }
@@ -1085,27 +1472,34 @@ Pacote completo exportado com toda a estrutura do site (frontend React + Vite + 
 });
 
 // Visual Builder config persistence
-app.put('/api/admin/visual-builder', requireAdmin, (req, res) => {
+app.put('/api/admin/visual-builder', requireAuth, async (req: AuthRequest, res: Response) => {
   const payload = req.body;
   if (!payload || typeof payload !== 'object') {
     res.status(400).json({ error: 'Configuração do editor visual inválida.' });
     return;
   }
-  db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
-    'visual_builder',
-    JSON.stringify(payload)
-  );
-  res.json({ ok: true, visual_builder: payload });
+  try {
+    await upsertSettingValue('visual_builder', JSON.stringify(payload));
+    res.json({ ok: true, visual_builder: payload });
+  } catch (err) {
+    console.error('Error saving visual builder:', err);
+    res.status(500).json({ error: 'Falha ao salvar alterações do editor visual.' });
+  }
 });
 
-app.delete('/api/admin/visual-builder', requireAdmin, (_req, res) => {
-  db.prepare('DELETE FROM site_settings WHERE key = ?').run('visual_builder');
-  res.json({ ok: true });
+app.delete('/api/admin/visual-builder', requireAuth, async (_req: AuthRequest, res: Response) => {
+  try {
+    await deleteSettingKey('visual_builder');
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Error deleting visual builder:', err);
+    res.status(500).json({ error: 'Falha ao restaurar editor visual.' });
+  }
 });
 
 // Aba 7: Integrações & APIs
-app.put('/api/admin/integrations', requireAdmin, (req, res) => {
-  const { google_maps, microwork, custom_integrations } = req.body as {
+app.put('/api/admin/integrations', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { google_maps, microwork, custom_integrations, tracking_pixels } = req.body as {
     google_maps: { active: boolean; custom_api_key: string };
     microwork: {
       auto_sync_enabled: boolean;
@@ -1115,79 +1509,254 @@ app.put('/api/admin/integrations', requireAdmin, (req, res) => {
       frequency: 'daily' | 'weekly';
     };
     custom_integrations: Array<{ id: string; name: string; value: string; active: boolean }>;
+    tracking_pixels?: {
+      gtm?: { enabled: boolean; container_id: string };
+      ga4?: { enabled: boolean; measurement_id: string };
+      google_ads?: { enabled: boolean; ads_id: string; conversion_label?: string };
+      meta_pixel?: {
+        enabled: boolean;
+        pixel_id: string;
+        domain_verification?: string;
+        new_capi_token?: string;
+        clear_capi_token?: boolean;
+      };
+      tiktok_pixel?: {
+        enabled: boolean;
+        pixel_id: string;
+        new_events_token?: string;
+        clear_events_token?: boolean;
+      };
+      google_search_console?: {
+        verification_code?: string;
+      };
+    };
   };
 
-  const nowIso = new Date().toISOString();
+  if (tracking_pixels) {
+    const gtmId = (tracking_pixels.gtm?.container_id || '').trim().toUpperCase();
+    const ga4Id = (tracking_pixels.ga4?.measurement_id || '').trim().toUpperCase();
+    const adsId = (tracking_pixels.google_ads?.ads_id || '').trim().toUpperCase();
+    const metaId = (tracking_pixels.meta_pixel?.pixel_id || '').trim();
+    const ttId = (tracking_pixels.tiktok_pixel?.pixel_id || '').trim().toUpperCase();
+    const rawGsc = String(tracking_pixels.google_search_console?.verification_code || '').trim();
+    const extractedGsc = extractGoogleSiteVerificationCode(rawGsc);
 
-  db.prepare(
-    'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(
-    'google_maps',
-    'Google Maps Platform',
-    JSON.stringify({ custom_api_key: google_maps?.custom_api_key || '' }),
-    '',
-    google_maps?.active ? 1 : 0,
-    nowIso
-  );
-
-  const existingMw = db
-    .prepare('SELECT config_json, secret_value FROM integrations WHERE key = ?')
-    .get('microwork') as { config_json: string; secret_value: string } | undefined;
-  const oldMwCfg = existingMw ? JSON.parse(existingMw.config_json) : {};
-  const nextSecret =
-    microwork?.new_token && microwork.new_token.trim().length > 0
-      ? microwork.new_token.trim()
-      : existingMw?.secret_value || '';
-
-  const nextMwCfg = {
-    ...oldMwCfg,
-    auto_sync_enabled: Boolean(microwork?.auto_sync_enabled),
-    update_mode: microwork?.update_mode === 'manual' ? 'manual' : 'auto_api',
-    endpoint_url: microwork?.endpoint_url?.trim() || '',
-    frequency: microwork?.frequency === 'daily' ? 'daily' : 'weekly',
-  };
-
-  db.prepare(
-    'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run('microwork', 'ERP MicroWork', JSON.stringify(nextMwCfg), nextSecret, 1, nowIso);
-
-  db.prepare(
-    'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-  ).run(
-    'custom_integrations',
-    'Outras chaves e webhooks',
-    JSON.stringify(Array.isArray(custom_integrations) ? custom_integrations : []),
-    '',
-    1,
-    nowIso
-  );
-
-  res.json({
-    ok: true,
-    has_token: Boolean(nextSecret || process.env.MICROWORK_TOKEN),
-    token_masked: maskSecret(nextSecret || process.env.MICROWORK_TOKEN || ''),
-  });
-});
-
-app.post('/api/admin/integrations/test', requireAdmin, async (req, res) => {
-  const { endpoint_url, new_token } = req.body as { endpoint_url?: string; new_token?: string };
-  const existingMw = db
-    .prepare('SELECT config_json, secret_value FROM integrations WHERE key = ?')
-    .get('microwork') as { config_json: string; secret_value: string } | undefined;
-  const oldCfg = existingMw ? JSON.parse(existingMw.config_json) : {};
-
-  const targetUrl = (endpoint_url || oldCfg.endpoint_url || '').trim();
-  const token = (new_token || existingMw?.secret_value || process.env.MICROWORK_TOKEN || '').trim();
-
-  if (!targetUrl) {
-    res.json({
-      ok: false,
-      message: 'Informe uma URL de endpoint do MicroWork para testar a conexão.',
-    });
-    return;
+    if (gtmId && !/^GTM-[A-Z0-9]{4,16}$/.test(gtmId)) {
+      res.status(400).json({ error: 'ID do Contêiner GTM inválido. Use o formato GTM-XXXXXXX.' });
+      return;
+    }
+    if (ga4Id && !/^G-[A-Z0-9]{4,20}$/.test(ga4Id)) {
+      res.status(400).json({ error: 'ID da Métrica GA4 inválido. Use o formato G-XXXXXXXXXX.' });
+      return;
+    }
+    if (adsId && !/^AW-[A-Z0-9]{5,20}$/.test(adsId)) {
+      res
+        .status(400)
+        .json({ error: 'ID da Tag do Google Ads inválido. Use o formato AW-123456789.' });
+      return;
+    }
+    if (metaId && !/^\d{5,25}$/.test(metaId)) {
+      res
+        .status(400)
+        .json({ error: 'ID do Pixel da Meta inválido. Informe apenas dígitos numéricos.' });
+      return;
+    }
+    if (ttId && !/^[A-Z0-9_-]{6,32}$/.test(ttId)) {
+      res
+        .status(400)
+        .json({ error: 'ID do Pixel do TikTok inválido. Use letras e números (mín. 6 caracteres).' });
+      return;
+    }
+    if (rawGsc && !extractedGsc) {
+      res.status(400).json({
+        error:
+          'Código ou tag do Google Search Console inválido. Cole a tag completa com content="..." ou apenas o código de verificação.',
+      });
+      return;
+    }
   }
 
   try {
+    await ensureDatabaseSeeded();
+    const nowIso = new Date().toISOString();
+
+    const mapsCfg = JSON.stringify({ custom_api_key: google_maps?.custom_api_key || '' });
+    const mapsActive = google_maps?.active ? 1 : 0;
+    await db
+      .insert(integrations)
+      .values({
+        key: 'google_maps',
+        name: 'Google Maps Platform',
+        configJson: mapsCfg,
+        secretValue: '',
+        active: mapsActive,
+        updatedAt: nowIso,
+      })
+      .onConflictDoUpdate({
+        target: integrations.key,
+        set: { configJson: mapsCfg, active: mapsActive, updatedAt: nowIso },
+      });
+
+    const existingMw = await getIntegrationRow('microwork');
+    const oldMwCfg = existingMw ? JSON.parse(existingMw.configJson) : {};
+    const nextSecret =
+      microwork?.new_token && microwork.new_token.trim().length > 0
+        ? microwork.new_token.trim()
+        : existingMw?.secretValue || '';
+
+    const nextMwCfg = JSON.stringify({
+      ...oldMwCfg,
+      auto_sync_enabled: Boolean(microwork?.auto_sync_enabled),
+      update_mode: microwork?.update_mode === 'manual' ? 'manual' : 'auto_api',
+      endpoint_url: microwork?.endpoint_url?.trim() || '',
+      frequency: microwork?.frequency === 'daily' ? 'daily' : 'weekly',
+    });
+
+    await db
+      .insert(integrations)
+      .values({
+        key: 'microwork',
+        name: 'ERP MicroWork',
+        configJson: nextMwCfg,
+        secretValue: nextSecret,
+        active: 1,
+        updatedAt: nowIso,
+      })
+      .onConflictDoUpdate({
+        target: integrations.key,
+        set: { configJson: nextMwCfg, secretValue: nextSecret, updatedAt: nowIso },
+      });
+
+    const customCfg = JSON.stringify(Array.isArray(custom_integrations) ? custom_integrations : []);
+    await db
+      .insert(integrations)
+      .values({
+        key: 'custom_integrations',
+        name: 'Outras chaves e webhooks',
+        configJson: customCfg,
+        secretValue: '',
+        active: 1,
+        updatedAt: nowIso,
+      })
+      .onConflictDoUpdate({
+        target: integrations.key,
+        set: { configJson: customCfg, updatedAt: nowIso },
+      });
+
+    if (tracking_pixels) {
+      const existingTp = await getIntegrationRow('tracking_pixels');
+
+      let prevSecrets = { meta_capi_token: '', tiktok_events_token: '' };
+      if (existingTp?.secretValue) {
+        try {
+          const parsed = JSON.parse(existingTp.secretValue) as {
+            meta_capi_token?: string;
+            tiktok_events_token?: string;
+          };
+          prevSecrets = {
+            meta_capi_token: parsed.meta_capi_token || '',
+            tiktok_events_token: parsed.tiktok_events_token || '',
+          };
+        } catch {
+          // ignore malformed JSON
+        }
+      }
+
+      const nextCapiToken = tracking_pixels.meta_pixel?.clear_capi_token
+        ? ''
+        : tracking_pixels.meta_pixel?.new_capi_token?.trim()
+          ? tracking_pixels.meta_pixel.new_capi_token.trim()
+          : prevSecrets.meta_capi_token;
+
+      const nextTikTokToken = tracking_pixels.tiktok_pixel?.clear_events_token
+        ? ''
+        : tracking_pixels.tiktok_pixel?.new_events_token?.trim()
+          ? tracking_pixels.tiktok_pixel.new_events_token.trim()
+          : prevSecrets.tiktok_events_token;
+
+      const nextTpConfig = {
+        gtm: {
+          enabled: Boolean(tracking_pixels.gtm?.enabled),
+          container_id: (tracking_pixels.gtm?.container_id || '').trim().toUpperCase(),
+        },
+        ga4: {
+          enabled: Boolean(tracking_pixels.ga4?.enabled),
+          measurement_id: (tracking_pixels.ga4?.measurement_id || '').trim().toUpperCase(),
+        },
+        google_ads: {
+          enabled: Boolean(tracking_pixels.google_ads?.enabled),
+          ads_id: (tracking_pixels.google_ads?.ads_id || '').trim().toUpperCase(),
+          conversion_label: (tracking_pixels.google_ads?.conversion_label || '').trim(),
+        },
+        meta_pixel: {
+          enabled: Boolean(tracking_pixels.meta_pixel?.enabled),
+          pixel_id: (tracking_pixels.meta_pixel?.pixel_id || '')
+            .replace(/\s+/g, '')
+            .replace(/\D/g, ''),
+          domain_verification: (tracking_pixels.meta_pixel?.domain_verification || '').trim(),
+        },
+        tiktok_pixel: {
+          enabled: Boolean(tracking_pixels.tiktok_pixel?.enabled),
+          pixel_id: (tracking_pixels.tiktok_pixel?.pixel_id || '').trim().toUpperCase(),
+        },
+        google_search_console: {
+          verification_code: extractGoogleSiteVerificationCode(
+            tracking_pixels.google_search_console?.verification_code
+          ),
+        },
+      };
+
+      const tpCfgStr = JSON.stringify(nextTpConfig || DEFAULT_TRACKING_PIXELS_CONFIG);
+      const tpSecretsStr = JSON.stringify({
+        meta_capi_token: nextCapiToken,
+        tiktok_events_token: nextTikTokToken,
+      });
+
+      await db
+        .insert(integrations)
+        .values({
+          key: 'tracking_pixels',
+          name: 'Pixels, Tags & Rastreamento',
+          configJson: tpCfgStr,
+          secretValue: tpSecretsStr,
+          active: 1,
+          updatedAt: nowIso,
+        })
+        .onConflictDoUpdate({
+          target: integrations.key,
+          set: { configJson: tpCfgStr, secretValue: tpSecretsStr, updatedAt: nowIso },
+        });
+    }
+
+    res.json({
+      ok: true,
+      has_token: Boolean(nextSecret || process.env.MICROWORK_TOKEN),
+      token_masked: maskSecret(nextSecret || process.env.MICROWORK_TOKEN || ''),
+      tracking_pixels: await getAdminTrackingPixelsConfig(),
+    });
+  } catch (err) {
+    console.error('Error saving integrations:', err);
+    res.status(500).json({ error: 'Falha ao salvar integrações.' });
+  }
+});
+
+app.post('/api/admin/integrations/test', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { endpoint_url, new_token } = req.body as { endpoint_url?: string; new_token?: string };
+    const existingMw = await getIntegrationRow('microwork');
+    const oldCfg = existingMw ? JSON.parse(existingMw.configJson) : {};
+
+    const targetUrl = (endpoint_url || oldCfg.endpoint_url || '').trim();
+    const token = (new_token || existingMw?.secretValue || process.env.MICROWORK_TOKEN || '').trim();
+
+    if (!targetUrl) {
+      res.json({
+        ok: false,
+        message: 'Informe uma URL de endpoint do MicroWork para testar a conexão.',
+      });
+      return;
+    }
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 8000);
     const headers: Record<string, string> = { Accept: 'application/json' };
@@ -1209,25 +1778,33 @@ app.post('/api/admin/integrations/test', requireAdmin, async (req, res) => {
   }
 });
 
-// File upload for model photos, favicon, logo, og:image
-app.post('/api/upload', requireAdmin, upload.single('file'), (req, res) => {
-  if (!req.file) {
-    res.status(400).json({ error: 'Nenhum arquivo enviado.' });
-    return;
-  }
-  res.json({ url: `/uploads/${req.file.filename}` });
-});
-
-app.get('/robots.txt', (_req, res) => {
-  const seo = getSeoSettings();
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.send(seo.robots_txt || INITIAL_SEO_SETTINGS.robots_txt);
-});
-
-app.get('/sitemap.xml', (_req, res) => {
-  const seo = getSeoSettings();
-  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
-  res.send(seo.sitemap_xml || INITIAL_SEO_SETTINGS.sitemap_xml);
+// File upload for model photos, favicon, logo, og:image, gestor logo
+app.post('/api/upload', requireAuth, (req: AuthRequest, res: Response) => {
+  upload.single('file')(req, res, (err: unknown) => {
+    if (err) {
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          res.status(400).json({
+            error: 'Arquivo muito grande. O limite máximo permitido é de 8 MB.',
+          });
+          return;
+        }
+        res.status(400).json({
+          error: `Falha no envio do arquivo (${err.code}).`,
+        });
+        return;
+      }
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Erro ao processar arquivo de imagem.',
+      });
+      return;
+    }
+    if (!req.file) {
+      res.status(400).json({ error: 'Nenhum arquivo de imagem foi recebido.' });
+      return;
+    }
+    res.json({ url: `/uploads/${req.file.filename}` });
+  });
 });
 
 async function startServer() {
@@ -1240,9 +1817,32 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir));
-    app.get('*', (_req, res) => {
-      res.sendFile(path.join(distDir, 'index.html'));
+    app.use(express.static(distDir, { index: false }));
+    app.get('*', async (req, res) => {
+      const indexPath = path.join(distDir, 'index.html');
+      try {
+        let html = fs.readFileSync(indexPath, 'utf8');
+        if (!req.path.startsWith('/gestor')) {
+          const tracking = await getPublicTrackingConfig().catch(() => null);
+          const gscCode = extractGoogleSiteVerificationCode(
+            tracking?.google_search_console?.verification_code
+          );
+          if (gscCode) {
+            const metaTag = `<meta name="google-site-verification" content="${gscCode}" />`;
+            if (/<meta\s+[^>]*name=["']google-site-verification["'][^>]*>/i.test(html)) {
+              html = html.replace(
+                /<meta\s+[^>]*name=["']google-site-verification["'][^>]*>/i,
+                metaTag
+              );
+            } else {
+              html = html.replace(/<head([^>]*)>/i, `<head$1>\n    ${metaTag}`);
+            }
+          }
+        }
+        res.type('html').send(html);
+      } catch {
+        res.sendFile(indexPath);
+      }
     });
   }
 

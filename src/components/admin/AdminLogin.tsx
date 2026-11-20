@@ -1,7 +1,9 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Lock, Mail } from 'lucide-react';
+import { signInWithPopup, signOut } from 'firebase/auth';
+import { ArrowLeft, ShieldCheck } from 'lucide-react';
+import { auth, googleAuthProvider } from '../../lib/firebase';
 import { AdminUser } from '../../types';
-import { setAdminToken } from '../../utils/adminAuth';
+import { adminFetch, clearAdminToken, setAdminToken } from '../../utils/adminAuth';
 
 interface AdminLoginProps {
   onSuccess: (user: AdminUser) => void | Promise<void>;
@@ -9,41 +11,54 @@ interface AdminLoginProps {
 }
 
 export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
-  const [email, setEmail] = useState('lazarovictor.rodaleve@gmail.com');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanEmail = email.trim().toLowerCase();
-    const cleanPassword = password.trim();
-
-    if (!cleanEmail || !cleanPassword) {
-      setError('Informe o e-mail e a senha de acesso.');
-      return;
-    }
-
+  const handleGoogleSignIn = async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email: cleanEmail, password: cleanPassword }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || 'E-mail ou senha incorretos.');
+      const credential = await signInWithPopup(auth, googleAuthProvider);
+      const idToken = await credential.user.getIdToken();
+      setAdminToken(idToken);
+
+      const res = await adminFetch('/api/auth/me');
+      const data = (await res.json().catch(() => ({}))) as {
+        user?: AdminUser;
+        error?: string;
+      };
+
+      if (!res.ok || !data.user) {
+        clearAdminToken();
+        await signOut(auth).catch(() => {});
+        setError(
+          data.error ||
+            'Esta conta Google não possui permissão de acesso ao painel administrativo.'
+        );
         return;
       }
-      if (data.token) {
-        setAdminToken(data.token);
-      }
+
       await onSuccess(data.user);
-    } catch {
-      setError('Erro de conexão com o servidor. Tente novamente.');
+    } catch (err) {
+      clearAdminToken();
+      const code =
+        typeof err === 'object' && err !== null && 'code' in err
+          ? String((err as { code?: unknown }).code)
+          : '';
+
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        setError('Login cancelado. Selecione sua conta Google autorizada para continuar.');
+      } else if (code === 'auth/popup-blocked') {
+        setError(
+          'O navegador bloqueou a janela de login do Google. Permita pop-ups para este site e tente novamente.'
+        );
+      } else {
+        setError(
+          err instanceof Error && err.message
+            ? err.message
+            : 'Erro ao autenticar com o Google. Tente novamente.'
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -62,34 +77,14 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} noValidate className="mt-7 space-y-4">
-          <div>
-            <label className="block text-xs font-semibold text-neutral-700">E-mail</label>
-            <div className="relative mt-1.5">
-              <Mail className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="seuemail@rodaleve.com.br"
-                className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-4 text-sm text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-              />
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-neutral-700">Senha</label>
-            <div className="relative mt-1.5">
-              <Lock className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-              <input
-                type="password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-4 text-sm text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-              />
+        <div className="mt-7 space-y-4">
+          <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-600">
+            <div className="flex items-start gap-2.5">
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
+              <p>
+                Entre com sua conta Google administrativa autorizada para gerenciar tabelas de
+                revisões, preços, modelos, SEO e integrações.
+              </p>
             </div>
           </div>
 
@@ -100,13 +95,20 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
           )}
 
           <button
-            type="submit"
+            type="button"
+            onClick={() => void handleGoogleSignIn()}
             disabled={loading}
-            className="w-full rounded-xl bg-[#E4002B] py-2.5 text-sm font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-[#E4002B] px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
           >
-            {loading ? 'Entrando...' : 'Entrar no Painel'}
+            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                fill="currentColor"
+                d="M21.35 11.1h-9.17v2.73h6.51c-.33 3.81-3.5 5.44-6.5 5.44C8.36 19.27 5 16.25 5 12c0-4.1 3.2-7.27 7.2-7.27c3.09 0 4.9 1.97 4.9 1.97L19 4.72S16.56 2 12.1 2C6.42 2 2.03 6.8 2.03 12c0 5.05 4.13 10 10.22 10c5.35 0 9.25-3.67 9.25-9.09c0-1.15-.15-1.81-.15-1.81Z"
+              />
+            </svg>
+            {loading ? 'Autenticando...' : 'Entrar com Google'}
           </button>
-        </form>
+        </div>
 
         <button
           type="button"

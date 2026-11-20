@@ -5,6 +5,8 @@ interface FloatingWhatsAppProps {
   href: string;
   isEditMode?: boolean;
   onTrackClick?: () => void;
+  ariaLabel?: string;
+  titleText?: string;
 }
 
 interface Position {
@@ -62,7 +64,13 @@ function savePosition(pos: Position): void {
   }
 }
 
-export function FloatingWhatsApp({ href, isEditMode = false, onTrackClick }: FloatingWhatsAppProps) {
+export function FloatingWhatsApp({
+  href,
+  isEditMode = false,
+  onTrackClick,
+  ariaLabel = 'Falar no WhatsApp Rodaleve (arrastável)',
+  titleText = 'Falar no WhatsApp Rodaleve (arraste para reposicionar)',
+}: FloatingWhatsAppProps) {
   const [pos, setPos] = useState<Position>(() => getInitialPosition());
   const dragStateRef = useRef<{
     pointerId: number | null;
@@ -165,8 +173,8 @@ export function FloatingWhatsApp({ href, isEditMode = false, onTrackClick }: Flo
       onPointerUp={handlePointerUpOrCancel}
       onPointerCancel={handlePointerUpOrCancel}
       onClick={handleClick}
-      aria-label="Falar no WhatsApp Rodaleve (arrastável)"
-      title="Falar no WhatsApp Rodaleve (arraste para reposicionar)"
+      aria-label={ariaLabel}
+      title={titleText}
       style={{
         left: `${pos.x}px`,
         top: `${pos.y}px`,

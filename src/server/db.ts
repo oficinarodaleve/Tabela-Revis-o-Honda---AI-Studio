@@ -235,6 +235,18 @@ export function initDatabase() {
         parsedSeo.short_name = 'Rodaleve';
         changed = true;
       }
+      if (parsedSeo.gestor_logo_url === undefined) {
+        parsedSeo.gestor_logo_url = INITIAL_SEO_SETTINGS.gestor_logo_url;
+        changed = true;
+      }
+      if (!parsedSeo.gestor_title) {
+        parsedSeo.gestor_title = INITIAL_SEO_SETTINGS.gestor_title;
+        changed = true;
+      }
+      if (!parsedSeo.gestor_subtitle) {
+        parsedSeo.gestor_subtitle = INITIAL_SEO_SETTINGS.gestor_subtitle;
+        changed = true;
+      }
       if (!parsedSeo.business_type || parsedSeo.business_type === 'MotorcycleRepair') {
         parsedSeo.business_type = 'MotorcycleDealer';
         changed = true;
@@ -368,6 +380,20 @@ export function initDatabase() {
     );
   }
 
+  const trackingInt = db.prepare('SELECT key FROM integrations WHERE key = ?').get('tracking_pixels');
+  if (!trackingInt) {
+    db.prepare(
+      'INSERT INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(
+      'tracking_pixels',
+      'Pixels, Tags & Rastreamento',
+      JSON.stringify(DEFAULT_TRACKING_PIXELS_CONFIG),
+      JSON.stringify({ meta_capi_token: '', tiktok_events_token: '' }),
+      1,
+      nowIso
+    );
+  }
+
   // Seed authorized admins if empty
   const adminCount = (db.prepare('SELECT COUNT(*) as c FROM admins').get() as { c: number }).c;
   if (adminCount === 0) {
@@ -465,4 +491,103 @@ export function maskSecret(secret: string): string {
   if (!secret) return '';
   if (secret.length <= 4) return '••••';
   return `${'•'.repeat(Math.min(12, secret.length - 4))}${secret.slice(-4)}`;
+}
+
+export const DEFAULT_TRACKING_PIXELS_CONFIG = {
+  gtm: { enabled: false, container_id: '' },
+  ga4: { enabled: false, measurement_id: '' },
+  google_ads: { enabled: false, ads_id: '', conversion_label: '' },
+  meta_pixel: { enabled: false, pixel_id: '', domain_verification: '' },
+  tiktok_pixel: { enabled: false, pixel_id: '' },
+};
+
+function readRawTrackingPixelsRow() {
+  const row = db
+    .prepare('SELECT config_json, secret_value FROM integrations WHERE key = ?')
+    .get('tracking_pixels') as { config_json: string; secret_value: string } | undefined;
+
+  let cfg = DEFAULT_TRACKING_PIXELS_CONFIG;
+  if (row?.config_json) {
+    try {
+      const parsed = JSON.parse(row.config_json) as Partial<typeof DEFAULT_TRACKING_PIXELS_CONFIG>;
+      cfg = {
+        gtm: { ...DEFAULT_TRACKING_PIXELS_CONFIG.gtm, ...(parsed.gtm || {}) },
+        ga4: { ...DEFAULT_TRACKING_PIXELS_CONFIG.ga4, ...(parsed.ga4 || {}) },
+        google_ads: { ...DEFAULT_TRACKING_PIXELS_CONFIG.google_ads, ...(parsed.google_ads || {}) },
+        meta_pixel: { ...DEFAULT_TRACKING_PIXELS_CONFIG.meta_pixel, ...(parsed.meta_pixel || {}) },
+        tiktok_pixel: {
+          ...DEFAULT_TRACKING_PIXELS_CONFIG.tiktok_pixel,
+          ...(parsed.tiktok_pixel || {}),
+        },
+      };
+    } catch {
+      cfg = DEFAULT_TRACKING_PIXELS_CONFIG;
+    }
+  }
+
+  let secrets = { meta_capi_token: '', tiktok_events_token: '' };
+  if (row?.secret_value) {
+    try {
+      const parsedSecrets = JSON.parse(row.secret_value) as {
+        meta_capi_token?: string;
+        tiktok_events_token?: string;
+      };
+      secrets = {
+        meta_capi_token: parsedSecrets.meta_capi_token || '',
+        tiktok_events_token: parsedSecrets.tiktok_events_token || '',
+      };
+    } catch {
+      // ignore malformed secret JSON
+    }
+  }
+
+  return { cfg, secrets };
+}
+
+export function getPublicTrackingConfig() {
+  const { cfg } = readRawTrackingPixelsRow();
+  return {
+    gtm: {
+      enabled: Boolean(cfg.gtm.enabled),
+      container_id: String(cfg.gtm.container_id || '').trim(),
+    },
+    ga4: {
+      enabled: Boolean(cfg.ga4.enabled),
+      measurement_id: String(cfg.ga4.measurement_id || '').trim(),
+    },
+    google_ads: {
+      enabled: Boolean(cfg.google_ads.enabled),
+      ads_id: String(cfg.google_ads.ads_id || '').trim(),
+      conversion_label: String(cfg.google_ads.conversion_label || '').trim(),
+    },
+    meta_pixel: {
+      enabled: Boolean(cfg.meta_pixel.enabled),
+      pixel_id: String(cfg.meta_pixel.pixel_id || '').trim(),
+      domain_verification: String(cfg.meta_pixel.domain_verification || '').trim(),
+    },
+    tiktok_pixel: {
+      enabled: Boolean(cfg.tiktok_pixel.enabled),
+      pixel_id: String(cfg.tiktok_pixel.pixel_id || '').trim(),
+    },
+  };
+}
+
+export function getAdminTrackingPixelsConfig() {
+  const { cfg, secrets } = readRawTrackingPixelsRow();
+  const pub = getPublicTrackingConfig();
+  return {
+    gtm: pub.gtm,
+    ga4: pub.ga4,
+    google_ads: pub.google_ads,
+    meta_pixel: {
+      ...pub.meta_pixel,
+      has_capi_token: Boolean(secrets.meta_capi_token),
+      capi_token_masked: maskSecret(secrets.meta_capi_token),
+    },
+    tiktok_pixel: {
+      ...pub.tiktok_pixel,
+      has_events_token: Boolean(secrets.tiktok_events_token),
+      events_token_masked: maskSecret(secrets.tiktok_events_token),
+    },
+  };
 }

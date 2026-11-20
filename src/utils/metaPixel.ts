@@ -1,4 +1,10 @@
-import { GoogleTagConfig, MetaPixelConfig, SeoSettings, TikTokPixelConfig } from '../types';
+import {
+  GoogleTagConfig,
+  MetaPixelConfig,
+  PublicTrackingConfig,
+  SeoSettings,
+  TikTokPixelConfig,
+} from '../types';
 
 interface TikTokQueue {
   methods?: string[];
@@ -27,6 +33,7 @@ declare global {
     dataLayer?: unknown[];
     gtag?: (...args: unknown[]) => void;
     _rodaleveGtagInitKey?: string;
+    _rodaleveGtmInitId?: string;
     TiktokAnalyticsObject?: string;
     ttq?: TikTokQueue & unknown[];
     _rodaleveTikTokInitId?: string;
@@ -35,6 +42,13 @@ declare global {
 
 export function sanitizePixelId(raw?: string): string {
   return (raw || '').replace(/\s+/g, '').replace(/\D/g, '');
+}
+
+export function sanitizeGtmId(raw?: string): string {
+  return (raw || '')
+    .replace(/\s+/g, '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9-]/g, '');
 }
 
 export function sanitizeGoogleTagId(raw?: string): string {
@@ -53,6 +67,113 @@ export function sanitizeTikTokPixelId(raw?: string): string {
     .replace(/\s+/g, '')
     .toUpperCase()
     .replace(/[^A-Z0-9_-]/g, '');
+}
+
+export function initGtm(containerIdRaw?: string): void {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  const cleanId = sanitizeGtmId(containerIdRaw);
+  if (!cleanId || !/^GTM-[A-Z0-9]{4,16}$/.test(cleanId)) return;
+  if (window._rodaleveGtmInitId === cleanId) return;
+
+  window.dataLayer = window.dataLayer || [];
+  window.dataLayer.push({ 'gtm.start': new Date().getTime(), event: 'gtm.js' });
+
+  if (
+    !document.querySelector('script[data-rodaleve-gtm="true"]') &&
+    !document.querySelector(`script[src*="googletagmanager.com/gtm.js?id=${cleanId}"]`)
+  ) {
+    const script = document.createElement('script');
+    script.async = true;
+    script.src = `https://www.googletagmanager.com/gtm.js?id=${encodeURIComponent(cleanId)}`;
+    script.setAttribute('data-rodaleve-gtm', 'true');
+    document.head.appendChild(script);
+  }
+
+  if (document.body && !document.querySelector('noscript[data-rodaleve-gtm-noscript="true"]')) {
+    const noscript = document.createElement('noscript');
+    noscript.setAttribute('data-rodaleve-gtm-noscript', 'true');
+    const iframe = document.createElement('iframe');
+    iframe.src = `https://www.googletagmanager.com/ns.html?id=${encodeURIComponent(cleanId)}`;
+    iframe.height = '0';
+    iframe.width = '0';
+    iframe.style.display = 'none';
+    iframe.style.visibility = 'hidden';
+    noscript.appendChild(iframe);
+    document.body.prepend(noscript);
+  }
+
+  window._rodaleveGtmInitId = cleanId;
+}
+
+export function extractGoogleSiteVerificationCode(raw?: string): string {
+  const trimmed = typeof raw === 'string' ? raw.trim() : '';
+  if (!trimmed) return '';
+  let candidate = trimmed;
+  if (/<meta\b/i.test(trimmed) || /\bcontent\s*=/i.test(trimmed)) {
+    const match = /\bcontent\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'/>]+))/i.exec(trimmed);
+    if (!match) return '';
+    candidate = (match[1] ?? match[2] ?? match[3] ?? '').trim();
+  }
+  return candidate.replace(/[^A-Za-z0-9_-]/g, '');
+}
+
+export function syncGoogleSearchConsoleVerification(rawCode?: string): void {
+  if (typeof document === 'undefined') return;
+  const cleanCode = extractGoogleSiteVerificationCode(rawCode);
+  const existing = document.head.querySelector(
+    'meta[name="google-site-verification"]'
+  ) as HTMLMetaElement | null;
+
+  if (!cleanCode) {
+    if (existing) {
+      const staticFallback = existing.getAttribute('data-static-content');
+      if (staticFallback !== null) {
+        existing.content = staticFallback;
+        existing.removeAttribute('data-static-content');
+        existing.removeAttribute('data-rodaleve-gsc');
+      } else if (existing.getAttribute('data-rodaleve-gsc') === 'true') {
+        existing.remove();
+      }
+    }
+    return;
+  }
+
+  if (existing) {
+    if (
+      existing.getAttribute('data-rodaleve-gsc') !== 'true' &&
+      !existing.hasAttribute('data-static-content')
+    ) {
+      existing.setAttribute('data-static-content', existing.content || '');
+    }
+    existing.content = cleanCode;
+    existing.setAttribute('data-rodaleve-gsc', 'true');
+  } else {
+    const meta = document.createElement('meta');
+    meta.name = 'google-site-verification';
+    meta.content = cleanCode;
+    meta.setAttribute('data-rodaleve-gsc', 'true');
+    document.head.appendChild(meta);
+  }
+}
+
+export function syncMetaDomainVerification(code?: string): void {
+  if (typeof document === 'undefined') return;
+  const cleanCode = (code || '').trim();
+  const existing = document.head.querySelector(
+    'meta[name="facebook-domain-verification"]'
+  ) as HTMLMetaElement | null;
+  if (!cleanCode) {
+    if (existing) existing.remove();
+    return;
+  }
+  if (existing) {
+    existing.content = cleanCode;
+  } else {
+    const meta = document.createElement('meta');
+    meta.name = 'facebook-domain-verification';
+    meta.content = cleanCode;
+    document.head.appendChild(meta);
+  }
 }
 
 export function initMetaPixel(config?: MetaPixelConfig): void {
@@ -249,11 +370,112 @@ export function initTikTokPixel(config?: TikTokPixelConfig): void {
   }
 }
 
-export function initAllTrackingPixels(seo?: SeoSettings | null): void {
-  if (!seo) return;
-  initMetaPixel(seo.meta_pixel);
-  initGoogleTag(seo.google_tag);
-  initTikTokPixel(seo.tiktok_pixel);
+function resolveEffectiveMetaConfig(
+  seo?: SeoSettings | null,
+  trackingConfig?: PublicTrackingConfig | null
+): MetaPixelConfig | undefined {
+  if (trackingConfig?.meta_pixel?.enabled && sanitizePixelId(trackingConfig.meta_pixel.pixel_id)) {
+    return {
+      enabled: true,
+      pixel_id: trackingConfig.meta_pixel.pixel_id,
+      events: {
+        page_view: seo?.meta_pixel?.events?.page_view ?? true,
+        view_content: seo?.meta_pixel?.events?.view_content ?? true,
+        lead_contact: seo?.meta_pixel?.events?.lead_contact ?? true,
+      },
+      custom_code: seo?.meta_pixel?.custom_code,
+    };
+  }
+  return seo?.meta_pixel;
+}
+
+function resolveEffectiveGoogleTagConfig(
+  seo?: SeoSettings | null,
+  trackingConfig?: PublicTrackingConfig | null
+): GoogleTagConfig | undefined {
+  const ga4FromIntegrations =
+    trackingConfig?.ga4?.enabled && sanitizeGoogleTagId(trackingConfig.ga4.measurement_id)
+      ? sanitizeGoogleTagId(trackingConfig.ga4.measurement_id)
+      : '';
+  const adsFromIntegrations =
+    trackingConfig?.google_ads?.enabled && sanitizeGoogleTagId(trackingConfig.google_ads.ads_id)
+      ? sanitizeGoogleTagId(trackingConfig.google_ads.ads_id)
+      : '';
+  const labelFromIntegrations = trackingConfig?.google_ads?.enabled
+    ? sanitizeGoogleConversionLabel(trackingConfig.google_ads.conversion_label)
+    : '';
+
+  const ga4FromSeo = seo?.google_tag?.enabled ? sanitizeGoogleTagId(seo.google_tag.ga4_id) : '';
+  const adsFromSeo = seo?.google_tag?.enabled ? sanitizeGoogleTagId(seo.google_tag.ads_id) : '';
+  const labelFromSeo = seo?.google_tag?.enabled
+    ? sanitizeGoogleConversionLabel(seo.google_tag.conversion_label)
+    : '';
+
+  const ga4Id = ga4FromIntegrations || ga4FromSeo;
+  const adsId = adsFromIntegrations || adsFromSeo;
+  const convLabel = labelFromIntegrations || labelFromSeo;
+
+  if (!ga4Id && !adsId) return undefined;
+
+  return {
+    enabled: true,
+    ga4_id: ga4Id,
+    ads_id: adsId,
+    conversion_label: convLabel,
+    events: {
+      page_view: seo?.google_tag?.events?.page_view ?? true,
+      view_content: seo?.google_tag?.events?.view_content ?? true,
+      lead_contact: seo?.google_tag?.events?.lead_contact ?? true,
+    },
+    custom_code: seo?.google_tag?.custom_code,
+  };
+}
+
+function resolveEffectiveTikTokConfig(
+  seo?: SeoSettings | null,
+  trackingConfig?: PublicTrackingConfig | null
+): TikTokPixelConfig | undefined {
+  if (
+    trackingConfig?.tiktok_pixel?.enabled &&
+    sanitizeTikTokPixelId(trackingConfig.tiktok_pixel.pixel_id)
+  ) {
+    return {
+      enabled: true,
+      pixel_id: trackingConfig.tiktok_pixel.pixel_id,
+      events: {
+        page_view: seo?.tiktok_pixel?.events?.page_view ?? true,
+        view_content: seo?.tiktok_pixel?.events?.view_content ?? true,
+        lead_contact: seo?.tiktok_pixel?.events?.lead_contact ?? true,
+      },
+      custom_code: seo?.tiktok_pixel?.custom_code,
+    };
+  }
+  return seo?.tiktok_pixel;
+}
+
+export function initAllTrackingPixels(
+  seo?: SeoSettings | null,
+  trackingConfig?: PublicTrackingConfig | null
+): void {
+  if (!seo && !trackingConfig) return;
+
+  if (trackingConfig?.gtm?.enabled && trackingConfig.gtm.container_id) {
+    initGtm(trackingConfig.gtm.container_id);
+  }
+
+  if (trackingConfig?.meta_pixel?.enabled && trackingConfig.meta_pixel.domain_verification) {
+    syncMetaDomainVerification(trackingConfig.meta_pixel.domain_verification);
+  } else {
+    syncMetaDomainVerification('');
+  }
+
+  syncGoogleSearchConsoleVerification(
+    trackingConfig?.google_search_console?.verification_code || ''
+  );
+
+  initMetaPixel(resolveEffectiveMetaConfig(seo, trackingConfig));
+  initGoogleTag(resolveEffectiveGoogleTagConfig(seo, trackingConfig));
+  initTikTokPixel(resolveEffectiveTikTokConfig(seo, trackingConfig));
 }
 
 export function trackPixelViewContent(
@@ -281,12 +503,14 @@ export function trackPixelLeadContact(
 
 export function trackAllPixelsViewContent(
   seo: SeoSettings | undefined,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  trackingConfig?: PublicTrackingConfig | null
 ): void {
-  if (!seo || typeof window === 'undefined') return;
-  trackPixelViewContent(seo.meta_pixel, params);
+  if (typeof window === 'undefined') return;
+  const metaCfg = resolveEffectiveMetaConfig(seo, trackingConfig);
+  trackPixelViewContent(metaCfg, params);
 
-  const gtagCfg = seo.google_tag;
+  const gtagCfg = resolveEffectiveGoogleTagConfig(seo, trackingConfig);
   if (
     gtagCfg?.enabled &&
     gtagCfg.events?.view_content &&
@@ -300,20 +524,27 @@ export function trackAllPixelsViewContent(
     });
   }
 
-  const ttCfg = seo.tiktok_pixel;
-  if (ttCfg?.enabled && ttCfg.events?.view_content && sanitizeTikTokPixelId(ttCfg.pixel_id) && window.ttq?.track) {
+  const ttCfg = resolveEffectiveTikTokConfig(seo, trackingConfig);
+  if (
+    ttCfg?.enabled &&
+    ttCfg.events?.view_content &&
+    sanitizeTikTokPixelId(ttCfg.pixel_id) &&
+    window.ttq?.track
+  ) {
     window.ttq.track('ViewContent', params);
   }
 }
 
 export function trackAllPixelsLeadContact(
   seo: SeoSettings | undefined,
-  params: Record<string, unknown>
+  params: Record<string, unknown>,
+  trackingConfig?: PublicTrackingConfig | null
 ): void {
-  if (!seo || typeof window === 'undefined') return;
-  trackPixelLeadContact(seo.meta_pixel, params);
+  if (typeof window === 'undefined') return;
+  const metaCfg = resolveEffectiveMetaConfig(seo, trackingConfig);
+  trackPixelLeadContact(metaCfg, params);
 
-  const gtagCfg = seo.google_tag;
+  const gtagCfg = resolveEffectiveGoogleTagConfig(seo, trackingConfig);
   const ga4Id = sanitizeGoogleTagId(gtagCfg?.ga4_id);
   const adsId = sanitizeGoogleTagId(gtagCfg?.ads_id);
   if (gtagCfg?.enabled && gtagCfg.events?.lead_contact && (ga4Id || adsId) && window.gtag) {
@@ -335,8 +566,13 @@ export function trackAllPixelsLeadContact(
     }
   }
 
-  const ttCfg = seo.tiktok_pixel;
-  if (ttCfg?.enabled && ttCfg.events?.lead_contact && sanitizeTikTokPixelId(ttCfg.pixel_id) && window.ttq?.track) {
+  const ttCfg = resolveEffectiveTikTokConfig(seo, trackingConfig);
+  if (
+    ttCfg?.enabled &&
+    ttCfg.events?.lead_contact &&
+    sanitizeTikTokPixelId(ttCfg.pixel_id) &&
+    window.ttq?.track
+  ) {
     window.ttq.track('SubmitForm', params);
     window.ttq.track('Contact', params);
   }

@@ -13,7 +13,9 @@ interface TabPricesPartsProps {
   onToast: (type: 'success' | 'error', msg: string) => void;
   autoSaveEnabled?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveStart?: () => void;
   onAutoSaveComplete?: () => void;
+  onAutoSaveError?: (msg?: string) => void;
 }
 
 interface EditablePart extends Part {
@@ -33,7 +35,9 @@ export function TabPricesParts({
   onToast,
   autoSaveEnabled = true,
   onDirtyChange,
+  onAutoSaveStart,
   onAutoSaveComplete,
+  onAutoSaveError,
 }: TabPricesPartsProps) {
   const [rows, setRows] = useState<EditablePart[]>([]);
   const [customModeByRow, setCustomModeByRow] = useState<Record<string, boolean>>({});
@@ -89,6 +93,7 @@ export function TabPricesParts({
     if (!allValid) return;
 
     const timer = setTimeout(async () => {
+      onAutoSaveStart?.();
       saveGestorDraftCache('precos', rows);
       try {
         const res = await adminFetch('/api/admin/parts/batch', {
@@ -106,17 +111,25 @@ export function TabPricesParts({
             })),
           }),
         });
-        if (res.ok) {
-          await onSaved();
-          onAutoSaveComplete?.();
-        }
+        if (!res.ok) throw new Error('Erro ao salvar preços.');
+        await onSaved();
+        onAutoSaveComplete?.();
       } catch {
-        // Cache local já salvo
+        onAutoSaveError?.('Erro ao salvar — tente novamente');
       }
-    }, 650);
+    }, 850);
 
     return () => clearTimeout(timer);
-  }, [autoSaveEnabled, isDirty, savingBatch, rows, onSaved, onAutoSaveComplete]);
+  }, [
+    autoSaveEnabled,
+    isDirty,
+    savingBatch,
+    rows,
+    onSaved,
+    onAutoSaveStart,
+    onAutoSaveComplete,
+    onAutoSaveError,
+  ]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();

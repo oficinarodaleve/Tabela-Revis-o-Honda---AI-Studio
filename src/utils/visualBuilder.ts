@@ -3,19 +3,26 @@ import { CustomBlockVariant, PageSectionBlock, VisualBuilderConfig } from '../ty
 const VISUAL_BUILDER_STORAGE_KEY = 'rodaleve_visual_builder_v1';
 let memoryVisualConfig: string | null = null;
 
+export const CURRENT_SECTIONS_VERSION = 2;
+
 export const DEFAULT_SECTIONS: PageSectionBlock[] = [
   { id: 'hero', type: 'hero', label: 'Hero / Banner Principal', visible: true },
+  {
+    id: 'notice_box',
+    type: 'notice_box',
+    label: 'Aviso das Revisões (1ª a 6ª)',
+    visible: true,
+  },
   {
     id: 'revisions_selector',
     type: 'revisions_selector',
     label: 'Seletor de Revisões (1ª a 7ª)',
     visible: true,
   },
-  { id: 'notice_box', type: 'notice_box', label: 'Aviso Informativo', visible: true },
   {
     id: 'filters_catalog',
     type: 'filters_catalog',
-    label: 'Busca, Filtros e Cards de Motos',
+    label: 'Seleção e Tabela de Modelos Honda',
     visible: true,
   },
   { id: 'faq_section', type: 'faq_section', label: 'Perguntas Frequentes', visible: true },
@@ -35,6 +42,8 @@ export const DEFAULT_SITE_CONTENT: Record<string, string> = {
     'Consulte peças genuínas e valores estimados por modelo de cada revisão programada.',
   hero_tab_table: 'Tabela por Modelo',
   hero_tab_faq: 'Perguntas Frequentes',
+  revisions_prompt_above: 'Escolha a revisão desejada',
+  revisions_prompt_below: 'Escolha o modelo da sua motocicleta Honda',
   notice_line_1:
     '1ª e 2ª revisão: a mão de obra é gratuita. É cobrado somente o valor das peças utilizadas.',
   notice_line_2:
@@ -61,6 +70,7 @@ export const DEFAULT_SITE_CONTENT: Record<string, string> = {
 
 export function createDefaultVisualConfig(modelIds: number[] = []): VisualBuilderConfig {
   return {
+    sectionsVersion: CURRENT_SECTIONS_VERSION,
     sections: DEFAULT_SECTIONS.map((s) => ({ ...s })),
     siteContent: {},
     modelOrder: modelIds,
@@ -73,25 +83,92 @@ export function mergeWithDefaultVisualConfig(
   saved: Partial<VisualBuilderConfig> | null | undefined,
   currentModelIds: number[] = []
 ): VisualBuilderConfig {
-  const base = createDefaultVisualConfig(currentModelIds);
-  if (!saved) return base;
+  const safeModelIds = Array.isArray(currentModelIds) ? currentModelIds : [];
+  const base = createDefaultVisualConfig(safeModelIds);
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return base;
 
-  const existingIds = new Set((saved.sections || []).map((s) => s.id));
-  const mergedSections: PageSectionBlock[] = [
-    ...(saved.sections || []),
+  const defaultLabelById = new Map(DEFAULT_SECTIONS.map((d) => [d.id, d.label]));
+  const rawList = Array.isArray(saved.sections) ? saved.sections : [];
+  const validSavedSections = rawList.filter(
+    (s): s is PageSectionBlock =>
+      Boolean(s) &&
+      typeof s === 'object' &&
+      typeof s.id === 'string' &&
+      typeof s.type === 'string'
+  );
+
+  const rawSavedSections = validSavedSections.map((s) => ({
+    ...s,
+    visible: s.visible !== false,
+    label: s.type === 'custom' ? s.label || 'Bloco Personalizado' : defaultLabelById.get(s.id) || s.label || s.id,
+  }));
+
+  const existingIds = new Set(rawSavedSections.map((s) => s.id));
+  let mergedSections: PageSectionBlock[] = [
+    ...rawSavedSections,
     ...DEFAULT_SECTIONS.filter((def) => !existingIds.has(def.id)).map((def) => ({ ...def })),
   ];
 
+  // Upgrade v1 saved configs where revisions_selector was adjacent right before notice_box
+  if (!saved.sectionsVersion || saved.sectionsVersion < CURRENT_SECTIONS_VERSION) {
+    const revIdx = mergedSections.findIndex((s) => s.id === 'revisions_selector');
+    const noticeIdx = mergedSections.findIndex((s) => s.id === 'notice_box');
+    if (revIdx !== -1 && noticeIdx === revIdx + 1) {
+      const copy = [...mergedSections];
+      const [noticeBlock] = copy.splice(noticeIdx, 1);
+      copy.splice(revIdx, 0, noticeBlock);
+      mergedSections = copy;
+    }
+  }
+
   // Keep saved model order, append any newly added models
-  const savedOrder = (saved.modelOrder || []).filter((id) => currentModelIds.includes(id));
-  const missingIds = currentModelIds.filter((id) => !savedOrder.includes(id));
+  const rawOrder = Array.isArray(saved.modelOrder) ? saved.modelOrder : [];
+  const savedOrder = rawOrder.filter((id) => safeModelIds.includes(id));
+  const missingIds = safeModelIds.filter((id) => !savedOrder.includes(id));
+
+  const siteContent =
+    saved.siteContent && typeof saved.siteContent === 'object' && !Array.isArray(saved.siteContent)
+      ? saved.siteContent
+      : {};
+  const hiddenModelIds = Array.isArray(saved.hiddenModelIds)
+    ? saved.hiddenModelIds.filter((id) => typeof id === 'number')
+    : [];
+  const imageOverrides =
+    saved.imageOverrides &&
+    typeof saved.imageOverrides === 'object' &&
+    !Array.isArray(saved.imageOverrides)
+      ? saved.imageOverrides
+      : {};
 
   return {
+    sectionsVersion: CURRENT_SECTIONS_VERSION,
     sections: mergedSections,
-    siteContent: saved.siteContent || {},
+    siteContent,
     modelOrder: [...savedOrder, ...missingIds],
-    hiddenModelIds: saved.hiddenModelIds || [],
-    imageOverrides: saved.imageOverrides || {},
+    hiddenModelIds,
+    imageOverrides,
+  };
+}
+
+export function restoreDefaultSectionOrder(current: VisualBuilderConfig): VisualBuilderConfig {
+  const currentById = new Map(current.sections.map((s) => [s.id, s]));
+  const orderedBuiltIns = DEFAULT_SECTIONS.map((def) => {
+    const existing = currentById.get(def.id);
+    return existing ? { ...existing, label: def.label } : { ...def };
+  });
+  const customBlocks = current.sections.filter((s) => s.type === 'custom');
+  const footerIdx = orderedBuiltIns.findIndex((s) => s.id === 'footer');
+  if (customBlocks.length > 0) {
+    if (footerIdx >= 0) {
+      orderedBuiltIns.splice(footerIdx, 0, ...customBlocks);
+    } else {
+      orderedBuiltIns.push(...customBlocks);
+    }
+  }
+  return {
+    ...current,
+    sectionsVersion: CURRENT_SECTIONS_VERSION,
+    sections: orderedBuiltIns,
   };
 }
 
@@ -99,11 +176,16 @@ export function loadLocalVisualConfig(): Partial<VisualBuilderConfig> | null {
   try {
     const raw = memoryVisualConfig || window.localStorage?.getItem(VISUAL_BUILDER_STORAGE_KEY);
     if (!raw) return null;
-    return JSON.parse(raw) as Partial<VisualBuilderConfig>;
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Partial<VisualBuilderConfig>;
   } catch {
     if (memoryVisualConfig) {
       try {
-        return JSON.parse(memoryVisualConfig) as Partial<VisualBuilderConfig>;
+        const parsed = JSON.parse(memoryVisualConfig) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Partial<VisualBuilderConfig>;
+        }
       } catch {
         return null;
       }
