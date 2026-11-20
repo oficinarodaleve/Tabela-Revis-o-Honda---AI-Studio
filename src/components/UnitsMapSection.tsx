@@ -1,0 +1,562 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  APIProvider,
+  AdvancedMarker,
+  InfoWindow,
+  Map as GoogleMap,
+  Pin,
+  useAdvancedMarkerRef,
+  useMap,
+  useMapsLibrary,
+} from '@vis.gl/react-google-maps';
+import {
+  Bike,
+  Car,
+  Crosshair,
+  ExternalLink,
+  MapPin,
+  Navigation,
+  Phone,
+  Star,
+} from 'lucide-react';
+import { UnitLocation } from '../types';
+
+interface UnitsMapSectionProps {
+  units: UnitLocation[];
+  mapsActive: boolean;
+  mapsApiKey: string;
+}
+
+interface RouteOverlayProps {
+  origin: string | google.maps.LatLngLiteral | null;
+  destination: google.maps.LatLngLiteral | null;
+  travelMode: 'moto' | 'carro';
+  onRouteResult: (info: { distanceKm: string; durationMin: number } | null, error: string | null) => void;
+}
+
+function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteOverlayProps) {
+  const map = useMap();
+  const routesLib = useMapsLibrary('routes');
+  const polylinesRef = useRef<google.maps.Polyline[]>([]);
+
+  useEffect(() => {
+    if (!routesLib || !map || !origin || !destination) return;
+
+    polylinesRef.current.forEach((p) => p.setMap(null));
+    polylinesRef.current = [];
+
+    let cancelled = false;
+
+    const compute = async (mode: 'TWO_WHEELER' | 'DRIVING') => {
+      const request = {
+        origin,
+        destination,
+        travelMode: mode,
+        fields: ['path', 'distanceMeters', 'durationMillis', 'viewport'],
+      };
+      return (routesLib.Route as unknown as { computeRoutes: (req: unknown) => Promise<{ routes: any[] }> }).computeRoutes(
+        request
+      );
+    };
+
+    (async () => {
+      try {
+        let response: { routes: any[] };
+        try {
+          response = await compute(travelMode === 'moto' ? 'TWO_WHEELER' : 'DRIVING');
+        } catch (err) {
+          if (travelMode === 'moto') {
+            response = await compute('DRIVING');
+          } else {
+            throw err;
+          }
+        }
+
+        if (cancelled) return;
+        const primaryRoute = response?.routes?.[0];
+        if (!primaryRoute) {
+          onRouteResult(null, 'Não foi possível encontrar uma rota para este endereço.');
+          return;
+        }
+
+        const newPolylines: google.maps.Polyline[] = primaryRoute.createPolylines();
+        newPolylines.forEach((polyline) => {
+          polyline.setOptions({
+            strokeColor: '#E4002B',
+            strokeWeight: 5,
+            strokeOpacity: 0.9,
+          });
+          polyline.setMap(map);
+        });
+        polylinesRef.current = newPolylines;
+
+        if (primaryRoute.viewport) {
+          map.fitBounds(primaryRoute.viewport);
+        }
+
+        const distanceKm = ((primaryRoute.distanceMeters ?? 0) / 1000).toFixed(1).replace('.', ',');
+        const durationMin = Math.max(1, Math.round((primaryRoute.durationMillis ?? 0) / 60000));
+        onRouteResult({ distanceKm, durationMin }, null);
+      } catch (err) {
+        if (cancelled) return;
+        const msg = err instanceof Error ? err.message : String(err);
+        if (
+          msg.includes('RESOURCE_EXHAUSTED') ||
+          msg.includes('OVER_QUERY_LIMIT') ||
+          msg.includes('Quota')
+        ) {
+          window.dispatchEvent(new CustomEvent('gmp-quota-exceeded'));
+        }
+        onRouteResult(null, 'Não foi possível calcular a rota neste momento. Tente abrir diretamente no Google Maps.');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      polylinesRef.current.forEach((p) => p.setMap(null));
+      polylinesRef.current = [];
+    };
+  }, [routesLib, map, origin, destination, travelMode, onRouteResult]);
+
+  return null;
+}
+
+function UnitMarker({
+  unit,
+  isSelected,
+  onSelect,
+}: {
+  unit: UnitLocation;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const [markerRef, marker] = useAdvancedMarkerRef();
+
+  return (
+    <>
+      <AdvancedMarker
+        ref={markerRef}
+        position={{ lat: unit.lat, lng: unit.lng }}
+        onClick={onSelect}
+        title={unit.name}
+      >
+        <Pin
+          background={isSelected ? '#E4002B' : '#18181B'}
+          borderColor="#FFFFFF"
+          glyphColor="#FFFFFF"
+          scale={isSelected ? 1.25 : 1.05}
+        />
+      </AdvancedMarker>
+      {isSelected && marker && (
+        <InfoWindow anchor={marker} onCloseClick={() => {}}>
+          <div className="min-w-[210px] p-1 text-neutral-900">
+            <p className="text-sm font-bold text-neutral-900">{unit.name}</p>
+            <p className="mt-1 text-xs text-neutral-600">
+              {unit.street}, {unit.number} · {unit.neighborhood}
+            </p>
+            <p className="text-xs text-neutral-600">
+              {unit.city} – {unit.state}, {unit.zip}
+            </p>
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2">
+              <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
+                <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
+                {unit.rating.toFixed(1)}
+              </span>
+              <a
+                href={unit.gmb_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs font-semibold text-[#E4002B] hover:underline"
+              >
+                Abrir no Maps
+              </a>
+            </div>
+          </div>
+        </InfoWindow>
+      )}
+    </>
+  );
+}
+
+function MapCameraController({
+  units,
+  selectedTab,
+}: {
+  units: UnitLocation[];
+  selectedTab: string;
+}) {
+  const map = useMap();
+  const coreLib = useMapsLibrary('core');
+
+  useEffect(() => {
+    if (!map || units.length === 0) return;
+
+    if (selectedTab === 'both' && units.length > 1 && coreLib) {
+      const bounds = new coreLib.LatLngBounds();
+      units.forEach((u) => bounds.extend({ lat: u.lat, lng: u.lng }));
+      map.fitBounds(bounds, 60);
+    } else {
+      const target = units.find((u) => u.id === selectedTab) || units[0];
+      map.panTo({ lat: target.lat, lng: target.lng });
+      map.setZoom(15);
+    }
+  }, [map, coreLib, units, selectedTab]);
+
+  return null;
+}
+
+export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSectionProps) {
+  const [selectedTab, setSelectedTab] = useState<string>(units[0]?.id || 'vitoria-da-conquista');
+  const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite'>('roadmap');
+  const [travelMode, setTravelMode] = useState<'moto' | 'carro'>('moto');
+  const [originInput, setOriginInput] = useState('');
+  const [activeOrigin, setActiveOrigin] = useState<string | google.maps.LatLngLiteral | null>(null);
+  const [routeSummary, setRouteSummary] = useState<{ distanceKm: string; durationMin: number } | null>(null);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [locating, setLocating] = useState(false);
+
+  const activeUnit =
+    units.find((u) => u.id === selectedTab) || units[0];
+
+  const handleFocusOnMap = useCallback((unitId: string) => {
+    setSelectedTab(unitId);
+  }, []);
+
+  const handleUseMyLocation = () => {
+    if (!navigator.geolocation) {
+      setRouteError('Geolocalização não suportada pelo seu navegador.');
+      return;
+    }
+    setLocating(true);
+    setRouteError(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setOriginInput(`${coords.lat.toFixed(5)}, ${coords.lng.toFixed(5)}`);
+        setActiveOrigin(coords);
+        setLocating(false);
+      },
+      () => {
+        setRouteError('Não foi possível obter sua localização. Digite seu endereço de partida.');
+        setLocating(false);
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  };
+
+  const handleTraceRoute = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!originInput.trim()) {
+      setRouteError('Digite um endereço de partida ou clique em "Usar minha localização".');
+      return;
+    }
+    setRouteError(null);
+    const coordMatch = originInput.trim().match(/^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/);
+    if (coordMatch) {
+      setActiveOrigin({ lat: Number(coordMatch[1]), lng: Number(coordMatch[2]) });
+    } else {
+      setActiveOrigin(originInput.trim());
+    }
+  };
+
+  const handleRouteResult = useCallback(
+    (info: { distanceKm: string; durationMin: number } | null, error: string | null) => {
+      setRouteSummary(info);
+      setRouteError(error);
+    },
+    []
+  );
+
+  if (!units || units.length === 0) return null;
+
+  const canRenderInteractiveMap = mapsActive && Boolean(mapsApiKey);
+  const visibleUnits =
+    selectedTab === 'both' ? units : units.filter((u) => u.id === activeUnit?.id);
+
+  return (
+    <section
+      id="unidades"
+      className="border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
+    >
+      <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+        <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-[#E4002B]">
+              Onde estamos
+            </p>
+            <h2 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl">
+              Unidades e Como Chegar
+            </h2>
+            <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+              Localize nossas concessionárias autorizadas em Vitória da Conquista e Guanambi.
+            </p>
+          </div>
+
+          <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-900">
+            {units.map((u) => {
+              const shortCity = u.city || u.name;
+              const active = selectedTab === u.id;
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => setSelectedTab(u.id)}
+                  className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
+                    active
+                      ? 'bg-[#E4002B] text-white shadow-sm'
+                      : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+                  }`}
+                >
+                  {shortCity}
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              onClick={() => setSelectedTab('both')}
+              className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
+                selectedTab === 'both'
+                  ? 'bg-[#E4002B] text-white shadow-sm'
+                  : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+              }`}
+            >
+              Ver ambos
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-8 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
+          {/* Left Column: Route Planner + Unit Card(s) */}
+          <div className="flex flex-col gap-5 lg:col-span-5">
+            {/* Route Card */}
+            <form
+              onSubmit={handleTraceRoute}
+              className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-5 dark:border-neutral-800 dark:bg-neutral-900"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
+                  Trace rota até {activeUnit?.city || activeUnit?.name}
+                </h3>
+                <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
+                  <button
+                    type="button"
+                    onClick={() => setTravelMode('moto')}
+                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      travelMode === 'moto'
+                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                    }`}
+                  >
+                    <Bike className="h-3.5 w-3.5" />
+                    Moto
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setTravelMode('carro')}
+                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      travelMode === 'carro'
+                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                    }`}
+                  >
+                    <Car className="h-3.5 w-3.5" />
+                    Carro
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3.5 space-y-2.5">
+                <input
+                  type="text"
+                  value={originInput}
+                  onChange={(e) => setOriginInput(e.target.value)}
+                  placeholder="Digite seu endereço ou bairro de partida..."
+                  className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
+                />
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleUseMyLocation}
+                    disabled={locating}
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                  >
+                    <Crosshair className="h-3.5 w-3.5 text-[#E4002B]" />
+                    {locating ? 'Localizando...' : 'Usar minha localização'}
+                  </button>
+
+                  <button
+                    type="submit"
+                    className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
+                  >
+                    <Navigation className="h-3.5 w-3.5" />
+                    Traçar rota no mapa
+                  </button>
+                </div>
+              </div>
+
+              {routeSummary && (
+                <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+                  <span className="font-medium">Rota calculada ({travelMode === 'moto' ? 'Moto' : 'Carro'})</span>
+                  <span className="font-mono font-semibold tabular-nums">
+                    {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
+                  </span>
+                </div>
+              )}
+
+              {routeError && (
+                <p className="mt-2.5 text-xs font-medium text-[#E4002B]">{routeError}</p>
+              )}
+            </form>
+
+            {/* Unit Details Cards */}
+            <div className="flex flex-col gap-3">
+              {visibleUnits.map((unit) => (
+                <div
+                  key={unit.id}
+                  className="rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h4 className="text-base font-bold text-neutral-900 dark:text-white">
+                        {unit.name}
+                      </h4>
+                      <p className="mt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400">
+                        CNPJ {unit.cnpj}
+                      </p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
+                      {unit.rating.toFixed(1)}
+                      <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                    </span>
+                  </div>
+
+                  <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                    <p className="flex items-start gap-2">
+                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
+                      <span>
+                        {unit.street}, {unit.number} – {unit.neighborhood}, {unit.city} – {unit.state},{' '}
+                        {unit.zip}
+                      </span>
+                    </p>
+                    <p className="flex items-center gap-2">
+                      <Phone className="h-4 w-4 shrink-0 text-neutral-400" />
+                      <a href={`tel:${unit.phone.replace(/\D/g, '')}`} className="tabular-nums hover:underline">
+                        {unit.phone}
+                      </a>
+                    </p>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handleFocusOnMap(unit.id)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                    >
+                      <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
+                      Focar no mapa
+                    </button>
+                    <a
+                      href={unit.gmb_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Abrir no Maps
+                    </a>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Right Column: Interactive Google Map */}
+          <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
+            {canRenderInteractiveMap ? (
+              <APIProvider apiKey={mapsApiKey} language="pt-BR" region="BR" libraries={['marker', 'routes']}>
+                {/* Map/Satellite switcher */}
+                <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
+                  <button
+                    type="button"
+                    onClick={() => setMapTypeId('roadmap')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      mapTypeId === 'roadmap'
+                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                        : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                    }`}
+                  >
+                    Mapa
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMapTypeId('satellite')}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                      mapTypeId === 'satellite'
+                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                        : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                    }`}
+                  >
+                    Satélite
+                  </button>
+                </div>
+
+                <div className="h-[460px] w-full flex-1 lg:h-full">
+                  <GoogleMap
+                    defaultCenter={{ lat: activeUnit.lat, lng: activeUnit.lng }}
+                    defaultZoom={15}
+                    mapId="DEMO_MAP_ID"
+                    mapTypeId={mapTypeId}
+                    gestureHandling="greedy"
+                    disableDefaultUI={false}
+                    streetViewControl={false}
+                    mapTypeControl={false}
+                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                    style={{ width: '100%', height: '100%' }}
+                  >
+                    <MapCameraController units={units} selectedTab={selectedTab} />
+                    {units.map((u) => (
+                      <UnitMarker
+                        key={u.id}
+                        unit={u}
+                        isSelected={selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)}
+                        onSelect={() => setSelectedTab(u.id)}
+                      />
+                    ))}
+                    {activeOrigin && activeUnit && (
+                      <RouteOverlay
+                        origin={activeOrigin}
+                        destination={{ lat: activeUnit.lat, lng: activeUnit.lng }}
+                        travelMode={travelMode}
+                        onRouteResult={handleRouteResult}
+                      />
+                    )}
+                  </GoogleMap>
+                </div>
+              </APIProvider>
+            ) : (
+              <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
+                <MapPin className="h-10 w-10 text-[#E4002B]" />
+                <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
+                  Visualização direta no Google Maps
+                </h4>
+                <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
+                  Abra a localização oficial da {activeUnit.name} diretamente no aplicativo do Google Maps.
+                </p>
+                <a
+                  href={activeUnit.gmb_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#E4002B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#C80024]"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Abrir {activeUnit.city} no Google Maps
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}

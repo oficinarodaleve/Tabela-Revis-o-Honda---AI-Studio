@@ -1,0 +1,6 @@
+{
+  "name": "Rodaleve Honda – Tabela de Manutenção e Revisões",
+  "description": "Consulte peças genuínas e valores estimados por modelo de cada revisão programada Honda na concessionária autorizada Rodaleve.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
