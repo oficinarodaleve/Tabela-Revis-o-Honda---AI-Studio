@@ -219,12 +219,51 @@ export function initDatabase() {
   }
 
   // Seed site_settings if empty
-  const seoRow = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('seo');
+  const seoRow = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('seo') as
+    | { value: string }
+    | undefined;
   if (!seoRow) {
     db.prepare('INSERT INTO site_settings (key, value) VALUES (?, ?)').run(
       'seo',
       JSON.stringify(INITIAL_SEO_SETTINGS)
     );
+  } else {
+    try {
+      const parsedSeo = JSON.parse(seoRow.value);
+      if (Array.isArray(parsedSeo?.units)) {
+        let changed = false;
+        parsedSeo.units = parsedSeo.units.map((u: Record<string, unknown>) => {
+          if (
+            u.id === 'vitoria-da-conquista' &&
+            (u.zip === '45005-075' || u.street === 'Av. Presidente Dutra')
+          ) {
+            changed = true;
+            return {
+              ...u,
+              street: 'Av. Pres. Dutra',
+              number: '2879',
+              neighborhood: 'Centro',
+              city: 'Vitória da Conquista',
+              state: 'BA',
+              zip: '45065-075',
+              lat: -14.8655,
+              lng: -40.8385,
+              gmb_url:
+                'https://www.google.com/maps/search/?api=1&query=Av.+Pres.+Dutra,+2879+-+Centro,+Vit%C3%B3ria+da+Conquista+-+BA,+45065-075',
+            };
+          }
+          return u;
+        });
+        if (changed) {
+          db.prepare('UPDATE site_settings SET value = ? WHERE key = ?').run(
+            JSON.stringify(parsedSeo),
+            'seo'
+          );
+        }
+      }
+    } catch {
+      // Ignore malformed JSON
+    }
   }
   const syncRow = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('last_price_sync');
   if (!syncRow) {
@@ -310,6 +349,18 @@ export function initDatabase() {
 export function getSeoSettings() {
   const row = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('seo') as { value: string } | undefined;
   return row ? JSON.parse(row.value) : INITIAL_SEO_SETTINGS;
+}
+
+export function getVisualBuilderConfig() {
+  const row = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('visual_builder') as
+    | { value: string }
+    | undefined;
+  if (!row) return null;
+  try {
+    return JSON.parse(row.value);
+  } catch {
+    return null;
+  }
 }
 
 export function getLastPriceSync(): string {

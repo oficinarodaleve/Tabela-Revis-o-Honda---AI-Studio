@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
 import { MotoModel, Segment } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 
 interface TabModelsPhotosProps {
   models: MotoModel[];
@@ -43,7 +44,7 @@ export function TabModelsPhotos({
     if (!draft) return;
     setSavingId(id);
     try {
-      const res = await fetch(`/api/admin/models/${id}`, {
+      const res = await adminFetch(`/api/admin/models/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(draft),
@@ -63,7 +64,7 @@ export function TabModelsPhotos({
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/api/upload', {
+      const res = await adminFetch('/api/upload', {
         method: 'POST',
         body: formData,
       });
@@ -73,7 +74,7 @@ export function TabModelsPhotos({
       updateDraft(id, { image_url: data.url });
 
       // Persist immediately so it reflects on the public site
-      await fetch(`/api/admin/models/${id}`, {
+      await adminFetch(`/api/admin/models/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nextModel),
@@ -89,7 +90,7 @@ export function TabModelsPhotos({
 
   const handleDeleteModel = async (id: number, name: string) => {
     try {
-      const res = await fetch(`/api/admin/models/${id}`, { method: 'DELETE' });
+      const res = await adminFetch(`/api/admin/models/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Erro ao excluir modelo.');
       await onSaved();
       onToast('success', `Modelo ${name} removido.`);
@@ -106,7 +107,7 @@ export function TabModelsPhotos({
     }
     setAdding(true);
     try {
-      const res = await fetch('/api/admin/models', {
+      const res = await adminFetch('/api/admin/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

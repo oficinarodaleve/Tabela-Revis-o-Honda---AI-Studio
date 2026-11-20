@@ -11,6 +11,7 @@ import {
   Upload,
 } from 'lucide-react';
 import { SeoSettings, UnitLocation } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 import { buildJsonLd } from '../SeoHeadSync';
 
 interface TabSeoIdentityProps {
@@ -52,7 +53,7 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch('/api/upload', { method: 'POST', body: formData });
+      const res = await adminFetch('/api/upload', { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Erro ao enviar arquivo.');
       if (field === 'favicon') update({ favicon_url: data.url });
@@ -69,7 +70,7 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/seo', {
+      const res = await adminFetch('/api/admin/seo', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(draft),

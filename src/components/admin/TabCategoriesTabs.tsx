@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { RevisionTab, Segment } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 
 interface TabCategoriesTabsProps {
   segments: Segment[];
@@ -81,7 +82,7 @@ export function TabCategoriesTabs({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/categories', {
+      const res = await adminFetch('/api/admin/categories', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ segments: segDrafts, revision_tabs: tabDrafts }),

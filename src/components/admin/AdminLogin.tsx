@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { ArrowLeft, Lock, Mail } from 'lucide-react';
 import { AdminUser } from '../../types';
+import { setAdminToken } from '../../utils/adminAuth';
 
 interface AdminLoginProps {
-  onSuccess: (user: AdminUser) => void;
+  onSuccess: (user: AdminUser) => void | Promise<void>;
   onBackToSite: () => void;
 }
 
@@ -15,22 +16,34 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPassword = password.trim();
+
+    if (!cleanEmail || !cleanPassword) {
+      setError('Informe o e-mail e a senha de acesso.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        credentials: 'include',
+        body: JSON.stringify({ email: cleanEmail, password: cleanPassword }),
       });
       const data = await res.json();
       if (!res.ok) {
-        setError(data.error || 'Falha ao autenticar.');
+        setError(data.error || 'E-mail ou senha incorretos.');
         return;
       }
-      onSuccess(data.user);
+      if (data.token) {
+        setAdminToken(data.token);
+      }
+      await onSuccess(data.user);
     } catch {
-      setError('Erro de conexão com o servidor.');
+      setError('Erro de conexão com o servidor. Tente novamente.');
     } finally {
       setLoading(false);
     }
@@ -49,7 +62,7 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="mt-7 space-y-4">
+        <form onSubmit={handleSubmit} noValidate className="mt-7 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-neutral-700">E-mail</label>
             <div className="relative mt-1.5">
@@ -94,11 +107,6 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
             {loading ? 'Entrando...' : 'Entrar no Painel'}
           </button>
         </form>
-
-        <div className="mt-5 rounded-xl border border-neutral-100 bg-neutral-50 p-3 text-center text-xs text-neutral-500">
-          Credencial padrão: <span className="font-mono text-neutral-700">lazarovictor.rodaleve@gmail.com</span> · Senha:{' '}
-          <span className="font-mono text-neutral-700">Rodaleve@2026</span>
-        </div>
 
         <button
           type="button"

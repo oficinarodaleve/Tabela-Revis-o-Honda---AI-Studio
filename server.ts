@@ -2,12 +2,13 @@ import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import express, { NextFunction, Request, Response } from 'express';
+import express, { type NextFunction, type Request, type Response } from 'express';
 import multer from 'multer';
 import {
   db,
   getLastPriceSync,
   getSeoSettings,
+  getVisualBuilderConfig,
   initDatabase,
   maskSecret,
   verifyPassword,
@@ -18,7 +19,7 @@ initDatabase();
 startWeeklySyncScheduler();
 
 const app = express();
-const PORT = 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 const UPLOADS_DIR = path.resolve(process.cwd(), 'data', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -66,9 +67,18 @@ interface AuthedRequest extends Request {
   };
 }
 
-function getAuthenticatedAdmin(req: Request) {
+function extractSessionToken(req: Request): string | null {
+  const authHeader = req.headers.authorization;
+  if (typeof authHeader === 'string' && authHeader.toLowerCase().startsWith('bearer ')) {
+    const token = authHeader.slice(7).trim();
+    if (token) return token;
+  }
   const cookies = parseCookies(req);
-  const token = cookies.rodaleve_session;
+  return cookies.rodaleve_session || null;
+}
+
+function getAuthenticatedAdmin(req: Request) {
+  const token = extractSessionToken(req);
   if (!token) return null;
 
   const row = db
@@ -116,7 +126,7 @@ function formatPartRow(row: Record<string, unknown>) {
   return {
     code: String(row.code),
     description: String(row.description),
-    unit: String(row.unit) === 'ML' ? 'ML' : 'UN',
+    unit: String(row.unit || 'UN').trim() || 'UN',
     default_qty: Number(row.default_qty),
     price: Number(row.price),
     mode: String(row.mode) === 'manual' ? 'manual' : 'auto',
@@ -162,19 +172,22 @@ app.get('/sitemap.xml', (_req, res) => {
 // Auth endpoints
 app.post('/api/auth/login', (req, res) => {
   const { email, password } = req.body as { email?: string; password?: string };
-  if (!email || !password) {
+  const cleanEmail = (email || '').trim().toLowerCase();
+  const cleanPassword = (password || '').trim();
+
+  if (!cleanEmail || !cleanPassword) {
     res.status(400).json({ error: 'Informe e-mail e senha.' });
     return;
   }
 
   const admin = db
-    .prepare('SELECT id, email, password_hash, name, role FROM admins WHERE lower(email) = lower(?)')
-    .get(email.trim()) as
+    .prepare('SELECT id, email, password_hash, name, role FROM admins WHERE lower(trim(email)) = ?')
+    .get(cleanEmail) as
     | { id: number; email: string; password_hash: string; name: string; role: string }
     | undefined;
 
-  if (!admin || !verifyPassword(password, admin.password_hash)) {
-    res.status(401).json({ error: 'E-mail ou senha inválidos.' });
+  if (!admin || !verifyPassword(cleanPassword, admin.password_hash)) {
+    res.status(401).json({ error: 'E-mail ou senha inválidos. Verifique os dados e tente novamente.' });
     return;
   }
 
@@ -186,21 +199,30 @@ app.post('/api/auth/login', (req, res) => {
     expiresAt
   );
 
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const cookieAttrs = isHttps
+    ? 'Path=/; HttpOnly; SameSite=None; Secure'
+    : 'Path=/; HttpOnly; SameSite=Lax';
   res.setHeader(
     'Set-Cookie',
-    `rodaleve_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${7 * 24 * 60 * 60}`
+    `rodaleve_session=${encodeURIComponent(token)}; ${cookieAttrs}; Max-Age=${7 * 24 * 60 * 60}`
   );
   res.json({
+    token,
     user: { id: admin.id, email: admin.email, name: admin.name, role: admin.role },
   });
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  const cookies = parseCookies(req);
-  if (cookies.rodaleve_session) {
-    db.prepare('DELETE FROM sessions WHERE token = ?').run(cookies.rodaleve_session);
+  const token = extractSessionToken(req);
+  if (token) {
+    db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
   }
-  res.setHeader('Set-Cookie', 'rodaleve_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+  const isHttps = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  const cookieAttrs = isHttps
+    ? 'Path=/; HttpOnly; SameSite=None; Secure'
+    : 'Path=/; HttpOnly; SameSite=Lax';
+  res.setHeader('Set-Cookie', `rodaleve_session=; ${cookieAttrs}; Max-Age=0`);
   res.json({ ok: true });
 });
 
@@ -269,6 +291,7 @@ app.get('/api/public/bootstrap', (_req, res) => {
       api_key: resolvedMapsKey,
     },
     public_integrations: publicIntegrations,
+    visual_builder: getVisualBuilderConfig(),
   });
 });
 
@@ -376,6 +399,44 @@ app.put('/api/admin/revisions/:modelId/:revisionNumber', requireAdmin, (req, res
   res.json({ ok: true, items: updated });
 });
 
+app.post('/api/admin/revisions/clone', requireAdmin, (req, res) => {
+  const { source_revision, target_revision } = req.body as {
+    source_revision?: number;
+    target_revision?: number;
+  };
+  const src = Number(source_revision);
+  const tgt = Number(target_revision);
+
+  if (!Number.isFinite(src) || !Number.isFinite(tgt) || src === tgt) {
+    res.status(400).json({ error: 'Selecione uma revisão de origem diferente da revisão atual.' });
+    return;
+  }
+
+  const sourceItems = db
+    .prepare('SELECT model_id, part_code, quantity FROM revision_parts WHERE revision_number = ? ORDER BY id ASC')
+    .all(src) as Array<{ model_id: number; part_code: string; quantity: number }>;
+
+  const delStmt = db.prepare('DELETE FROM revision_parts WHERE revision_number = ?');
+  const insStmt = db.prepare(
+    'INSERT INTO revision_parts (model_id, revision_number, part_code, quantity) VALUES (?, ?, ?, ?)'
+  );
+
+  const tx = db.transaction(() => {
+    delStmt.run(tgt);
+    for (const item of sourceItems) {
+      insStmt.run(item.model_id, tgt, item.part_code, item.quantity);
+    }
+  });
+  tx();
+
+  res.json({
+    ok: true,
+    copied_count: sourceItems.length,
+    source_revision: src,
+    target_revision: tgt,
+  });
+});
+
 // Aba 2: Preços e Peças
 app.post('/api/admin/parts', requireAdmin, (req, res) => {
   const { code, description, unit, default_qty, price, mode, is_optional } = req.body as {
@@ -405,14 +466,16 @@ app.post('/api/admin/parts', requireAdmin, (req, res) => {
   const partMode = mode === 'manual' ? 'manual' : 'auto';
   const status = partMode === 'manual' ? 'Manual' : 'Aguardando sync';
 
+  const cleanUnit = (unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN';
+
   db.prepare(
     `INSERT INTO parts (code, description, unit, default_qty, price, mode, is_optional, microwork_price, sync_status, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)`
   ).run(
     cleanCode,
     description.trim(),
-    unit === 'ML' ? 'ML' : 'UN',
-    Number(default_qty || (unit === 'ML' ? 1000 : 1)),
+    cleanUnit,
+    Number(default_qty || (cleanUnit === 'ML' ? 1000 : 1)),
     numPrice,
     partMode,
     is_optional ? 1 : 0,
@@ -437,7 +500,7 @@ app.put('/api/admin/parts/batch', requireAdmin, (req, res) => {
       original_code: string;
       code: string;
       description: string;
-      unit: 'UN' | 'ML';
+      unit: string;
       price: number;
       mode: 'auto' | 'manual';
       is_optional: boolean;
@@ -469,10 +532,11 @@ app.put('/api/admin/parts/batch', requireAdmin, (req, res) => {
         updateRevCode.run(nextCode, origCode);
       }
       const nextStatus = c.mode === 'manual' ? 'Manual' : 'Atualizado no Gestor';
+      const cleanUnit = (c.unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN';
       updatePart.run(
         nextCode,
         c.description.trim(),
-        c.unit === 'ML' ? 'ML' : 'UN',
+        cleanUnit,
         Number(c.price || 0),
         c.mode === 'manual' ? 'manual' : 'auto',
         c.is_optional ? 1 : 0,
@@ -646,6 +710,25 @@ app.put('/api/admin/seo', requireAdmin, (req, res) => {
     JSON.stringify(seoPayload)
   );
   res.json({ ok: true, seo: seoPayload });
+});
+
+// Visual Builder config persistence
+app.put('/api/admin/visual-builder', requireAdmin, (req, res) => {
+  const payload = req.body;
+  if (!payload || typeof payload !== 'object') {
+    res.status(400).json({ error: 'Configuração do editor visual inválida.' });
+    return;
+  }
+  db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
+    'visual_builder',
+    JSON.stringify(payload)
+  );
+  res.json({ ok: true, visual_builder: payload });
+});
+
+app.delete('/api/admin/visual-builder', requireAdmin, (_req, res) => {
+  db.prepare('DELETE FROM site_settings WHERE key = ?').run('visual_builder');
+  res.json({ ok: true });
 });
 
 // Aba 7: Integrações & APIs

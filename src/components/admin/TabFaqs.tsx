@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { GripVertical, Plus, Save, Trash2 } from 'lucide-react';
 import { FaqItem } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 
 interface TabFaqsProps {
   faqs: FaqItem[];
@@ -55,7 +56,7 @@ export function TabFaqs({ faqs, onSaved, onToast }: TabFaqsProps) {
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/faqs', {
+      const res = await adminFetch('/api/admin/faqs', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ faqs: items }),

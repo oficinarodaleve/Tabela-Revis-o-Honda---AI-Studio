@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, Plus, Save, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, Plus, Save, Trash2 } from 'lucide-react';
 import { MotoModel, Part, RevisionPart, RevisionTab } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 import { computeLineTotal, computeModelRevision, formatBRL } from '../../utils/pricing';
 
 interface TabRevisionsProps {
@@ -23,6 +24,12 @@ export function TabRevisions({
   const [selectedRev, setSelectedRev] = useState<number>(
     revisionTabs[0]?.revision_number ?? 1
   );
+  const [cloneSourceRev, setCloneSourceRev] = useState<number>(
+    revisionTabs.find((t) => t.revision_number !== (revisionTabs[0]?.revision_number ?? 1))
+      ?.revision_number ?? 1
+  );
+  const [cloningAll, setCloningAll] = useState(false);
+
   const [expandedModelId, setExpandedModelId] = useState<number | null>(
     models[0]?.id ?? null
   );
@@ -30,6 +37,7 @@ export function TabRevisions({
     Record<number, Array<{ part_code: string; quantity: number }>>
   >({});
   const [addPartCodeByModel, setAddPartCodeByModel] = useState<Record<number, string>>({});
+  const [modelCloneSourceByModel, setModelCloneSourceByModel] = useState<Record<number, number>>({});
   const [savingModelId, setSavingModelId] = useState<number | null>(null);
 
   const partsMap = useMemo(() => {
@@ -37,6 +45,22 @@ export function TabRevisions({
     for (const p of parts) map[p.code] = p;
     return map;
   }, [parts]);
+
+  const availableSourceTabs = useMemo(
+    () => revisionTabs.filter((t) => t.revision_number !== selectedRev),
+    [revisionTabs, selectedRev]
+  );
+
+  // Keep a valid default source revision whenever selectedRev changes
+  useEffect(() => {
+    if (availableSourceTabs.length === 0) return;
+    if (!availableSourceTabs.some((t) => t.revision_number === cloneSourceRev)) {
+      const prevTab =
+        availableSourceTabs.find((t) => t.revision_number === selectedRev - 1) ||
+        availableSourceTabs[0];
+      setCloneSourceRev(prevTab.revision_number);
+    }
+  }, [availableSourceTabs, cloneSourceRev, selectedRev]);
 
   useEffect(() => {
     const next: Record<number, Array<{ part_code: string; quantity: number }>> = {};
@@ -47,6 +71,53 @@ export function TabRevisions({
     }
     setDraftItemsByModel(next);
   }, [models, revisionParts, selectedRev]);
+
+  const handleCloneRevisionAll = async () => {
+    if (availableSourceTabs.length === 0 || cloneSourceRev === selectedRev) return;
+    setCloningAll(true);
+    try {
+      const res = await adminFetch('/api/admin/revisions/clone', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          source_revision: cloneSourceRev,
+          target_revision: selectedRev,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro ao clonar revisão.');
+      await onSaved();
+      onToast(
+        'success',
+        `Dados da ${cloneSourceRev}ª revisão clonados para a ${selectedRev}ª revisão (${data.copied_count} itens).`
+      );
+    } catch (e) {
+      onToast('error', e instanceof Error ? e.message : 'Erro ao clonar revisão.');
+    } finally {
+      setCloningAll(false);
+    }
+  };
+
+  const handleCloneSingleModel = (modelId: number, modelName: string) => {
+    const sourceRev =
+      modelCloneSourceByModel[modelId] ??
+      availableSourceTabs[0]?.revision_number ??
+      cloneSourceRev;
+    if (!sourceRev || sourceRev === selectedRev) return;
+
+    const sourceItems = revisionParts
+      .filter((rp) => rp.model_id === modelId && rp.revision_number === sourceRev)
+      .map((rp) => ({ part_code: rp.part_code, quantity: rp.quantity }));
+
+    setDraftItemsByModel((prev) => ({
+      ...prev,
+      [modelId]: sourceItems,
+    }));
+    onToast(
+      'success',
+      `${sourceItems.length} ${sourceItems.length === 1 ? 'item copiado' : 'itens copiados'} da ${sourceRev}ª revisão para ${modelName}. Clique em Salvar para confirmar.`
+    );
+  };
 
   const handleQuantityChange = (modelId: number, idx: number, qty: number) => {
     setDraftItemsByModel((prev) => {
@@ -81,7 +152,7 @@ export function TabRevisions({
     setSavingModelId(modelId);
     try {
       const items = draftItemsByModel[modelId] || [];
-      const res = await fetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
+      const res = await adminFetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ items }),
@@ -102,7 +173,7 @@ export function TabRevisions({
   return (
     <div className="space-y-6">
       {/* Header + Revision Tabs */}
-      <div className="flex flex-col justify-between gap-4 md:flex-row md:items-center">
+      <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
         <div>
           <h1 className="font-display text-2xl font-bold text-neutral-900">
             Peças de cada modelo por revisão
@@ -112,26 +183,67 @@ export function TabRevisions({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          {revisionTabs.map((tab) => {
-            const active = selectedRev === tab.revision_number;
-            return (
-              <button
-                key={tab.revision_number}
-                type="button"
-                onClick={() => setSelectedRev(tab.revision_number)}
-                className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
-                  active
-                    ? 'bg-neutral-900 text-white'
-                    : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100'
-                }`}
-              >
-                {tab.revision_number}ª
-              </button>
-            );
-          })}
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {revisionTabs.map((tab) => {
+              const active = selectedRev === tab.revision_number;
+              return (
+                <button
+                  key={tab.revision_number}
+                  type="button"
+                  onClick={() => setSelectedRev(tab.revision_number)}
+                  className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
+                    active
+                      ? 'bg-neutral-900 text-white'
+                      : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100'
+                  }`}
+                >
+                  {tab.revision_number}ª
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
+
+      {/* Compact Clone Bar: Copiar de... -> Clonar revisão */}
+      {availableSourceTabs.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
+          <div className="text-xs text-neutral-600">
+            <span className="font-bold text-neutral-900">
+              Clonar para a {selectedRev}ª revisão:
+            </span>{' '}
+            copie rapidamente todas as peças e quantidades de uma revisão existente.
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="text-xs font-semibold text-neutral-600">
+              Copiar de:
+            </label>
+            <select
+              value={cloneSourceRev}
+              onChange={(e) => setCloneSourceRev(Number(e.target.value))}
+              className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+            >
+              {availableSourceTabs.map((tab) => (
+                <option key={tab.revision_number} value={tab.revision_number}>
+                  {tab.label} ({tab.revision_number}ª)
+                </option>
+              ))}
+            </select>
+
+            <button
+              type="button"
+              disabled={cloningAll}
+              onClick={handleCloneRevisionAll}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-neutral-800 disabled:opacity-60"
+            >
+              <Copy className="h-3.5 w-3.5" />
+              {cloningAll ? 'Clonando...' : 'Clonar revisão'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Accordion List */}
       <div className="space-y-3">
@@ -160,6 +272,11 @@ export function TabRevisions({
             ? totalWithOptionals
             : savedSummary.totalWithOptionals;
 
+          const modelSourceRev =
+            modelCloneSourceByModel[model.id] ??
+            availableSourceTabs[0]?.revision_number ??
+            cloneSourceRev;
+
           return (
             <div
               key={model.id}
@@ -187,6 +304,41 @@ export function TabRevisions({
 
               {isExpanded && (
                 <div className="border-t border-neutral-100 bg-neutral-50/40 px-5 py-4">
+                  {/* Atalho de clonagem rápida deste modelo */}
+                  {availableSourceTabs.length > 0 && (
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-2">
+                      <span className="text-[11px] font-semibold text-neutral-500">
+                        Atalho para {model.name} ({selectedRev}ª revisão)
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <select
+                          value={modelSourceRev}
+                          onChange={(e) =>
+                            setModelCloneSourceByModel((prev) => ({
+                              ...prev,
+                              [model.id]: Number(e.target.value),
+                            }))
+                          }
+                          className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-neutral-800 focus:border-[#E4002B] focus:outline-none"
+                        >
+                          {availableSourceTabs.map((tab) => (
+                            <option key={tab.revision_number} value={tab.revision_number}>
+                              Copiar da {tab.revision_number}ª revisão
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => handleCloneSingleModel(model.id, model.name)}
+                          className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-[11px] font-bold text-neutral-800 transition-colors hover:bg-neutral-100"
+                        >
+                          <Copy className="h-3 w-3 text-[#E4002B]" />
+                          Copiar peças
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {items.length === 0 ? (
                     <p className="py-3 text-xs text-neutral-500">
                       Nenhuma peça vinculada a este modelo na {selectedRev}ª revisão.
@@ -230,7 +382,7 @@ export function TabRevisions({
                                   }
                                   className="w-20 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-right text-xs font-semibold text-neutral-900 tabular-nums focus:border-[#E4002B] focus:outline-none"
                                 />
-                                <span className="w-7 text-[11px] font-semibold text-neutral-500">
+                                <span className="min-w-[28px] text-[11px] font-semibold text-neutral-500">
                                   {part?.unit || 'UN'}
                                 </span>
                               </div>
@@ -270,7 +422,7 @@ export function TabRevisions({
                         {parts.map((p) => (
                           <option key={p.code} value={p.code}>
                             {p.code} — {p.description} ({formatBRL(p.price)}
-                            {p.unit === 'ML' ? '/100ml' : ''})
+                            {p.unit === 'ML' ? '/100ml' : `/${p.unit}`})
                           </option>
                         ))}
                       </select>

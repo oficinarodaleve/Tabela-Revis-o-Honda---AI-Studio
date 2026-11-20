@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, ExternalLink, LogOut, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, LogOut, Paintbrush, XCircle } from 'lucide-react';
 import {
   AdminUser,
   FaqItem,
@@ -11,6 +11,7 @@ import {
   Segment,
   SeoSettings,
 } from '../../types';
+import { adminFetch, clearAdminToken } from '../../utils/adminAuth';
 import { AdminLogin } from './AdminLogin';
 import { TabCategoriesTabs } from './TabCategoriesTabs';
 import { TabFaqs } from './TabFaqs';
@@ -44,6 +45,8 @@ interface AdminBootstrap {
 interface AdminPanelProps {
   onNavigate: (path: string) => void;
   onPublicDataChanged: () => Promise<void>;
+  onOpenVisualEditor: () => void;
+  onAuthChange?: (loggedIn: boolean) => void;
 }
 
 const TABS: Array<{ id: GestorTab; label: string }> = [
@@ -56,11 +59,17 @@ const TABS: Array<{ id: GestorTab; label: string }> = [
   { id: 'integracoes', label: 'Integrações & APIs' },
 ];
 
-export function AdminPanel({ onNavigate, onPublicDataChanged }: AdminPanelProps) {
+export function AdminPanel({
+  onNavigate,
+  onPublicDataChanged,
+  onOpenVisualEditor,
+  onAuthChange,
+}: AdminPanelProps) {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [activeTab, setActiveTab] = useState<GestorTab>('revisoes');
   const [adminData, setAdminData] = useState<AdminBootstrap | null>(null);
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   const showToast = useCallback((type: 'success' | 'error', msg: string) => {
@@ -71,40 +80,58 @@ export function AdminPanel({ onNavigate, onPublicDataChanged }: AdminPanelProps)
   }, []);
 
   const loadAdminBootstrap = useCallback(async () => {
-    const res = await fetch('/api/admin/bootstrap');
-    if (res.status === 401) {
-      setUser(null);
-      return;
-    }
-    if (res.ok) {
+    setBootstrapError(null);
+    try {
+      const res = await adminFetch('/api/admin/bootstrap');
+      if (res.status === 401) {
+        clearAdminToken();
+        setUser(null);
+        onAuthChange?.(false);
+        return;
+      }
+      if (!res.ok) {
+        setBootstrapError('Não foi possível carregar os dados do painel. Tente novamente.');
+        return;
+      }
       const json = (await res.json()) as AdminBootstrap;
       setAdminData(json);
+    } catch {
+      setBootstrapError('Falha de conexão ao carregar os dados do gestor.');
     }
-  }, []);
+  }, [onAuthChange]);
 
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch('/api/auth/me');
+        const res = await adminFetch('/api/auth/me');
         if (res.ok) {
           const json = await res.json();
           setUser(json.user);
+          onAuthChange?.(true);
           await loadAdminBootstrap();
+        } else {
+          onAuthChange?.(false);
         }
       } finally {
         setCheckingAuth(false);
       }
     })();
-  }, [loadAdminBootstrap]);
+  }, [loadAdminBootstrap, onAuthChange]);
 
   const handleSavedAndRefresh = useCallback(async () => {
     await Promise.all([loadAdminBootstrap(), onPublicDataChanged()]);
   }, [loadAdminBootstrap, onPublicDataChanged]);
 
   const handleLogout = async () => {
-    await fetch('/api/auth/logout', { method: 'POST' });
+    try {
+      await adminFetch('/api/auth/logout', { method: 'POST' });
+    } catch {
+      // Garantir limpeza local mesmo se a rede falhar
+    }
+    clearAdminToken();
     setUser(null);
     setAdminData(null);
+    onAuthChange?.(false);
   };
 
   if (checkingAuth) {
@@ -120,6 +147,7 @@ export function AdminPanel({ onNavigate, onPublicDataChanged }: AdminPanelProps)
       <AdminLogin
         onSuccess={async (loggedUser) => {
           setUser(loggedUser);
+          onAuthChange?.(true);
           await loadAdminBootstrap();
         }}
         onBackToSite={() => onNavigate('/')}
@@ -137,10 +165,19 @@ export function AdminPanel({ onNavigate, onPublicDataChanged }: AdminPanelProps)
             <span className="text-[#E4002B]">GESTOR</span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="hidden text-xs font-medium text-neutral-500 sm:inline">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-2.5">
+            <span className="hidden text-xs font-medium text-neutral-500 lg:inline">
               {user.email}
             </span>
+
+            <button
+              type="button"
+              onClick={onOpenVisualEditor}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-[#E4002B] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#C80024]"
+            >
+              <Paintbrush className="h-3.5 w-3.5" />
+              Editar Site Visualmente
+            </button>
 
             <a
               href="/"
@@ -190,9 +227,22 @@ export function AdminPanel({ onNavigate, onPublicDataChanged }: AdminPanelProps)
       {/* Conteúdo centralizado máx 1150px */}
       <main className="mx-auto max-w-[1150px] px-4 py-8 sm:px-6">
         {!adminData ? (
-          <div className="py-12 text-center text-sm text-neutral-500">
-            Carregando dados do gestor...
-          </div>
+          bootstrapError ? (
+            <div className="mx-auto max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center shadow-sm">
+              <p className="text-sm font-semibold text-[#E4002B]">{bootstrapError}</p>
+              <button
+                type="button"
+                onClick={loadAdminBootstrap}
+                className="mt-4 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024]"
+              >
+                Tentar novamente
+              </button>
+            </div>
+          ) : (
+            <div className="py-12 text-center text-sm text-neutral-500">
+              Carregando dados do gestor...
+            </div>
+          )
         ) : (
           <>
             {activeTab === 'revisoes' && (

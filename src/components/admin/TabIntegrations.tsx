@@ -10,6 +10,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { CustomIntegration, IntegrationsData } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 import { formatDateTimeBR } from '../../utils/pricing';
 
 interface TabIntegrationsProps {
@@ -64,7 +65,7 @@ export function TabIntegrations({
   const handleSave = async () => {
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/integrations', {
+      const res = await adminFetch('/api/admin/integrations', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -97,7 +98,7 @@ export function TabIntegrations({
     setTesting(true);
     setTestFeedback(null);
     try {
-      const res = await fetch('/api/admin/integrations/test', {
+      const res = await adminFetch('/api/admin/integrations/test', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -117,7 +118,7 @@ export function TabIntegrations({
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
-      const res = await fetch('/api/admin/prices/sync', { method: 'POST' });
+      const res = await adminFetch('/api/admin/prices/sync', { method: 'POST' });
       const data = await res.json();
       await onSaved();
       onToast(

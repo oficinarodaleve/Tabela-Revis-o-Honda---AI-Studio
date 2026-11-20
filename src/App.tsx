@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { PublicBootstrapData } from './types';
+import { adminFetch, getAdminToken } from './utils/adminAuth';
 import { PublicPage } from './components/PublicPage';
 import { AdminPanel } from './components/admin/AdminPanel';
 import { SeoHeadSync } from './components/SeoHeadSync';
@@ -16,6 +17,11 @@ export default function App() {
     return localStorage.getItem('rodaleve_theme') === 'dark';
   });
   const [gmpQuotaExceeded, setGmpQuotaExceeded] = useState(false);
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState<boolean>(() => Boolean(getAdminToken()));
+  const [isEditMode, setIsEditMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.search.includes('visual_editor=1');
+  });
 
   const loadPublicData = useCallback(async () => {
     try {
@@ -35,8 +41,36 @@ export default function App() {
     void loadPublicData();
   }, [loadPublicData]);
 
+  // Verifica silenciosamente se há sessão administrativa válida (cookie ou token em memória/storage)
   useEffect(() => {
-    const onPopState = () => setRoute(window.location.pathname);
+    let active = true;
+    (async () => {
+      try {
+        const res = await adminFetch('/api/auth/me');
+        if (!active) return;
+        if (res.ok) {
+          setIsAdminLoggedIn(true);
+        } else {
+          setIsAdminLoggedIn(false);
+          setIsEditMode(false);
+        }
+      } catch {
+        if (active) {
+          setIsAdminLoggedIn(false);
+          setIsEditMode(false);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [route]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      setRoute(window.location.pathname);
+      setIsEditMode(window.location.search.includes('visual_editor=1'));
+    };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
@@ -58,12 +92,27 @@ export default function App() {
   }, [darkMode, route]);
 
   const navigate = useCallback((path: string) => {
-    if (window.location.pathname !== path) {
+    const [pathname] = path.split('?');
+    const currentFull = `${window.location.pathname}${window.location.search}`;
+    if (currentFull !== path) {
       window.history.pushState({}, '', path);
-      setRoute(path);
+      setRoute(pathname || '/');
+      setIsEditMode(path.includes('visual_editor=1'));
       window.scrollTo({ top: 0 });
     }
   }, []);
+
+  const enterEditMode = useCallback(() => {
+    setIsEditMode(true);
+    window.history.pushState({}, '', '/?visual_editor=1');
+    setRoute('/');
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  const exitEditModeToGestor = useCallback(() => {
+    setIsEditMode(false);
+    navigate('/gestor');
+  }, [navigate]);
 
   const isGestor = route.startsWith('/gestor');
 
@@ -92,6 +141,8 @@ export default function App() {
         <AdminPanel
           onNavigate={navigate}
           onPublicDataChanged={loadPublicData}
+          onOpenVisualEditor={enterEditMode}
+          onAuthChange={setIsAdminLoggedIn}
         />
       ) : loading ? (
         <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-500">
@@ -117,6 +168,11 @@ export default function App() {
           darkMode={darkMode}
           onToggleDarkMode={() => setDarkMode((prev) => !prev)}
           onNavigate={navigate}
+          isAdminLoggedIn={isAdminLoggedIn}
+          isEditMode={isEditMode && isAdminLoggedIn}
+          onEnterEditMode={enterEditMode}
+          onExitEditModeToGestor={exitEditModeToGestor}
+          onPublicDataChanged={loadPublicData}
         />
       )}
     </>

@@ -1,4 +1,16 @@
-export type PartUnit = 'UN' | 'ML';
+export const STANDARD_PART_UNITS = [
+  'UN',
+  'ML',
+  'L',
+  'JG',
+  'PAR',
+  'KIT',
+  'G',
+  'SRV',
+] as const;
+
+export type StandardPartUnit = (typeof STANDARD_PART_UNITS)[number];
+export type PartUnit = string;
 export type PriceMode = 'auto' | 'manual';
 
 export interface Segment {
@@ -132,6 +144,56 @@ export interface IntegrationsData {
   custom_integrations: CustomIntegration[];
 }
 
+export type TextAlignOption = 'left' | 'center' | 'right';
+export type TextWeightOption = 'normal' | 'semibold' | 'bold';
+export type TextSizeOption = 'default' | 'xs' | 'sm' | 'base' | 'lg' | 'xl' | '2xl' | '3xl';
+
+export interface EditableTextEntry {
+  text: string;
+  color?: string;
+  size?: TextSizeOption;
+  weight?: TextWeightOption;
+  align?: TextAlignOption;
+}
+
+export type BuiltInSectionType =
+  | 'hero'
+  | 'revisions_selector'
+  | 'notice_box'
+  | 'filters_catalog'
+  | 'faq_section'
+  | 'units_map'
+  | 'footer';
+
+export type CustomBlockVariant = 'banner' | 'notice' | 'text';
+
+export interface CustomBlockContent {
+  variant: CustomBlockVariant;
+  badge?: string;
+  title: string;
+  body: string;
+  image_url?: string;
+  cta_label?: string;
+  cta_url?: string;
+  theme?: 'light' | 'gray' | 'red';
+}
+
+export interface PageSectionBlock {
+  id: string;
+  type: BuiltInSectionType | 'custom';
+  label: string;
+  visible: boolean;
+  customData?: CustomBlockContent;
+}
+
+export interface VisualBuilderConfig {
+  sections: PageSectionBlock[];
+  siteContent: Record<string, EditableTextEntry>;
+  modelOrder: number[];
+  hiddenModelIds: number[];
+  imageOverrides: Record<string, string>;
+}
+
 export interface PublicBootstrapData {
   models: MotoModel[];
   segments: Segment[];
@@ -146,6 +208,7 @@ export interface PublicBootstrapData {
     api_key: string;
   };
   public_integrations: CustomIntegration[];
+  visual_builder?: VisualBuilderConfig | null;
 }
 
 export interface AdminUser {

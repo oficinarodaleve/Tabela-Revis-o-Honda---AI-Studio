@@ -26,7 +26,7 @@ export function formatDateTimeBR(isoOrText: string): string {
  * Computes line item price.
  * For unit === 'ML' (e.g. 08233M99200 Óleo Motor), part.price is per 100 ml,
  * and quantity is stored in ml (e.g. 1000 ml -> (1000 / 100) * 7.00 = R$ 70,00).
- * For unit === 'UN', line total is quantity * part.price.
+ * For all other units (UN, L, JG, PAR, KIT, G, SRV, or custom), line total is quantity * part.price.
  */
 export function computeLineTotal(part: Part, quantity: number): number {
   if (!part || quantity <= 0) return 0;
@@ -44,7 +44,8 @@ export function formatPartQuantity(part: Part, quantity: number): string {
     }
     return `${quantity} ml`;
   }
-  return quantity === 1 ? '1 un' : `${quantity} un`;
+  const unitLabel = (part.unit || 'UN').toLowerCase();
+  return `${quantity} ${unitLabel}`;
 }
 
 export interface ComputedRevisionSummary {

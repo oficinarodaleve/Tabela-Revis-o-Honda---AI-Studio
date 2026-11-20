@@ -1,48 +1,88 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  ArrowLeft,
+  ArrowRight,
   Calendar,
   ChevronDown,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Image as ImageIcon,
   Instagram,
   LayoutGrid,
   List,
-  MessageCircle,
   Moon,
+  Paintbrush,
   Search,
   Sun,
   X,
   Youtube,
 } from 'lucide-react';
-import { PublicBootstrapData } from '../types';
 import {
-  computeModelRevision,
-  formatBRL,
-  formatDateTimeBR,
-  formatPartQuantity,
-} from '../utils/pricing';
+  CustomBlockVariant,
+  EditableTextEntry,
+  PageSectionBlock,
+  PublicBootstrapData,
+  VisualBuilderConfig,
+} from '../types';
+import { adminFetch } from '../utils/adminAuth';
+import { computeModelRevision, formatBRL, formatPartQuantity } from '../utils/pricing';
+import {
+  DEFAULT_SITE_CONTENT,
+  clearLocalVisualConfig,
+  createCustomBlock,
+  createDefaultVisualConfig,
+  loadLocalVisualConfig,
+  mergeWithDefaultVisualConfig,
+  saveLocalVisualConfig,
+} from '../utils/visualBuilder';
+import { FloatingWhatsApp } from './FloatingWhatsApp';
 import { UnitsMapSection } from './UnitsMapSection';
+import { AddBlockModal } from './editor/AddBlockModal';
+import { EditableText } from './editor/EditableText';
+import { ImageSwapModal } from './editor/ImageSwapModal';
+import { SectionEditorWrapper } from './editor/SectionEditorWrapper';
+import { VisualEditorToolbar } from './editor/VisualEditorToolbar';
 
 interface PublicPageProps {
   data: PublicBootstrapData;
   darkMode: boolean;
   onToggleDarkMode: () => void;
   onNavigate: (path: string) => void;
+  isAdminLoggedIn: boolean;
+  isEditMode: boolean;
+  onEnterEditMode: () => void;
+  onExitEditModeToGestor: () => void;
+  onPublicDataChanged: () => Promise<void>;
 }
 
 const WHATSAPP_NUMBER = '557728880003';
 
 function buildWhatsAppUrl(modelName?: string, revisionLabel?: string): string {
-  const text = modelName && revisionLabel
-    ? `Olá! Gostaria de agendar a ${revisionLabel} da minha Honda ${modelName} na Rodaleve.`
-    : `Olá! Gostaria de agendar uma revisão da minha moto Honda na Rodaleve.`;
+  const text =
+    modelName && revisionLabel
+      ? `Olá! Gostaria de agendar a ${revisionLabel} da minha Honda ${modelName} na Rodaleve.`
+      : `Olá! Gostaria de agendar uma revisão da minha moto Honda na Rodaleve.`;
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
 }
+
+type ActiveImageModalTarget =
+  | { kind: 'logo'; title: string; currentUrl: string }
+  | { kind: 'favicon'; title: string; currentUrl: string }
+  | { kind: 'model'; modelId: number; title: string; currentUrl: string }
+  | { kind: 'custom_block'; blockId: string; title: string; currentUrl: string };
 
 export function PublicPage({
   data,
   darkMode,
   onToggleDarkMode,
   onNavigate,
+  isAdminLoggedIn,
+  isEditMode,
+  onEnterEditMode,
+  onExitEditModeToGestor,
+  onPublicDataChanged,
 }: PublicPageProps) {
   const [activeNav, setActiveNav] = useState<'revisoes' | 'faq' | 'unidades'>('revisoes');
   const [heroTab, setHeroTab] = useState<'tabela' | 'faq'>('tabela');
@@ -54,6 +94,379 @@ export function PublicPage({
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [openFaqId, setOpenFaqId] = useState<number | null>(data.faqs[0]?.id ?? null);
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
+
+  // Visual Builder state + Undo/Redo stacks
+  const allModelIds = useMemo(() => data.models.map((m) => m.id), [data.models]);
+  const buildInitialConfig = useCallback(() => {
+    const localSaved = loadLocalVisualConfig();
+    const serverSaved = data.visual_builder;
+    return mergeWithDefaultVisualConfig(localSaved || serverSaved, allModelIds);
+  }, [data.visual_builder, allModelIds]);
+
+  const [vbConfig, setVbConfig] = useState<VisualBuilderConfig>(() => buildInitialConfig());
+  const [undoStack, setUndoStack] = useState<VisualBuilderConfig[]>([]);
+  const [redoStack, setRedoStack] = useState<VisualBuilderConfig[]>([]);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop');
+  const [savingVisual, setSavingVisual] = useState(false);
+  const [visualToast, setVisualToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(
+    null
+  );
+
+  // Drag & Drop state for sections and model cards
+  const [dragSectionIdx, setDragSectionIdx] = useState<number | null>(null);
+  const [dragOverSectionIdx, setDragOverSectionIdx] = useState<number | null>(null);
+  const [dragModelId, setDragModelId] = useState<number | null>(null);
+  const [dragOverModelId, setDragOverModelId] = useState<number | null>(null);
+
+  // Modals for visual editor
+  const [addBlockAfterIndex, setAddBlockAfterIndex] = useState<number | null>(null);
+  const [isAddBlockOpen, setIsAddBlockOpen] = useState(false);
+  const [imageModal, setImageModal] = useState<ActiveImageModalTarget | null>(null);
+
+  // Pending image syncs (applied cleanly on Save & Publish to SEO & Model tables)
+  const [pendingLogoUrl, setPendingLogoUrl] = useState<string | undefined>(undefined);
+  const [pendingFaviconUrl, setPendingFaviconUrl] = useState<string | undefined>(undefined);
+  const [pendingModelImageById, setPendingModelImageById] = useState<Record<number, string>>({});
+
+  // Re-sync default config when underlying data changes and there are no unsaved edits
+  useEffect(() => {
+    if (!hasUnsavedChanges) {
+      setVbConfig(buildInitialConfig());
+    }
+  }, [buildInitialConfig, hasUnsavedChanges]);
+
+  const showVisualToast = useCallback((type: 'success' | 'error', msg: string) => {
+    setVisualToast({ type, msg });
+    setTimeout(() => {
+      setVisualToast((curr) => (curr?.msg === msg ? null : curr));
+    }, 4000);
+  }, []);
+
+  const commitVisualChange = useCallback(
+    (updater: (prev: VisualBuilderConfig) => VisualBuilderConfig) => {
+      setVbConfig((curr) => {
+        const next = updater(curr);
+        setUndoStack((u) => [...u.slice(-39), curr]);
+        setRedoStack([]);
+        setHasUnsavedChanges(true);
+        return next;
+      });
+    },
+    []
+  );
+
+  const handleUndo = useCallback(() => {
+    setUndoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const previous = prev[prev.length - 1];
+      setVbConfig((curr) => {
+        setRedoStack((r) => [...r, curr]);
+        return previous;
+      });
+      setHasUnsavedChanges(true);
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const handleRedo = useCallback(() => {
+    setRedoStack((prev) => {
+      if (prev.length === 0) return prev;
+      const next = prev[prev.length - 1];
+      setVbConfig((curr) => {
+        setUndoStack((u) => [...u, curr]);
+        return next;
+      });
+      setHasUnsavedChanges(true);
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  // Keyboard shortcuts Ctrl+Z / Ctrl+Y in Visual Edit Mode
+  useEffect(() => {
+    if (!isEditMode) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      const isCtrl = e.ctrlKey || e.metaKey;
+      if (!isCtrl) return;
+      if (e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        handleUndo();
+      } else if (
+        e.key.toLowerCase() === 'y' ||
+        (e.key.toLowerCase() === 'z' && e.shiftKey)
+      ) {
+        e.preventDefault();
+        handleRedo();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isEditMode, handleUndo, handleRedo]);
+
+  const handleCommitText = useCallback(
+    (key: string, entry: EditableTextEntry) => {
+      commitVisualChange((prev) => ({
+        ...prev,
+        siteContent: {
+          ...prev.siteContent,
+          [key]: entry,
+        },
+      }));
+    },
+    [commitVisualChange]
+  );
+
+  const handleRestoreDefault = async () => {
+    const resetCfg = createDefaultVisualConfig(allModelIds);
+    setUndoStack((u) => [...u.slice(-39), vbConfig]);
+    setRedoStack([]);
+    setVbConfig(resetCfg);
+    setPendingLogoUrl(undefined);
+    setPendingFaviconUrl(undefined);
+    setPendingModelImageById({});
+    clearLocalVisualConfig();
+    if (isAdminLoggedIn) {
+      try {
+        await adminFetch('/api/admin/visual-builder', { method: 'DELETE' });
+      } catch {
+        // Ignore network error during reset
+      }
+    }
+    setHasUnsavedChanges(false);
+    showVisualToast('success', 'Layout e textos restaurados para o padrão original.');
+  };
+
+  const handleSaveAndPublish = async () => {
+    setSavingVisual(true);
+    try {
+      // 1. Always save locally in localStorage (+ memory fallback)
+      saveLocalVisualConfig(vbConfig);
+
+      // 2. Persist Visual Builder config on server if authenticated
+      if (isAdminLoggedIn) {
+        const vbRes = await adminFetch('/api/admin/visual-builder', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(vbConfig),
+        });
+        if (!vbRes.ok) throw new Error('Erro ao salvar layout visual.');
+
+        // 3. Sync Logo & Favicon with SEO & Identidade tab
+        if (pendingLogoUrl !== undefined || pendingFaviconUrl !== undefined) {
+          const nextSeo = {
+            ...data.seo,
+            logo_url: pendingLogoUrl !== undefined ? pendingLogoUrl : data.seo.logo_url,
+            favicon_url:
+              pendingFaviconUrl !== undefined ? pendingFaviconUrl : data.seo.favicon_url,
+          };
+          const seoRes = await adminFetch('/api/admin/seo', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(nextSeo),
+          });
+          if (!seoRes.ok) throw new Error('Erro ao sincronizar logo/favicon com SEO.');
+        }
+
+        // 4. Sync Model photos with Modelos e fotos tab
+        const modelIdsToSync = Object.keys(pendingModelImageById).map(Number);
+        for (const modelId of modelIdsToSync) {
+          const modelObj = data.models.find((m) => m.id === modelId);
+          if (!modelObj) continue;
+          await adminFetch(`/api/admin/models/${modelId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              ...modelObj,
+              image_url: pendingModelImageById[modelId],
+            }),
+          });
+        }
+      }
+
+      setPendingLogoUrl(undefined);
+      setPendingFaviconUrl(undefined);
+      setPendingModelImageById({});
+      setHasUnsavedChanges(false);
+      await onPublicDataChanged();
+      showVisualToast('success', 'Alterações salvas e publicadas no site com sucesso!');
+    } catch (e) {
+      showVisualToast(
+        'error',
+        e instanceof Error ? e.message : 'Erro ao salvar e publicar.'
+      );
+    } finally {
+      setSavingVisual(false);
+    }
+  };
+
+  // Section manipulation handlers
+  const moveSection = (fromIndex: number, toIndex: number) => {
+    if (toIndex < 0 || toIndex >= vbConfig.sections.length || fromIndex === toIndex) return;
+    commitVisualChange((prev) => {
+      const copy = [...prev.sections];
+      const [moved] = copy.splice(fromIndex, 1);
+      copy.splice(toIndex, 0, moved);
+      return { ...prev, sections: copy };
+    });
+  };
+
+  const toggleSectionVisibility = (blockId: string) => {
+    commitVisualChange((prev) => ({
+      ...prev,
+      sections: prev.sections.map((s) =>
+        s.id === blockId ? { ...s, visible: !s.visible } : s
+      ),
+    }));
+  };
+
+  const duplicateSection = (index: number) => {
+    const source = vbConfig.sections[index];
+    if (!source) return;
+    const newId = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    let duplicated: PageSectionBlock;
+    if (source.type === 'custom' && source.customData) {
+      duplicated = {
+        ...source,
+        id: newId,
+        label: `${source.label} (cópia)`,
+        customData: { ...source.customData },
+      };
+    } else {
+      // Create an independently editable custom copy representing the duplicated section
+      const titleFallback =
+        source.type === 'hero'
+          ? vbConfig.siteContent.hero_title?.text || DEFAULT_SITE_CONTENT.hero_title
+          : source.type === 'notice_box'
+            ? 'Aviso Informativo (Cópia)'
+            : source.type === 'faq_section'
+              ? vbConfig.siteContent.faq_title?.text || DEFAULT_SITE_CONTENT.faq_title
+              : source.label;
+      const bodyFallback =
+        source.type === 'hero'
+          ? vbConfig.siteContent.hero_subtitle?.text || DEFAULT_SITE_CONTENT.hero_subtitle
+          : source.type === 'notice_box'
+            ? vbConfig.siteContent.notice_line_1?.text || DEFAULT_SITE_CONTENT.notice_line_1
+            : 'Bloco duplicado. Clique em qualquer texto para personalizar livremente.';
+
+      duplicated = {
+        id: newId,
+        type: 'custom',
+        label: `${source.label} (cópia)`,
+        visible: true,
+        customData: {
+          variant: source.type === 'notice_box' ? 'notice' : 'banner',
+          badge: 'DESTAQUE RODALEVE',
+          title: titleFallback,
+          body: bodyFallback,
+          theme: source.type === 'notice_box' ? 'gray' : 'light',
+        },
+      };
+    }
+
+    commitVisualChange((prev) => {
+      const next = [...prev.sections];
+      next.splice(index + 1, 0, duplicated);
+      return { ...prev, sections: next };
+    });
+  };
+
+  const deleteSection = (blockId: string) => {
+    commitVisualChange((prev) => ({
+      ...prev,
+      sections: prev.sections.filter((s) => s.id !== blockId),
+    }));
+  };
+
+  const handleInsertCustomBlock = (variant: CustomBlockVariant) => {
+    const block = createCustomBlock(variant);
+    commitVisualChange((prev) => {
+      const next = [...prev.sections];
+      if (addBlockAfterIndex !== null && addBlockAfterIndex >= 0) {
+        next.splice(addBlockAfterIndex + 1, 0, block);
+      } else {
+        // Insert before footer by default
+        const footerIdx = next.findIndex((s) => s.type === 'footer');
+        if (footerIdx >= 0) next.splice(footerIdx, 0, block);
+        else next.push(block);
+      }
+      return { ...prev, sections: next };
+    });
+    setAddBlockAfterIndex(null);
+  };
+
+  const updateCustomBlockData = (
+    blockId: string,
+    patch: Partial<NonNullable<PageSectionBlock['customData']>>
+  ) => {
+    commitVisualChange((prev) => ({
+      ...prev,
+      sections: prev.sections.map((s) =>
+        s.id === blockId && s.customData
+          ? { ...s, customData: { ...s.customData, ...patch } }
+          : s
+      ),
+    }));
+  };
+
+  // Model card reordering & visibility in visual mode
+  const moveModelCard = (modelId: number, delta: number) => {
+    commitVisualChange((prev) => {
+      const order = [...prev.modelOrder];
+      const idx = order.indexOf(modelId);
+      if (idx === -1) return prev;
+      const target = idx + delta;
+      if (target < 0 || target >= order.length) return prev;
+      const [moved] = order.splice(idx, 1);
+      order.splice(target, 0, moved);
+      return { ...prev, modelOrder: order };
+    });
+  };
+
+  const reorderModelCards = (sourceId: number, targetId: number) => {
+    if (sourceId === targetId) return;
+    commitVisualChange((prev) => {
+      const order = [...prev.modelOrder];
+      const from = order.indexOf(sourceId);
+      const to = order.indexOf(targetId);
+      if (from === -1 || to === -1) return prev;
+      const [moved] = order.splice(from, 1);
+      order.splice(to, 0, moved);
+      return { ...prev, modelOrder: order };
+    });
+  };
+
+  const toggleModelCardHidden = (modelId: number) => {
+    commitVisualChange((prev) => {
+      const hiddenSet = new Set(prev.hiddenModelIds);
+      if (hiddenSet.has(modelId)) hiddenSet.delete(modelId);
+      else hiddenSet.add(modelId);
+      return { ...prev, hiddenModelIds: Array.from(hiddenSet) };
+    });
+  };
+
+  const effectiveLogoUrl =
+    pendingLogoUrl !== undefined
+      ? pendingLogoUrl
+      : vbConfig.imageOverrides['site_logo'] !== undefined
+        ? vbConfig.imageOverrides['site_logo']
+        : data.seo.logo_url;
+
+  const effectiveFaviconUrl =
+    pendingFaviconUrl !== undefined
+      ? pendingFaviconUrl
+      : vbConfig.imageOverrides['site_favicon'] !== undefined
+        ? vbConfig.imageOverrides['site_favicon']
+        : data.seo.favicon_url;
 
   const segmentNameMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -80,34 +493,63 @@ export function PublicPage({
 
   const revisionLabel = activeRevisionObj?.label || `${selectedRevision}ª Revisão`;
 
+  const orderedModels = useMemo(() => {
+    const posMap = new Map<number, number>();
+    vbConfig.modelOrder.forEach((id, idx) => posMap.set(id, idx));
+    return [...data.models].sort((a, b) => {
+      const pa = posMap.has(a.id) ? (posMap.get(a.id) as number) : 9999;
+      const pb = posMap.has(b.id) ? (posMap.get(b.id) as number) : 9999;
+      return pa - pb;
+    });
+  }, [data.models, vbConfig.modelOrder]);
+
   const computedModels = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
+    const hiddenSet = new Set(vbConfig.hiddenModelIds);
 
-    return data.models
+    return orderedModels
       .map((model) => {
+        const effectiveImage =
+          pendingModelImageById[model.id] ??
+          vbConfig.imageOverrides[`model_${model.id}`] ??
+          model.image_url;
         const summary = computeModelRevision(
           model.id,
           selectedRevision,
           data.revision_parts,
           partsMap
         );
-        return { model, summary };
+        return {
+          model: { ...model, image_url: effectiveImage },
+          summary,
+          isVisuallyHidden: hiddenSet.has(model.id),
+        };
       })
-      .filter(({ model, summary }) => {
+      .filter(({ model, summary, isVisuallyHidden }) => {
+        if (!isEditMode && isVisuallyHidden) return false;
         if (selectedSegment !== 'all' && model.segment_slug !== selectedSegment) {
           return false;
         }
         if (!q) return true;
         if (model.name.toLowerCase().includes(q)) return true;
-        const segName = (segmentNameMap[model.segment_slug] || '').toLowerCase();
-        if (segName.includes(q)) return true;
         return summary.items.some(
           ({ part }) =>
             part.description.toLowerCase().includes(q) ||
             part.code.toLowerCase().includes(q)
         );
       });
-  }, [data.models, data.revision_parts, partsMap, selectedRevision, selectedSegment, searchQuery, segmentNameMap]);
+  }, [
+    orderedModels,
+    vbConfig.hiddenModelIds,
+    vbConfig.imageOverrides,
+    pendingModelImageById,
+    selectedRevision,
+    data.revision_parts,
+    partsMap,
+    selectedSegment,
+    searchQuery,
+    isEditMode,
+  ]);
 
   const handleNavClick = (target: 'revisoes' | 'faq' | 'unidades') => {
     setActiveNav(target);
@@ -124,650 +566,1335 @@ export function PublicPage({
     }
   };
 
-  return (
-    <div className="min-h-screen bg-[#FAFAFA] text-neutral-900 transition-colors dark:bg-neutral-950 dark:text-neutral-100">
-      {/* 1. Cabeçalho fixo no topo */}
-      <header className="sticky top-0 z-40 border-b border-neutral-200/80 bg-white/95 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95">
-        <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-6">
-          <a
-            href="/"
-            onClick={(e) => {
-              e.preventDefault();
-              handleNavClick('revisoes');
-            }}
-            className="flex shrink-0 items-center gap-2 whitespace-nowrap"
+  const renderSectionContent = (block: PageSectionBlock) => {
+    switch (block.type) {
+      case 'hero':
+        return (
+          <section
+            id="hero-tabs"
+            className="border-b border-neutral-200/70 bg-white py-10 dark:border-neutral-800 dark:bg-neutral-950 sm:py-12"
           >
-            {data.seo.logo_url ? (
-              <img
-                src={data.seo.logo_url}
-                alt={data.seo.logo_alt || 'RODALEVE'}
-                className="h-8 w-auto object-contain"
-                referrerPolicy="no-referrer"
-              />
-            ) : (
-              <span className="font-display text-xl font-extrabold tracking-tight text-[#E4002B]">
-                RODALEVE
-              </span>
-            )}
-          </a>
+            <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+              <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
+                <div className="max-w-2xl">
+                  <EditableText
+                    as="p"
+                    textKey="hero_eyebrow"
+                    defaultText={DEFAULT_SITE_CONTENT.hero_eyebrow}
+                    entry={vbConfig.siteContent.hero_eyebrow}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="text-xs font-bold uppercase tracking-widest text-[#E4002B]"
+                  />
+                  <EditableText
+                    as="h1"
+                    textKey="hero_title"
+                    defaultText={DEFAULT_SITE_CONTENT.hero_title}
+                    entry={vbConfig.siteContent.hero_title}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="mt-2 block text-balance font-display text-3xl font-extrabold tracking-tight text-neutral-900 dark:text-white sm:text-4xl lg:text-[42px] lg:leading-[1.12]"
+                  />
+                  <EditableText
+                    as="p"
+                    textKey="hero_subtitle"
+                    defaultText={DEFAULT_SITE_CONTENT.hero_subtitle}
+                    entry={vbConfig.siteContent.hero_subtitle}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="mt-3 block text-base text-neutral-600 dark:text-neutral-400"
+                  />
+                </div>
 
-          <nav className="hidden items-center gap-7 md:flex">
-            <button
-              type="button"
-              onClick={() => handleNavClick('revisoes')}
-              className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
-                activeNav === 'revisoes' && heroTab === 'tabela'
-                  ? 'border-[#E4002B] text-neutral-900 dark:text-white'
-                  : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-              }`}
-            >
-              Revisões
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick('faq')}
-              className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
-                heroTab === 'faq'
-                  ? 'border-[#E4002B] text-neutral-900 dark:text-white'
-                  : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-              }`}
-            >
-              Dúvidas Frequentes
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavClick('unidades')}
-              className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
-                activeNav === 'unidades'
-                  ? 'border-[#E4002B] text-neutral-900 dark:text-white'
-                  : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-              }`}
-            >
-              Unidades
-            </button>
-          </nav>
-
-          <a
-            href={buildWhatsAppUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#C80024] sm:text-sm"
-          >
-            Agendar revisão
-          </a>
-        </div>
-      </header>
-
-      {/* 2. Hero */}
-      <section
-        id="hero-tabs"
-        className="border-b border-neutral-200/70 bg-white py-10 dark:border-neutral-800 dark:bg-neutral-950 sm:py-12"
-      >
-        <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
-          <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
-            <div className="max-w-2xl">
-              <p className="text-xs font-bold uppercase tracking-widest text-[#E4002B]">
-                CONCESSIONÁRIA AUTORIZADA HONDA
-              </p>
-              <h1 className="mt-2 text-balance font-display text-3xl font-extrabold tracking-tight text-neutral-900 dark:text-white sm:text-4xl lg:text-[42px] lg:leading-[1.12]">
-                Tabela de Manutenção e Revisões
-              </h1>
-              <p className="mt-3 text-base text-neutral-600 dark:text-neutral-400">
-                Consulte peças genuínas e valores estimados por modelo de cada revisão programada.
-              </p>
-              <p className="mt-2 text-xs font-medium text-neutral-500 tabular-nums dark:text-neutral-500">
-                Preços atualizados em: {formatDateTimeBR(data.last_price_sync)}
-              </p>
-            </div>
-
-            {/* Seletor em pílula com duas abas */}
-            <div className="inline-flex self-start rounded-full border border-neutral-200 bg-neutral-100 p-1 dark:border-neutral-800 dark:bg-neutral-900 lg:self-end">
-              <button
-                type="button"
-                onClick={() => {
-                  setHeroTab('tabela');
-                  setActiveNav('revisoes');
-                }}
-                className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
-                  heroTab === 'tabela'
-                    ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-white'
-                    : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-                }`}
-              >
-                Tabela por Modelo
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setHeroTab('faq');
-                  setActiveNav('faq');
-                }}
-                className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
-                  heroTab === 'faq'
-                    ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-white'
-                    : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
-                }`}
-              >
-                Perguntas Frequentes
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Main Content: Either Revision Table or FAQ */}
-      {heroTab === 'tabela' ? (
-        <main className="mx-auto max-w-[1180px] px-4 py-8 sm:px-6 sm:py-10">
-          {/* 3. Seletor de revisão */}
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:flex lg:flex-wrap">
-            {data.revision_tabs.map((tab) => {
-              const isSelected = selectedRevision === tab.revision_number;
-              return (
-                <button
-                  key={tab.revision_number}
-                  type="button"
-                  onClick={() => setSelectedRevision(tab.revision_number)}
-                  className={`flex min-w-[210px] flex-col items-start rounded-2xl border px-5 py-4 text-left transition-all ${
-                    isSelected
-                      ? 'border-[#E4002B] bg-[#E4002B] text-white shadow-sm'
-                      : 'border-neutral-200 bg-white text-neutral-900 hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white dark:hover:border-neutral-700'
-                  }`}
-                >
-                  <span className="font-display text-base font-bold">{tab.label}</span>
-                  <span
-                    className={`mt-0.5 text-xs ${
-                      isSelected ? 'text-white/90' : 'text-neutral-500 dark:text-neutral-400'
+                {/* Seletor em pílula com duas abas */}
+                <div className="inline-flex self-start rounded-full border border-neutral-200 bg-neutral-100 p-1 dark:border-neutral-800 dark:bg-neutral-900 lg:self-end">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setHeroTab('tabela');
+                      setActiveNav('revisoes');
+                    }}
+                    className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
+                      heroTab === 'tabela'
+                        ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-white'
+                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
                     }`}
                   >
-                    {tab.subtitle}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* 4. Aviso informativo */}
-          <div className="mt-6 flex items-start gap-3.5 rounded-2xl border border-neutral-200 bg-neutral-100/80 p-4 sm:p-5 dark:border-neutral-800 dark:bg-neutral-900">
-            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#E4002B]" />
-            <div className="space-y-1.5 text-xs leading-relaxed text-neutral-700 sm:text-sm dark:text-neutral-300">
-              <p>
-                <strong>1ª e 2ª revisão:</strong> a mão de obra é gratuita. É cobrado somente o valor das peças utilizadas.
-              </p>
-              <p>
-                <strong>3ª a 6ª revisão:</strong> a mão de obra e o valor das peças utilizadas são cobrados conforme tabela vigente. A troca de óleo da revisão é gratuita, desde que a revisão seja realizada na nossa concessionária e que a moto tenha sido comprada conosco e esteja dentro do prazo estipulado pela montadora, conforme o manual do proprietário.
-              </p>
-            </div>
-          </div>
-
-          {/* 5. Barra de busca e filtros */}
-          <div className="mt-7 flex flex-col gap-3.5 lg:flex-row lg:items-center lg:justify-between">
-            <div className="relative flex-1 lg:max-w-md">
-              <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Buscar modelo, peça ou código..."
-                className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-4 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-800 dark:bg-neutral-900 dark:text-white"
-              />
-            </div>
-
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => setSelectedSegment('all')}
-                  className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
-                    selectedSegment === 'all'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800'
-                  }`}
-                >
-                  Todos os modelos
-                </button>
-                {data.segments.map((seg) => (
+                    <EditableText
+                      textKey="hero_tab_table"
+                      defaultText={DEFAULT_SITE_CONTENT.hero_tab_table}
+                      entry={vbConfig.siteContent.hero_tab_table}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                    />
+                  </button>
                   <button
-                    key={seg.slug}
                     type="button"
-                    onClick={() => setSelectedSegment(seg.slug)}
+                    onClick={() => {
+                      setHeroTab('faq');
+                      setActiveNav('faq');
+                    }}
+                    className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
+                      heroTab === 'faq'
+                        ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-white'
+                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                    }`}
+                  >
+                    <EditableText
+                      textKey="hero_tab_faq"
+                      defaultText={DEFAULT_SITE_CONTENT.hero_tab_faq}
+                      entry={vbConfig.siteContent.hero_tab_faq}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+
+      case 'revisions_selector':
+        if (heroTab !== 'tabela' && !isEditMode) return null;
+        return (
+          <div className="mx-auto max-w-[1180px] px-4 pt-8 sm:px-6 sm:pt-10">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:flex lg:flex-wrap">
+              {data.revision_tabs.map((tab) => {
+                const isSelected = selectedRevision === tab.revision_number;
+                return (
+                  <button
+                    key={tab.revision_number}
+                    type="button"
+                    onClick={() => setSelectedRevision(tab.revision_number)}
+                    className={`flex min-w-[210px] flex-col items-start rounded-2xl border px-5 py-4 text-left transition-all ${
+                      isSelected
+                        ? 'border-[#E4002B] bg-[#E4002B] text-white shadow-sm'
+                        : 'border-neutral-200 bg-white text-neutral-900 hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white dark:hover:border-neutral-700'
+                    }`}
+                  >
+                    <EditableText
+                      textKey={`rev_tab_label_${tab.revision_number}`}
+                      defaultText={tab.label}
+                      entry={vbConfig.siteContent[`rev_tab_label_${tab.revision_number}`]}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                      className="font-display text-base font-bold"
+                    />
+                    <EditableText
+                      textKey={`rev_tab_sub_${tab.revision_number}`}
+                      defaultText={tab.subtitle}
+                      entry={vbConfig.siteContent[`rev_tab_sub_${tab.revision_number}`]}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                      className={`mt-0.5 text-xs ${
+                        isSelected ? 'text-white/90' : 'text-neutral-500 dark:text-neutral-400'
+                      }`}
+                    />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+
+      case 'notice_box':
+        if (heroTab !== 'tabela' && !isEditMode) return null;
+        return (
+          <div className="mx-auto max-w-[1180px] px-4 pt-6 sm:px-6">
+            <div className="flex items-start gap-3.5 rounded-2xl border border-neutral-200 bg-neutral-100/80 p-4 sm:p-5 dark:border-neutral-800 dark:bg-neutral-900">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#E4002B]" />
+              <div className="space-y-1.5 text-xs leading-relaxed text-neutral-700 sm:text-sm dark:text-neutral-300">
+                <EditableText
+                  as="p"
+                  textKey="notice_line_1"
+                  defaultText={DEFAULT_SITE_CONTENT.notice_line_1}
+                  entry={vbConfig.siteContent.notice_line_1}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                  className="block"
+                />
+                <EditableText
+                  as="p"
+                  textKey="notice_line_2"
+                  defaultText={DEFAULT_SITE_CONTENT.notice_line_2}
+                  entry={vbConfig.siteContent.notice_line_2}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                  className="block"
+                />
+              </div>
+            </div>
+          </div>
+        );
+
+      case 'filters_catalog':
+        if (heroTab !== 'tabela' && !isEditMode) return null;
+        return (
+          <main className="mx-auto max-w-[1180px] px-4 py-7 sm:px-6 sm:pb-12">
+            {/* Barra de busca e filtros */}
+            <div className="flex flex-col gap-3.5 lg:flex-row lg:items-center lg:justify-between">
+              <div className="relative flex-1 lg:max-w-md">
+                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar modelo, peça ou código..."
+                  className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-4 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-800 dark:bg-neutral-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedSegment('all')}
                     className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
-                      selectedSegment === seg.slug
+                      selectedSegment === 'all'
                         ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
                         : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800'
                     }`}
                   >
-                    {seg.name}
+                    <EditableText
+                      textKey="filter_all_label"
+                      defaultText={DEFAULT_SITE_CONTENT.filter_all_label}
+                      entry={vbConfig.siteContent.filter_all_label}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                    />
                   </button>
-                ))}
-              </div>
+                  {data.segments.map((seg) => (
+                    <button
+                      key={seg.slug}
+                      type="button"
+                      onClick={() => setSelectedSegment(seg.slug)}
+                      className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
+                        selectedSegment === seg.slug
+                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                          : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800'
+                      }`}
+                    >
+                      <EditableText
+                        textKey={`segment_${seg.slug}`}
+                        defaultText={seg.name}
+                        entry={vbConfig.siteContent[`segment_${seg.slug}`]}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                      />
+                    </button>
+                  ))}
+                </div>
 
-              {/* Grid/List switcher */}
-              <div className="inline-flex rounded-xl border border-neutral-200 bg-white p-1 dark:border-neutral-800 dark:bg-neutral-900">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('grid')}
-                  aria-label="Visualização em grade"
-                  className={`rounded-lg p-1.5 transition-colors ${
-                    viewMode === 'grid'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
-                  }`}
-                >
-                  <LayoutGrid className="h-4 w-4" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('list')}
-                  aria-label="Visualização em lista"
-                  className={`rounded-lg p-1.5 transition-colors ${
-                    viewMode === 'list'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
-                  }`}
-                >
-                  <List className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* 6. Grade de cards de motos */}
-          {computedModels.length === 0 ? (
-            <div className="mt-10 rounded-2xl border border-neutral-200 bg-white p-12 text-center dark:border-neutral-800 dark:bg-neutral-900">
-              <p className="text-base font-semibold text-neutral-900 dark:text-white">
-                Nenhum modelo encontrado
-              </p>
-              <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
-                Tente buscar por outro nome de motocicleta, peça ou código Honda.
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchQuery('');
-                  setSelectedSegment('all');
-                }}
-                className="mt-4 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-semibold text-white dark:bg-white dark:text-neutral-900"
-              >
-                Limpar filtros
-              </button>
-            </div>
-          ) : viewMode === 'grid' ? (
-            <div className="mt-7 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-              {computedModels.map(({ model, summary }) => {
-                const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
-                const revTitleUpper = `TOTAL DA ${revisionLabel.toUpperCase()}`;
-                const scheduleText = `Agendar ${revisionLabel.toLowerCase()} desta moto`;
-
-                return (
-                  <article
-                    key={model.id}
-                    className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-md dark:border-neutral-800 dark:bg-neutral-900"
+                {/* Grid/List switcher */}
+                <div className="inline-flex rounded-xl border border-neutral-200 bg-white p-1 dark:border-neutral-800 dark:bg-neutral-900">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('grid')}
+                    aria-label="Visualização em grade"
+                    className={`rounded-lg p-1.5 transition-colors ${
+                      viewMode === 'grid'
+                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                        : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
+                    }`}
                   >
-                    {/* Foto grande da moto (fundo branco, centralizada) */}
-                    <div className="flex aspect-[4/3] w-full items-center justify-center overflow-hidden bg-white p-5 border-b border-neutral-100 dark:border-neutral-800">
-                      {model.image_url ? (
+                    <LayoutGrid className="h-4 w-4" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    aria-label="Visualização em lista"
+                    className={`rounded-lg p-1.5 transition-colors ${
+                      viewMode === 'list'
+                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                        : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
+                    }`}
+                  >
+                    <List className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Grade / Lista de cards de motos */}
+            {computedModels.length === 0 ? (
+              <div className="mt-10 rounded-2xl border border-neutral-200 bg-white p-12 text-center dark:border-neutral-800 dark:bg-neutral-900">
+                <p className="text-base font-semibold text-neutral-900 dark:text-white">
+                  Nenhum modelo encontrado
+                </p>
+                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                  Tente buscar por outro nome de motocicleta, peça ou código Honda.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedSegment('all');
+                  }}
+                  className="mt-4 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-semibold text-white dark:bg-white dark:text-neutral-900"
+                >
+                  Limpar filtros
+                </button>
+              </div>
+            ) : viewMode === 'grid' ? (
+              <div className="mt-7 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+                {computedModels.map(({ model, summary, isVisuallyHidden }) => {
+                  const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
+                  const revTitleUpper = `TOTAL DA ${revisionLabel.toUpperCase()}`;
+                  const scheduleText = `Agendar ${revisionLabel.toLowerCase()} desta moto`;
+
+                  return (
+                    <article
+                      key={model.id}
+                      draggable={isEditMode}
+                      onDragStart={(e) => {
+                        if (!isEditMode) return;
+                        e.stopPropagation();
+                        setDragModelId(model.id);
+                      }}
+                      onDragOver={(e) => {
+                        if (!isEditMode || dragModelId === null) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setDragOverModelId(model.id);
+                      }}
+                      onDrop={(e) => {
+                        if (!isEditMode || dragModelId === null) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        reorderModelCards(dragModelId, model.id);
+                        setDragModelId(null);
+                        setDragOverModelId(null);
+                      }}
+                      className={`relative flex flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all duration-200 dark:bg-neutral-900 ${
+                        isEditMode && dragOverModelId === model.id
+                          ? 'border-[#E4002B] ring-2 ring-[#E4002B]'
+                          : 'border-neutral-200 hover:-translate-y-0.5 hover:shadow-md dark:border-neutral-800'
+                      } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
+                    >
+                      {isEditMode && (
+                        <div className="flex items-center justify-between gap-1 border-b border-indigo-100 bg-indigo-50/90 px-3 py-1.5 text-[11px] text-indigo-950">
+                          <span className="inline-flex cursor-grab items-center gap-1 font-bold active:cursor-grabbing">
+                            <GripVertical className="h-3.5 w-3.5 text-indigo-500" />
+                            Arrastar card
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => moveModelCard(model.id, -1)}
+                              title="Mover para esquerda/acima"
+                              className="rounded bg-white p-1 hover:bg-indigo-100"
+                            >
+                              <ArrowLeft className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => moveModelCard(model.id, 1)}
+                              title="Mover para direita/abaixo"
+                              className="rounded bg-white p-1 hover:bg-indigo-100"
+                            >
+                              <ArrowRight className="h-3 w-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => toggleModelCardHidden(model.id)}
+                              title={isVisuallyHidden ? 'Exibir card' : 'Ocultar card'}
+                              className="rounded bg-white p-1 hover:bg-indigo-100"
+                            >
+                              {isVisuallyHidden ? (
+                                <EyeOff className="h-3 w-3 text-[#E4002B]" />
+                              ) : (
+                                <Eye className="h-3 w-3" />
+                              )}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Foto grande da moto (fundo branco, centralizada) */}
+                      <div className="group/img relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden border-b border-neutral-100 bg-white p-5 dark:border-neutral-800">
+                        {model.image_url ? (
+                          <img
+                            src={model.image_url}
+                            alt={`Honda ${model.name}`}
+                            referrerPolicy="no-referrer"
+                            className="h-full w-full object-contain"
+                          />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-400">
+                            Honda {model.name}
+                          </div>
+                        )}
+                        {isEditMode && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setImageModal({
+                                kind: 'model',
+                                modelId: model.id,
+                                title: `Foto de ${model.name}`,
+                                currentUrl: model.image_url,
+                              })
+                            }
+                            className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-neutral-950/85 px-3.5 py-1.5 text-xs font-bold text-white opacity-95 shadow-lg backdrop-blur transition-all hover:bg-[#E4002B] group-hover/img:opacity-100"
+                          >
+                            <ImageIcon className="h-3.5 w-3.5" />
+                            Trocar Imagem
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Cabeçalho do card */}
+                      <div className="flex items-start justify-between gap-3 px-5 pt-4">
+                        <div>
+                          <EditableText
+                            as="h2"
+                            textKey={`model_name_${model.id}`}
+                            defaultText={model.name}
+                            entry={vbConfig.siteContent[`model_name_${model.id}`]}
+                            isEditMode={isEditMode}
+                            onCommit={handleCommitText}
+                            className="font-display text-lg font-bold tracking-tight text-neutral-900 dark:text-white"
+                          />
+                          <EditableText
+                            as="p"
+                            textKey={`model_cat_${model.id}`}
+                            defaultText={categoryLabel}
+                            entry={vbConfig.siteContent[`model_cat_${model.id}`]}
+                            isEditMode={isEditMode}
+                            onCommit={handleCommitText}
+                            className="block text-xs font-medium text-neutral-500 dark:text-neutral-400"
+                          />
+                        </div>
+                        <span className="shrink-0 text-xs font-semibold text-neutral-500 tabular-nums dark:text-neutral-400">
+                          {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
+                        </span>
+                      </div>
+
+                      {/* Lista de peças da revisão */}
+                      <div className="mt-4 flex-1 divide-y divide-neutral-100 px-5 dark:divide-neutral-800">
+                        {summary.items.length === 0 ? (
+                          <p className="py-6 text-center text-xs text-neutral-400">
+                            Nenhuma peça vinculada a esta revisão.
+                          </p>
+                        ) : (
+                          summary.items.map(({ revisionPart, part, lineTotal }) => (
+                            <div
+                              key={`${revisionPart.id}-${part.code}`}
+                              className="flex items-start justify-between gap-3 py-2.5"
+                            >
+                              <div className="min-w-0">
+                                <p className="text-[13px] font-medium leading-snug text-neutral-800 dark:text-neutral-200">
+                                  {part.description}
+                                  {part.is_optional && !part.description.includes('[Opcional]') ? (
+                                    <span className="ml-1 text-neutral-500">[Opcional]</span>
+                                  ) : null}
+                                </p>
+                                <p className="mt-0.5 font-mono text-[11px] text-neutral-400 dark:text-neutral-500">
+                                  CÓD. {part.code}
+                                  {(part.unit === 'ML' || revisionPart.quantity > 1) &&
+                                    ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
+                                </p>
+                              </div>
+                              <span className="shrink-0 text-[13px] font-bold text-neutral-900 tabular-nums dark:text-white">
+                                {formatBRL(lineTotal)}
+                              </span>
+                            </div>
+                          ))
+                        )}
+                      </div>
+
+                      {/* Rodapé vermelho de destaque */}
+                      <div className="mt-4 bg-[#E4002B] px-5 py-3.5 text-white">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-[11px] font-bold uppercase tracking-wider text-white/95">
+                              {revTitleUpper}
+                            </p>
+                            <p className="text-[11px] text-white/85 tabular-nums">
+                              sem opcionais {formatBRL(summary.totalWithoutOptionals)}
+                            </p>
+                          </div>
+                          <p className="font-display text-xl font-extrabold tracking-tight tabular-nums">
+                            {formatBRL(summary.totalWithOptionals)}
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Link inferior */}
+                      <a
+                        href={buildWhatsAppUrl(model.name, revisionLabel)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => {
+                          if (isEditMode) e.preventDefault();
+                        }}
+                        className="flex items-center justify-center gap-2 bg-neutral-50 px-5 py-3 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] dark:bg-neutral-950/60 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      >
+                        <Calendar className="h-3.5 w-3.5 text-[#E4002B]" />
+                        <EditableText
+                          textKey={`model_cta_${model.id}`}
+                          defaultText={scheduleText}
+                          entry={vbConfig.siteContent[`model_cta_${model.id}`]}
+                          isEditMode={isEditMode}
+                          onCommit={handleCommitText}
+                        />
+                      </a>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              /* List View */
+              <div className="mt-7 space-y-4">
+                {computedModels.map(({ model, summary, isVisuallyHidden }) => {
+                  const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
+                  return (
+                    <article
+                      key={model.id}
+                      className={`flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900 md:flex-row ${
+                        isVisuallyHidden ? 'opacity-45 grayscale' : ''
+                      }`}
+                    >
+                      <div className="relative flex w-full shrink-0 items-center justify-center bg-white p-5 md:w-60 md:border-r md:border-neutral-100 dark:md:border-neutral-800">
                         <img
                           src={model.image_url}
                           alt={`Honda ${model.name}`}
                           referrerPolicy="no-referrer"
-                          className="h-full w-full object-contain"
+                          className="h-40 w-full object-contain"
                         />
-                      ) : (
-                        <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-400">
-                          Honda {model.name}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Cabeçalho do card */}
-                    <div className="flex items-start justify-between gap-3 px-5 pt-4">
-                      <div>
-                        <h2 className="font-display text-lg font-bold tracking-tight text-neutral-900 dark:text-white">
-                          {model.name}
-                        </h2>
-                        <p className="text-xs font-medium text-neutral-500 dark:text-neutral-400">
-                          {categoryLabel}
-                        </p>
-                      </div>
-                      <span className="shrink-0 text-xs font-semibold text-neutral-500 tabular-nums dark:text-neutral-400">
-                        {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
-                      </span>
-                    </div>
-
-                    {/* Lista de peças da revisão */}
-                    <div className="mt-4 flex-1 divide-y divide-neutral-100 px-5 dark:divide-neutral-800">
-                      {summary.items.length === 0 ? (
-                        <p className="py-6 text-center text-xs text-neutral-400">
-                          Nenhuma peça vinculada a esta revisão.
-                        </p>
-                      ) : (
-                        summary.items.map(({ revisionPart, part, lineTotal }) => (
-                          <div
-                            key={`${revisionPart.id}-${part.code}`}
-                            className="flex items-start justify-between gap-3 py-2.5"
+                        {isEditMode && (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setImageModal({
+                                kind: 'model',
+                                modelId: model.id,
+                                title: `Foto de ${model.name}`,
+                                currentUrl: model.image_url,
+                              })
+                            }
+                            className="absolute bottom-2 inline-flex items-center gap-1 rounded-full bg-neutral-950/85 px-3 py-1 text-[11px] font-bold text-white shadow hover:bg-[#E4002B]"
                           >
-                            <div className="min-w-0">
-                              <p className="text-[13px] font-medium leading-snug text-neutral-800 dark:text-neutral-200">
-                                {part.description}
-                                {part.is_optional && !part.description.includes('[Opcional]') ? (
-                                  <span className="ml-1 text-neutral-500">[Opcional]</span>
-                                ) : null}
-                              </p>
-                              <p className="mt-0.5 font-mono text-[11px] text-neutral-400 dark:text-neutral-500">
-                                CÓD. {part.code}
-                                {(part.unit === 'ML' || revisionPart.quantity > 1) &&
-                                  ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
-                              </p>
+                            <ImageIcon className="h-3 w-3" />
+                            Trocar Imagem
+                          </button>
+                        )}
+                      </div>
+                      <div className="flex flex-1 flex-col justify-between p-5">
+                        <div>
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <div className="flex items-baseline gap-3">
+                              <h2 className="font-display text-lg font-bold text-neutral-900 dark:text-white">
+                                {model.name}
+                              </h2>
+                              <span className="text-xs font-medium text-neutral-500">
+                                {categoryLabel}
+                              </span>
                             </div>
-                            <span className="shrink-0 text-[13px] font-bold text-neutral-900 tabular-nums dark:text-white">
-                              {formatBRL(lineTotal)}
+                            <span className="text-xs font-semibold text-neutral-500 tabular-nums">
+                              {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
                             </span>
                           </div>
-                        ))
-                      )}
-                    </div>
-
-                    {/* Rodapé vermelho de destaque */}
-                    <div className="mt-4 bg-[#E4002B] px-5 py-3.5 text-white">
-                      <div className="flex items-center justify-between gap-2">
-                        <div>
-                          <p className="text-[11px] font-bold uppercase tracking-wider text-white/95">
-                            {revTitleUpper}
-                          </p>
-                          <p className="text-[11px] text-white/85 tabular-nums">
-                            sem opcionais {formatBRL(summary.totalWithoutOptionals)}
-                          </p>
+                          <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
+                            {summary.items.map(({ revisionPart, part, lineTotal }) => (
+                              <div
+                                key={`${revisionPart.id}-${part.code}`}
+                                className="flex items-center justify-between border-b border-neutral-100 py-1.5 text-xs dark:border-neutral-800"
+                              >
+                                <span className="truncate pr-2 text-neutral-700 dark:text-neutral-300">
+                                  {part.description}
+                                  {part.is_optional && !part.description.includes('[Opcional]')
+                                    ? ' [Opcional]'
+                                    : ''}
+                                  <span className="ml-1.5 font-mono text-[10px] text-neutral-400">
+                                    ({part.code})
+                                  </span>
+                                </span>
+                                <span className="shrink-0 font-semibold text-neutral-900 tabular-nums dark:text-white">
+                                  {formatBRL(lineTotal)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <p className="font-display text-xl font-extrabold tracking-tight tabular-nums">
-                          {formatBRL(summary.totalWithOptionals)}
-                        </p>
-                      </div>
-                    </div>
 
-                    {/* Link inferior */}
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#E4002B] px-4 py-3 text-white">
+                          <div>
+                            <span className="text-xs font-bold uppercase tracking-wider">
+                              TOTAL DA {revisionLabel.toUpperCase()}
+                            </span>
+                            <span className="ml-3 text-xs text-white/85 tabular-nums">
+                              sem opcionais {formatBRL(summary.totalWithoutOptionals)}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4">
+                            <span className="font-display text-lg font-extrabold tabular-nums">
+                              {formatBRL(summary.totalWithOptionals)}
+                            </span>
+                            <a
+                              href={buildWhatsAppUrl(model.name, revisionLabel)}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => {
+                                if (isEditMode) e.preventDefault();
+                              }}
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#E4002B] hover:bg-neutral-100"
+                            >
+                              <Calendar className="h-3.5 w-3.5" />
+                              Agendar
+                            </a>
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </main>
+        );
+
+      case 'faq_section':
+        if (heroTab !== 'faq' && !isEditMode) return null;
+        return (
+          <section className="mx-auto max-w-[920px] px-4 py-10 sm:px-6 sm:py-12">
+            {isEditMode && heroTab !== 'faq' && (
+              <p className="mb-3 inline-block rounded bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
+                Prévia da aba Perguntas Frequentes (exibida ao selecionar a aba no site)
+              </p>
+            )}
+            <div className="mb-6 flex items-center justify-between">
+              <div>
+                <EditableText
+                  as="h2"
+                  textKey="faq_title"
+                  defaultText={DEFAULT_SITE_CONTENT.faq_title}
+                  entry={vbConfig.siteContent.faq_title}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                  className="font-display text-2xl font-bold text-neutral-900 dark:text-white"
+                />
+                <EditableText
+                  as="p"
+                  textKey="faq_subtitle"
+                  defaultText={DEFAULT_SITE_CONTENT.faq_subtitle}
+                  entry={vbConfig.siteContent.faq_subtitle}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                  className="mt-1 block text-sm text-neutral-600 dark:text-neutral-400"
+                />
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {data.faqs.map((faq) => {
+                const isOpen = openFaqId === faq.id;
+                return (
+                  <div
+                    key={faq.id}
+                    className="overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
+                      className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+                    >
+                      <EditableText
+                        textKey={`faq_q_${faq.id}`}
+                        defaultText={faq.question}
+                        entry={vbConfig.siteContent[`faq_q_${faq.id}`]}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                        className="text-sm font-bold text-neutral-900 dark:text-white sm:text-base"
+                      />
+                      <ChevronDown
+                        className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${
+                          isOpen ? 'rotate-180 text-[#E4002B]' : ''
+                        }`}
+                      />
+                    </button>
+                    {isOpen && (
+                      <div className="border-t border-neutral-100 px-5 py-4 text-sm leading-relaxed text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+                        <EditableText
+                          as="p"
+                          textKey={`faq_a_${faq.id}`}
+                          defaultText={faq.answer}
+                          entry={vbConfig.siteContent[`faq_a_${faq.id}`]}
+                          isEditMode={isEditMode}
+                          onCommit={handleCommitText}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        );
+
+      case 'units_map':
+        return (
+          <UnitsMapSection
+            units={data.seo.units}
+            mapsActive={data.maps_config.active}
+            mapsApiKey={data.maps_config.api_key}
+            renderEyebrow={() => (
+              <EditableText
+                as="p"
+                textKey="units_eyebrow"
+                defaultText={DEFAULT_SITE_CONTENT.units_eyebrow}
+                entry={vbConfig.siteContent.units_eyebrow}
+                isEditMode={isEditMode}
+                onCommit={handleCommitText}
+                className="text-xs font-bold uppercase tracking-widest text-[#E4002B]"
+              />
+            )}
+            renderTitle={() => (
+              <EditableText
+                as="h2"
+                textKey="units_title"
+                defaultText={DEFAULT_SITE_CONTENT.units_title}
+                entry={vbConfig.siteContent.units_title}
+                isEditMode={isEditMode}
+                onCommit={handleCommitText}
+                className="mt-1 block text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl"
+              />
+            )}
+            renderSubtitle={() => (
+              <EditableText
+                as="p"
+                textKey="units_subtitle"
+                defaultText={DEFAULT_SITE_CONTENT.units_subtitle}
+                entry={vbConfig.siteContent.units_subtitle}
+                isEditMode={isEditMode}
+                onCommit={handleCommitText}
+                className="mt-1.5 block text-sm text-neutral-600 dark:text-neutral-400"
+              />
+            )}
+          />
+        );
+
+      case 'footer':
+        return (
+          <footer className="border-t border-neutral-200 bg-neutral-50 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+            <div className="mx-auto max-w-[1180px] px-4 py-12 sm:px-6">
+              <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
+                {/* Coluna 1: Logo + Redes + Tema escuro */}
+                <div>
+                  <div className="inline-flex items-center gap-3">
+                    {effectiveLogoUrl ? (
+                      <img
+                        src={effectiveLogoUrl}
+                        alt={data.seo.logo_alt || 'RODALEVE'}
+                        className="h-9 w-auto object-contain"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <EditableText
+                        textKey="footer_brand_text"
+                        defaultText={DEFAULT_SITE_CONTENT.footer_brand_text}
+                        entry={vbConfig.siteContent.footer_brand_text}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                        className="font-display text-2xl font-extrabold tracking-tight text-[#E4002B]"
+                      />
+                    )}
+                    {isEditMode && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setImageModal({
+                            kind: 'logo',
+                            title: 'Logo Principal (Cabeçalho e Rodapé)',
+                            currentUrl: effectiveLogoUrl,
+                          })
+                        }
+                        className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#E4002B]"
+                      >
+                        <ImageIcon className="h-3 w-3" />
+                        Trocar Imagem
+                      </button>
+                    )}
+                  </div>
+                  <EditableText
+                    as="p"
+                    textKey="footer_social_label"
+                    defaultText={DEFAULT_SITE_CONTENT.footer_social_label}
+                    entry={vbConfig.siteContent.footer_social_label}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="mt-3 block text-sm text-neutral-600 dark:text-neutral-400"
+                  />
+                  <div className="mt-2.5 flex items-center gap-3">
                     <a
-                      href={buildWhatsAppUrl(model.name, revisionLabel)}
+                      href={data.seo.instagram_url || 'https://instagram.com'}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="flex items-center justify-center gap-2 bg-neutral-50 px-5 py-3 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] dark:bg-neutral-950/60 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      aria-label="Instagram Rodaleve"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
                     >
-                      <Calendar className="h-3.5 w-3.5 text-[#E4002B]" />
-                      {scheduleText}
+                      <Instagram className="h-4 w-4" />
                     </a>
-                  </article>
-                );
-              })}
-            </div>
-          ) : (
-            /* List View */
-            <div className="mt-7 space-y-4">
-              {computedModels.map(({ model, summary }) => {
-                const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
-                return (
-                  <article
-                    key={model.id}
-                    className="flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900 md:flex-row"
-                  >
-                    <div className="flex w-full shrink-0 items-center justify-center bg-white p-5 md:w-60 md:border-r md:border-neutral-100 dark:md:border-neutral-800">
-                      <img
-                        src={model.image_url}
-                        alt={`Honda ${model.name}`}
-                        referrerPolicy="no-referrer"
-                        className="h-40 w-full object-contain"
-                      />
-                    </div>
-                    <div className="flex flex-1 flex-col justify-between p-5">
-                      <div>
-                        <div className="flex flex-wrap items-baseline justify-between gap-2">
-                          <div className="flex items-baseline gap-3">
-                            <h2 className="font-display text-lg font-bold text-neutral-900 dark:text-white">
-                              {model.name}
-                            </h2>
-                            <span className="text-xs font-medium text-neutral-500">{categoryLabel}</span>
-                          </div>
-                          <span className="text-xs font-semibold text-neutral-500 tabular-nums">
-                            {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
-                          </span>
-                        </div>
-                        <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
-                          {summary.items.map(({ revisionPart, part, lineTotal }) => (
-                            <div
-                              key={`${revisionPart.id}-${part.code}`}
-                              className="flex items-center justify-between border-b border-neutral-100 py-1.5 text-xs dark:border-neutral-800"
-                            >
-                              <span className="truncate pr-2 text-neutral-700 dark:text-neutral-300">
-                                {part.description}
-                                {part.is_optional && !part.description.includes('[Opcional]') ? ' [Opcional]' : ''}
-                                <span className="ml-1.5 font-mono text-[10px] text-neutral-400">
-                                  ({part.code})
-                                </span>
-                              </span>
-                              <span className="shrink-0 font-semibold text-neutral-900 tabular-nums dark:text-white">
-                                {formatBRL(lineTotal)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#E4002B] px-4 py-3 text-white">
-                        <div>
-                          <span className="text-xs font-bold uppercase tracking-wider">
-                            TOTAL DA {revisionLabel.toUpperCase()}
-                          </span>
-                          <span className="ml-3 text-xs text-white/85 tabular-nums">
-                            sem opcionais {formatBRL(summary.totalWithoutOptionals)}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-4">
-                          <span className="font-display text-lg font-extrabold tabular-nums">
-                            {formatBRL(summary.totalWithOptionals)}
-                          </span>
-                          <a
-                            href={buildWhatsAppUrl(model.name, revisionLabel)}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#E4002B] hover:bg-neutral-100"
-                          >
-                            <Calendar className="h-3.5 w-3.5" />
-                            Agendar
-                          </a>
-                        </div>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </main>
-      ) : (
-        /* Perguntas Frequentes View */
-        <main className="mx-auto max-w-[920px] px-4 py-10 sm:px-6 sm:py-12">
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h2 className="font-display text-2xl font-bold text-neutral-900 dark:text-white">
-                Dúvidas Frequentes sobre Revisões Honda
-              </h2>
-              <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-400">
-                Tudo o que você precisa saber sobre prazos, garantia e agendamento na Rodaleve.
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-3">
-            {data.faqs.map((faq) => {
-              const isOpen = openFaqId === faq.id;
-              return (
-                <div
-                  key={faq.id}
-                  className="overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
-                >
+                    <a
+                      href={data.seo.youtube_url || 'https://youtube.com'}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="YouTube Rodaleve"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                    >
+                      <Youtube className="h-4 w-4" />
+                    </a>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
-                    className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+                    onClick={onToggleDarkMode}
+                    className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-neutral-600 underline-offset-4 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-white"
                   >
-                    <span className="text-sm font-bold text-neutral-900 dark:text-white sm:text-base">
-                      {faq.question}
-                    </span>
-                    <ChevronDown
-                      className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${
-                        isOpen ? 'rotate-180 text-[#E4002B]' : ''
+                    {darkMode ? (
+                      <>
+                        <Sun className="h-3.5 w-3.5" />
+                        Tema claro
+                      </>
+                    ) : (
+                      <>
+                        <Moon className="h-3.5 w-3.5" />
+                        Tema escuro
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Coluna 2: Horários de Funcionamento */}
+                <div>
+                  <EditableText
+                    as="h3"
+                    textKey="footer_hours_title"
+                    defaultText={DEFAULT_SITE_CONTENT.footer_hours_title}
+                    entry={vbConfig.siteContent.footer_hours_title}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="text-sm font-bold text-neutral-900 dark:text-white"
+                  />
+                  <ul className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                    <li>
+                      <EditableText
+                        textKey="footer_hours_weekdays"
+                        defaultText={DEFAULT_SITE_CONTENT.footer_hours_weekdays}
+                        entry={vbConfig.siteContent.footer_hours_weekdays}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                      />
+                    </li>
+                    <li>
+                      <EditableText
+                        textKey="footer_hours_saturday"
+                        defaultText={DEFAULT_SITE_CONTENT.footer_hours_saturday}
+                        entry={vbConfig.siteContent.footer_hours_saturday}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                      />
+                    </li>
+                    <li className="pt-1 font-semibold text-neutral-800 dark:text-neutral-200">
+                      WhatsApp:{' '}
+                      <a
+                        href={buildWhatsAppUrl()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="tabular-nums text-[#E4002B] hover:underline"
+                      >
+                        (77) 2888-0003
+                      </a>
+                    </li>
+                  </ul>
+                </div>
+
+                {/* Coluna 3: Políticas e Termos */}
+                <div>
+                  <EditableText
+                    as="h3"
+                    textKey="footer_policies_title"
+                    defaultText={DEFAULT_SITE_CONTENT.footer_policies_title}
+                    entry={vbConfig.siteContent.footer_policies_title}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="text-sm font-bold text-neutral-900 dark:text-white"
+                  />
+                  <div className="mt-3 flex flex-wrap gap-4 text-sm">
+                    <button
+                      type="button"
+                      onClick={() => setLegalModal('privacy')}
+                      className="text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                    >
+                      Política de Privacidade
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setLegalModal('terms')}
+                      className="text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                    >
+                      Termos de Uso
+                    </button>
+                  </div>
+                  <EditableText
+                    as="p"
+                    textKey="footer_disclaimer"
+                    defaultText={DEFAULT_SITE_CONTENT.footer_disclaimer}
+                    entry={vbConfig.siteContent.footer_disclaimer}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="mt-3 block text-xs leading-relaxed text-neutral-500 dark:text-neutral-400"
+                  />
+                </div>
+              </div>
+
+              {/* Faixa inferior */}
+              <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-neutral-200 pt-6 text-xs text-neutral-500 dark:border-neutral-800 sm:flex-row">
+                <EditableText
+                  as="p"
+                  textKey="footer_slogan"
+                  defaultText={DEFAULT_SITE_CONTENT.footer_slogan}
+                  entry={vbConfig.siteContent.footer_slogan}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                  className="font-bold tracking-wide text-neutral-800 dark:text-neutral-200"
+                />
+                <p>
+                  <EditableText
+                    textKey="footer_credits"
+                    defaultText={DEFAULT_SITE_CONTENT.footer_credits}
+                    entry={vbConfig.siteContent.footer_credits}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                  />{' '}
+                  <a
+                    href="/gestor"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      onNavigate('/gestor');
+                    }}
+                    className="font-semibold text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                  >
+                    Gestor
+                  </a>
+                </p>
+              </div>
+            </div>
+          </footer>
+        );
+
+      case 'custom': {
+        const custom = block.customData;
+        if (!custom) return null;
+        const isRed = custom.theme === 'red';
+        const isGray = custom.theme === 'gray';
+        return (
+          <section className="mx-auto max-w-[1180px] px-4 py-6 sm:px-6">
+            <div
+              className={`overflow-hidden rounded-2xl border p-6 sm:p-8 ${
+                isRed
+                  ? 'border-[#E4002B] bg-[#E4002B] text-white'
+                  : isGray
+                    ? 'border-neutral-200 bg-neutral-100 text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white'
+                    : 'border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white'
+              }`}
+            >
+              <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
+                <div className="flex-1 space-y-2">
+                  {custom.badge !== undefined && (
+                    <EditableText
+                      as="p"
+                      textKey={`custom_badge_${block.id}`}
+                      defaultText={custom.badge}
+                      entry={vbConfig.siteContent[`custom_badge_${block.id}`]}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                      className={`text-xs font-bold uppercase tracking-widest ${
+                        isRed ? 'text-white/90' : 'text-[#E4002B]'
                       }`}
                     />
-                  </button>
-                  {isOpen && (
-                    <div className="border-t border-neutral-100 px-5 py-4 text-sm leading-relaxed text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
-                      {faq.answer}
+                  )}
+                  <EditableText
+                    as="h2"
+                    textKey={`custom_title_${block.id}`}
+                    defaultText={custom.title}
+                    entry={vbConfig.siteContent[`custom_title_${block.id}`]}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="block font-display text-2xl font-extrabold tracking-tight"
+                  />
+                  <EditableText
+                    as="p"
+                    textKey={`custom_body_${block.id}`}
+                    defaultText={custom.body}
+                    entry={vbConfig.siteContent[`custom_body_${block.id}`]}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className={`block text-sm leading-relaxed ${
+                      isRed ? 'text-white/90' : 'text-neutral-600 dark:text-neutral-300'
+                    }`}
+                  />
+                  {custom.cta_label && (
+                    <div className="pt-2">
+                      <a
+                        href={custom.cta_url || buildWhatsAppUrl()}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => {
+                          if (isEditMode) e.preventDefault();
+                        }}
+                        className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold transition-colors ${
+                          isRed
+                            ? 'bg-white text-[#E4002B] hover:bg-neutral-100'
+                            : 'bg-[#E4002B] text-white hover:bg-[#C80024]'
+                        }`}
+                      >
+                        <EditableText
+                          textKey={`custom_cta_${block.id}`}
+                          defaultText={custom.cta_label}
+                          entry={vbConfig.siteContent[`custom_cta_${block.id}`]}
+                          isEditMode={isEditMode}
+                          onCommit={handleCommitText}
+                        />
+                      </a>
                     </div>
                   )}
                 </div>
-              );
-            })}
-          </div>
-        </main>
+
+                {(custom.image_url || isEditMode) && (
+                  <div className="relative flex w-full shrink-0 flex-col items-center justify-center md:w-64">
+                    {custom.image_url ? (
+                      <img
+                        src={custom.image_url}
+                        alt={custom.title}
+                        referrerPolicy="no-referrer"
+                        className="max-h-44 w-full rounded-xl object-contain"
+                      />
+                    ) : (
+                      isEditMode && (
+                        <div className="flex h-28 w-full items-center justify-center rounded-xl border border-dashed border-current/30 text-xs opacity-70">
+                          Imagem opcional
+                        </div>
+                      )
+                    )}
+                    {isEditMode && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setImageModal({
+                            kind: 'custom_block',
+                            blockId: block.id,
+                            title: `Imagem do bloco "${block.label}"`,
+                            currentUrl: custom.image_url || '',
+                          })
+                        }
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-neutral-950 px-3 py-1 text-[11px] font-bold text-white shadow hover:bg-neutral-800"
+                      >
+                        <ImageIcon className="h-3 w-3" />
+                        Trocar Imagem
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </section>
+        );
+      }
+
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <div
+      className={`min-h-screen transition-colors ${
+        isEditMode
+          ? 'bg-neutral-200/80 pt-[54px] dark:bg-neutral-900'
+          : 'bg-[#FAFAFA] text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100'
+      }`}
+    >
+      {/* Visual Editor Fixed Top Toolbar */}
+      {isEditMode && (
+        <VisualEditorToolbar
+          canUndo={undoStack.length > 0}
+          canRedo={redoStack.length > 0}
+          viewport={viewport}
+          saving={savingVisual}
+          hasUnsavedChanges={hasUnsavedChanges}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onChangeViewport={setViewport}
+          onOpenAddBlock={() => {
+            setAddBlockAfterIndex(null);
+            setIsAddBlockOpen(true);
+          }}
+          onEditFavicon={() =>
+            setImageModal({
+              kind: 'favicon',
+              title: 'Favicon do Site (ícone da aba)',
+              currentUrl: effectiveFaviconUrl,
+            })
+          }
+          onRestoreDefault={handleRestoreDefault}
+          onBackToGestor={onExitEditModeToGestor}
+          onSaveAndPublish={handleSaveAndPublish}
+        />
       )}
 
-      {/* 7. Seção "Onde estamos" / "Unidades e Como Chegar" */}
-      <UnitsMapSection
-        units={data.seo.units}
-        mapsActive={data.maps_config.active}
-        mapsApiKey={data.maps_config.api_key}
-      />
-
-      {/* 8. Rodapé */}
-      <footer className="border-t border-neutral-200 bg-neutral-50 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
-        <div className="mx-auto max-w-[1180px] px-4 py-12 sm:px-6">
-          <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
-            {/* Coluna 1: Logo + Redes + Tema escuro */}
-            <div>
-              <span className="font-display text-2xl font-extrabold tracking-tight text-[#E4002B]">
-                RODALEVE
-              </span>
-              <p className="mt-3 text-sm text-neutral-600 dark:text-neutral-400">
-                Siga nossas redes sociais
-              </p>
-              <div className="mt-2.5 flex items-center gap-3">
-                <a
-                  href={data.seo.instagram_url || 'https://instagram.com'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Instagram Rodaleve"
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
-                >
-                  <Instagram className="h-4 w-4" />
-                </a>
-                <a
-                  href={data.seo.youtube_url || 'https://youtube.com'}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="YouTube Rodaleve"
-                  className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
-                >
-                  <Youtube className="h-4 w-4" />
-                </a>
-              </div>
-              <button
-                type="button"
-                onClick={onToggleDarkMode}
-                className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-neutral-600 underline-offset-4 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-white"
-              >
-                {darkMode ? (
-                  <>
-                    <Sun className="h-3.5 w-3.5" />
-                    Tema claro
-                  </>
-                ) : (
-                  <>
-                    <Moon className="h-3.5 w-3.5" />
-                    Tema escuro
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Coluna 2: Horários de Funcionamento */}
-            <div>
-              <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-                Horários de Funcionamento
-              </h3>
-              <ul className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-400">
-                <li>Segunda a sexta: 07h30 às 18h</li>
-                <li>Sábado: 07h30 às 12h</li>
-                <li className="pt-1 font-semibold text-neutral-800 dark:text-neutral-200">
-                  WhatsApp:{' '}
-                  <a
-                    href={buildWhatsAppUrl()}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="tabular-nums text-[#E4002B] hover:underline"
-                  >
-                    (77) 2888-0003
-                  </a>
-                </li>
-              </ul>
-            </div>
-
-            {/* Coluna 3: Políticas e Termos */}
-            <div>
-              <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-                Políticas e Termos
-              </h3>
-              <div className="mt-3 flex flex-wrap gap-4 text-sm">
-                <button
-                  type="button"
-                  onClick={() => setLegalModal('privacy')}
-                  className="text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
-                >
-                  Política de Privacidade
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLegalModal('terms')}
-                  className="text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
-                >
-                  Termos de Uso
-                </button>
-              </div>
-              <p className="mt-3 text-xs leading-relaxed text-neutral-500 dark:text-neutral-400">
-                Os valores exibidos nesta tabela são estimados para peças genuínas e insumos básicos de cada revisão e podem variar conforme inspeção técnica ou necessidade adicional da motocicleta.
-              </p>
-            </div>
-          </div>
-
-          {/* Faixa inferior */}
-          <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-neutral-200 pt-6 text-xs text-neutral-500 dark:border-neutral-800 sm:flex-row">
-            <p className="font-bold tracking-wide text-neutral-800 dark:text-neutral-200">
-              DESBRAVE SEU BEM MAIOR É A VIDA
-            </p>
-            <p>
-              Site criado por Zarvic Marketing –{' '}
+      {/* Main Preview Canvas (switches width smoothly between Desktop and Mobile in edit mode) */}
+      <div
+        className={
+          isEditMode && viewport === 'mobile'
+            ? 'mx-auto my-6 max-w-[390px] overflow-x-hidden rounded-[28px] border-4 border-neutral-800 bg-[#FAFAFA] text-neutral-900 shadow-2xl dark:bg-neutral-950 dark:text-neutral-100'
+            : 'min-h-screen bg-[#FAFAFA] text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100'
+        }
+      >
+        {/* 1. Cabeçalho fixo no topo */}
+        <header
+          className={`${
+            isEditMode ? 'relative' : 'sticky top-0'
+          } z-40 border-b border-neutral-200/80 bg-white/95 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95`}
+        >
+          <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-6">
+            <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
               <a
-                href="/gestor"
+                href="/"
                 onClick={(e) => {
                   e.preventDefault();
-                  onNavigate('/gestor');
+                  if (!isEditMode) handleNavClick('revisoes');
                 }}
-                className="font-semibold text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                className="flex items-center gap-2"
               >
-                Gestor
+                {effectiveLogoUrl ? (
+                  <img
+                    src={effectiveLogoUrl}
+                    alt={data.seo.logo_alt || 'RODALEVE'}
+                    className="h-8 w-auto object-contain"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <EditableText
+                    textKey="header_brand_text"
+                    defaultText={DEFAULT_SITE_CONTENT.header_brand_text}
+                    entry={vbConfig.siteContent.header_brand_text}
+                    isEditMode={isEditMode}
+                    onCommit={handleCommitText}
+                    className="font-display text-xl font-extrabold tracking-tight text-[#E4002B]"
+                  />
+                )}
               </a>
-            </p>
-          </div>
-        </div>
-      </footer>
+              {isEditMode && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setImageModal({
+                      kind: 'logo',
+                      title: 'Logo Principal do Site',
+                      currentUrl: effectiveLogoUrl,
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-100 px-2 py-1 text-[10px] font-bold text-neutral-800 hover:bg-[#E4002B] hover:text-white"
+                >
+                  <ImageIcon className="h-3 w-3" />
+                  Trocar Imagem
+                </button>
+              )}
+            </div>
 
-      {/* Botão flutuante verde do WhatsApp no canto inferior esquerdo */}
-      <a
-        href={buildWhatsAppUrl()}
-        target="_blank"
-        rel="noopener noreferrer"
-        aria-label="Falar no WhatsApp Rodaleve"
-        className="fixed bottom-5 left-5 z-40 inline-flex h-13 w-13 items-center justify-center rounded-full bg-[#25D366] text-white shadow-lg transition-transform hover:scale-105 hover:bg-[#1FB857]"
-      >
-        <MessageCircle className="h-6 w-6 fill-white" />
-      </a>
+            <nav className="hidden items-center gap-7 md:flex">
+              <button
+                type="button"
+                onClick={() => handleNavClick('revisoes')}
+                className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
+                  activeNav === 'revisoes' && heroTab === 'tabela'
+                    ? 'border-[#E4002B] text-neutral-900 dark:text-white'
+                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                }`}
+              >
+                <EditableText
+                  textKey="nav_revisions"
+                  defaultText={DEFAULT_SITE_CONTENT.nav_revisions}
+                  entry={vbConfig.siteContent.nav_revisions}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleNavClick('faq')}
+                className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
+                  heroTab === 'faq'
+                    ? 'border-[#E4002B] text-neutral-900 dark:text-white'
+                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                }`}
+              >
+                <EditableText
+                  textKey="nav_faq"
+                  defaultText={DEFAULT_SITE_CONTENT.nav_faq}
+                  entry={vbConfig.siteContent.nav_faq}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                />
+              </button>
+              <button
+                type="button"
+                onClick={() => handleNavClick('unidades')}
+                className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
+                  activeNav === 'unidades'
+                    ? 'border-[#E4002B] text-neutral-900 dark:text-white'
+                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                }`}
+              >
+                <EditableText
+                  textKey="nav_units"
+                  defaultText={DEFAULT_SITE_CONTENT.nav_units}
+                  entry={vbConfig.siteContent.nav_units}
+                  isEditMode={isEditMode}
+                  onCommit={handleCommitText}
+                />
+              </button>
+            </nav>
+
+            <a
+              href={buildWhatsAppUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => {
+                if (isEditMode) e.preventDefault();
+              }}
+              className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#C80024] sm:text-sm"
+            >
+              <EditableText
+                textKey="header_cta"
+                defaultText={DEFAULT_SITE_CONTENT.header_cta}
+                entry={vbConfig.siteContent.header_cta}
+                isEditMode={isEditMode}
+                onCommit={handleCommitText}
+              />
+            </a>
+          </div>
+        </header>
+
+        {/* Render Dynamic Section Blocks */}
+        {vbConfig.sections.map((block, index) => {
+          const content = renderSectionContent(block);
+          if (!content && !isEditMode) return null;
+          return (
+            <SectionEditorWrapper
+              key={block.id}
+              block={block}
+              index={index}
+              total={vbConfig.sections.length}
+              isEditMode={isEditMode}
+              isDragOver={dragOverSectionIdx === index}
+              onDragStart={(idx) => setDragSectionIdx(idx)}
+              onDragOver={(_e, idx) => setDragOverSectionIdx(idx)}
+              onDrop={(idx) => {
+                if (dragSectionIdx !== null) {
+                  moveSection(dragSectionIdx, idx);
+                }
+                setDragSectionIdx(null);
+                setDragOverSectionIdx(null);
+              }}
+              onMoveUp={(idx) => moveSection(idx, idx - 1)}
+              onMoveDown={(idx) => moveSection(idx, idx + 1)}
+              onToggleVisibility={toggleSectionVisibility}
+              onDuplicate={duplicateSection}
+              onInsertBelow={(idx) => {
+                setAddBlockAfterIndex(idx);
+                setIsAddBlockOpen(true);
+              }}
+              onDelete={deleteSection}
+            >
+              {content}
+            </SectionEditorWrapper>
+          );
+        })}
+      </div>
+
+      {/* Botão flutuante e arrastável do WhatsApp */}
+      <FloatingWhatsApp href={buildWhatsAppUrl()} isEditMode={isEditMode} />
+
+      {/* Botão flutuante discreto para o administrador autenticado */}
+      {isAdminLoggedIn && !isEditMode && (
+        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => onNavigate('/gestor')}
+            className="rounded-full border border-neutral-200 bg-white/95 px-3.5 py-2 text-xs font-semibold text-neutral-700 shadow-md backdrop-blur transition-colors hover:bg-neutral-50"
+          >
+            Gestor
+          </button>
+          <button
+            type="button"
+            onClick={onEnterEditMode}
+            className="inline-flex items-center gap-1.5 rounded-full bg-neutral-950/90 px-4 py-2 text-xs font-bold text-white shadow-lg backdrop-blur transition-all hover:bg-[#E4002B]"
+          >
+            <Paintbrush className="h-3.5 w-3.5" />
+            Editar Site Visualmente
+          </button>
+        </div>
+      )}
+
+      {/* Visual Editor Toast */}
+      {visualToast && (
+        <div
+          className={`fixed right-5 top-16 z-50 rounded-xl border px-4 py-2.5 text-xs font-bold shadow-xl ${
+            visualToast.type === 'success'
+              ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+              : 'border-red-300 bg-red-50 text-[#E4002B]'
+          }`}
+        >
+          {visualToast.msg}
+        </div>
+      )}
+
+      {/* Modais do Editor Visual */}
+      {isAddBlockOpen && (
+        <AddBlockModal
+          onSelect={handleInsertCustomBlock}
+          onClose={() => {
+            setIsAddBlockOpen(false);
+            setAddBlockAfterIndex(null);
+          }}
+        />
+      )}
+
+      {imageModal && (
+        <ImageSwapModal
+          title={imageModal.title}
+          currentUrl={imageModal.currentUrl}
+          onClose={() => setImageModal(null)}
+          onApply={(nextUrl) => {
+            if (imageModal.kind === 'logo') {
+              setPendingLogoUrl(nextUrl);
+              commitVisualChange((prev) => ({
+                ...prev,
+                imageOverrides: { ...prev.imageOverrides, site_logo: nextUrl },
+              }));
+            } else if (imageModal.kind === 'favicon') {
+              setPendingFaviconUrl(nextUrl);
+              commitVisualChange((prev) => ({
+                ...prev,
+                imageOverrides: { ...prev.imageOverrides, site_favicon: nextUrl },
+              }));
+            } else if (imageModal.kind === 'model') {
+              const targetModelId = imageModal.modelId;
+              setPendingModelImageById((prev) => ({ ...prev, [targetModelId]: nextUrl }));
+              commitVisualChange((prev) => ({
+                ...prev,
+                imageOverrides: {
+                  ...prev.imageOverrides,
+                  [`model_${targetModelId}`]: nextUrl,
+                },
+              }));
+            } else if (imageModal.kind === 'custom_block') {
+              updateCustomBlockData(imageModal.blockId, { image_url: nextUrl });
+            }
+          }}
+        />
+      )}
 
       {/* Modal Políticas e Termos */}
       {legalModal && (

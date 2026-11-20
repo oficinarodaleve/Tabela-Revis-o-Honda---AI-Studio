@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { RefreshCw, Search, Trash2 } from 'lucide-react';
-import { Part, PartUnit, PriceMode } from '../../types';
+import { Part, PriceMode, STANDARD_PART_UNITS } from '../../types';
+import { adminFetch } from '../../utils/adminAuth';
 import { formatBRL, formatDateTimeBR } from '../../utils/pricing';
 
 interface TabPricesPartsProps {
@@ -14,6 +15,12 @@ interface EditablePart extends Part {
   original_code: string;
 }
 
+const CUSTOM_UNIT_VALUE = '__CUSTOM__';
+
+function isStandardUnit(unit: string): boolean {
+  return (STANDARD_PART_UNITS as readonly string[]).includes(unit);
+}
+
 export function TabPricesParts({
   parts,
   lastSync,
@@ -21,6 +28,7 @@ export function TabPricesParts({
   onToast,
 }: TabPricesPartsProps) {
   const [rows, setRows] = useState<EditablePart[]>([]);
+  const [customModeByRow, setCustomModeByRow] = useState<Record<string, boolean>>({});
   const [search, setSearch] = useState('');
   const [syncing, setSyncing] = useState(false);
   const [savingBatch, setSavingBatch] = useState(false);
@@ -29,7 +37,8 @@ export function TabPricesParts({
   // New part form
   const [newCode, setNewCode] = useState('');
   const [newDesc, setNewDesc] = useState('');
-  const [newUnit, setNewUnit] = useState<PartUnit>('UN');
+  const [newUnitSelect, setNewUnitSelect] = useState<string>('UN');
+  const [newCustomUnit, setNewCustomUnit] = useState<string>('');
   const [newQty, setNewQty] = useState('1');
   const [newPrice, setNewPrice] = useState('');
   const [newMode, setNewMode] = useState<PriceMode>('auto');
@@ -37,6 +46,13 @@ export function TabPricesParts({
 
   useEffect(() => {
     setRows(parts.map((p) => ({ ...p, original_code: p.code })));
+    const nextCustomMode: Record<string, boolean> = {};
+    for (const p of parts) {
+      if (!isStandardUnit(p.unit)) {
+        nextCustomMode[p.code] = true;
+      }
+    }
+    setCustomModeByRow(nextCustomMode);
   }, [parts]);
 
   const isDirty = useMemo(() => {
@@ -74,7 +90,7 @@ export function TabPricesParts({
   const handleSyncNow = async () => {
     setSyncing(true);
     try {
-      const res = await fetch('/api/admin/prices/sync', { method: 'POST' });
+      const res = await adminFetch('/api/admin/prices/sync', { method: 'POST' });
       const data = await res.json();
       await onSaved();
       onToast(
@@ -94,15 +110,26 @@ export function TabPricesParts({
       onToast('error', 'Preencha Código Honda e Descrição.');
       return;
     }
+
+    const effectiveUnit =
+      newUnitSelect === CUSTOM_UNIT_VALUE
+        ? newCustomUnit.trim().toUpperCase()
+        : newUnitSelect;
+
+    if (!effectiveUnit) {
+      onToast('error', 'Informe a unidade personalizada (ex.: CX, PCT, CM).');
+      return;
+    }
+
     setAdding(true);
     try {
-      const res = await fetch('/api/admin/parts', {
+      const res = await adminFetch('/api/admin/parts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           code: newCode.trim(),
           description: newDesc.trim(),
-          unit: newUnit,
+          unit: effectiveUnit,
           default_qty: Number(newQty) || 1,
           price: Number(String(newPrice).replace(',', '.')) || 0,
           mode: newMode,
@@ -113,7 +140,8 @@ export function TabPricesParts({
       if (!res.ok) throw new Error(data.error || 'Erro ao adicionar peça.');
       setNewCode('');
       setNewDesc('');
-      setNewUnit('UN');
+      setNewUnitSelect('UN');
+      setNewCustomUnit('');
       setNewQty('1');
       setNewPrice('');
       setNewMode('auto');
@@ -128,9 +156,18 @@ export function TabPricesParts({
   };
 
   const handleSaveBatch = async () => {
+    const emptyUnitRow = rows.find((r) => !r.unit.trim());
+    if (emptyUnitRow) {
+      onToast(
+        'error',
+        `Informe a unidade personalizada para a peça ${emptyUnitRow.code}.`
+      );
+      return;
+    }
+
     setSavingBatch(true);
     try {
-      const res = await fetch('/api/admin/parts/batch', {
+      const res = await adminFetch('/api/admin/parts/batch', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -138,7 +175,7 @@ export function TabPricesParts({
             original_code: r.original_code,
             code: r.code,
             description: r.description,
-            unit: r.unit,
+            unit: r.unit.trim().toUpperCase(),
             price: Number(r.price),
             mode: r.mode,
             is_optional: r.is_optional,
@@ -157,7 +194,7 @@ export function TabPricesParts({
 
   const handleDeletePart = async (code: string) => {
     try {
-      const res = await fetch(`/api/admin/parts/${encodeURIComponent(code)}`, {
+      const res = await adminFetch(`/api/admin/parts/${encodeURIComponent(code)}`, {
         method: 'DELETE',
       });
       if (!res.ok) throw new Error('Erro ao remover peça.');
@@ -230,13 +267,27 @@ export function TabPricesParts({
               Unidade
             </label>
             <select
-              value={newUnit}
-              onChange={(e) => setNewUnit(e.target.value as PartUnit)}
+              value={newUnitSelect}
+              onChange={(e) => setNewUnitSelect(e.target.value)}
               className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
             >
-              <option value="UN">UN</option>
-              <option value="ML">ML (preço por 100ml)</option>
+              {STANDARD_PART_UNITS.map((u) => (
+                <option key={u} value={u}>
+                  {u === 'ML' ? 'ML (preço por 100ml)' : u}
+                </option>
+              ))}
+              <option value={CUSTOM_UNIT_VALUE}>Outro...</option>
             </select>
+            {newUnitSelect === CUSTOM_UNIT_VALUE && (
+              <input
+                type="text"
+                maxLength={16}
+                value={newCustomUnit}
+                onChange={(e) => setNewCustomUnit(e.target.value.toUpperCase())}
+                placeholder="Ex.: CX, PCT, CM"
+                className="mt-1.5 w-full rounded-xl border border-[#E4002B]/40 bg-red-50/30 px-3 py-1.5 font-mono text-xs font-semibold uppercase text-neutral-900 placeholder:normal-case focus:border-[#E4002B] focus:outline-none"
+              />
+            )}
           </div>
 
           <div>
@@ -352,98 +403,139 @@ export function TabPricesParts({
               </tr>
             </thead>
             <tbody className="divide-y divide-neutral-100">
-              {filteredRows.map((row) => (
-                <tr key={row.original_code} className="hover:bg-neutral-50/60">
-                  <td className="px-4 py-2.5 align-top">
-                    <input
-                      type="text"
-                      value={row.code}
-                      onChange={(e) =>
-                        updateRow(row.original_code, { code: e.target.value })
-                      }
-                      className="w-32 rounded-lg border border-neutral-200 px-2.5 py-1.5 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                    />
-                  </td>
-                  <td className="px-4 py-2.5 align-top">
-                    <input
-                      type="text"
-                      value={row.description}
-                      onChange={(e) =>
-                        updateRow(row.original_code, { description: e.target.value })
-                      }
-                      className="w-full min-w-[200px] rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-900 focus:border-[#E4002B] focus:outline-none"
-                    />
-                    <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-500">
+              {filteredRows.map((row) => {
+                const isCustom =
+                  Boolean(customModeByRow[row.original_code]) || !isStandardUnit(row.unit);
+                const selectVal = isCustom ? CUSTOM_UNIT_VALUE : row.unit;
+
+                return (
+                  <tr key={row.original_code} className="hover:bg-neutral-50/60">
+                    <td className="px-4 py-2.5 align-top">
                       <input
-                        type="checkbox"
-                        checked={row.is_optional}
+                        type="text"
+                        value={row.code}
                         onChange={(e) =>
-                          updateRow(row.original_code, { is_optional: e.target.checked })
+                          updateRow(row.original_code, { code: e.target.value })
                         }
-                        className="h-3 w-3 rounded accent-[#E4002B]"
+                        className="w-32 rounded-lg border border-neutral-200 px-2.5 py-1.5 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
                       />
-                      <span>opcional</span>
-                    </label>
-                  </td>
-                  <td className="px-3 py-2.5 align-top">
-                    <select
-                      value={row.unit}
-                      onChange={(e) =>
-                        updateRow(row.original_code, { unit: e.target.value as PartUnit })
-                      }
-                      className="rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-xs font-semibold text-neutral-700 focus:border-[#E4002B] focus:outline-none"
-                    >
-                      <option value="UN">UN</option>
-                      <option value="ML">ML</option>
-                    </select>
-                  </td>
-                  <td className="px-4 py-2.5 align-top text-right">
-                    <div className="inline-flex items-center rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5">
-                      <span className="mr-1.5 text-[11px] font-semibold text-neutral-400">
-                        R$
-                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 align-top">
                       <input
-                        type="number"
-                        step="0.01"
-                        min={0}
-                        value={row.price}
+                        type="text"
+                        value={row.description}
                         onChange={(e) =>
-                          updateRow(row.original_code, { price: Number(e.target.value) })
+                          updateRow(row.original_code, { description: e.target.value })
                         }
-                        className="w-20 text-right font-mono text-xs font-semibold text-neutral-900 tabular-nums focus:outline-none"
+                        className="w-full min-w-[200px] rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-900 focus:border-[#E4002B] focus:outline-none"
                       />
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5 align-top">
-                    <select
-                      value={row.mode}
-                      onChange={(e) =>
-                        updateRow(row.original_code, { mode: e.target.value as PriceMode })
-                      }
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-800 focus:border-[#E4002B] focus:outline-none"
-                    >
-                      <option value="auto">Automático</option>
-                      <option value="manual">Manual</option>
-                    </select>
-                  </td>
-                  <td className="px-3 py-3 align-top text-right font-mono text-xs text-neutral-500 tabular-nums">
-                    {row.microwork_price !== null ? formatBRL(row.microwork_price) : '–'}
-                  </td>
-                  <td className="px-3 py-3 align-top text-xs text-neutral-500">
-                    {row.sync_status || '—'}
-                  </td>
-                  <td className="px-3 py-2.5 align-top text-center">
-                    <button
-                      type="button"
-                      onClick={() => handleDeletePart(row.original_code)}
-                      aria-label="Excluir peça"
-                      className="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-[#E4002B]"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </td>
-                </tr>
-              ))}
+                      <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-500">
+                        <input
+                          type="checkbox"
+                          checked={row.is_optional}
+                          onChange={(e) =>
+                            updateRow(row.original_code, { is_optional: e.target.checked })
+                          }
+                          className="h-3 w-3 rounded accent-[#E4002B]"
+                        />
+                        <span>opcional</span>
+                      </label>
+                    </td>
+                    <td className="px-3 py-2.5 align-top">
+                      <div className="flex flex-col gap-1">
+                        <select
+                          value={selectVal}
+                          onChange={(e) => {
+                            const chosen = e.target.value;
+                            if (chosen === CUSTOM_UNIT_VALUE) {
+                              setCustomModeByRow((prev) => ({
+                                ...prev,
+                                [row.original_code]: true,
+                              }));
+                              if (isStandardUnit(row.unit)) {
+                                updateRow(row.original_code, { unit: '' });
+                              }
+                            } else {
+                              setCustomModeByRow((prev) => ({
+                                ...prev,
+                                [row.original_code]: false,
+                              }));
+                              updateRow(row.original_code, { unit: chosen });
+                            }
+                          }}
+                          className="w-24 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-xs font-semibold text-neutral-700 focus:border-[#E4002B] focus:outline-none"
+                        >
+                          {STANDARD_PART_UNITS.map((u) => (
+                            <option key={u} value={u}>
+                              {u}
+                            </option>
+                          ))}
+                          <option value={CUSTOM_UNIT_VALUE}>Outro...</option>
+                        </select>
+                        {isCustom && (
+                          <input
+                            type="text"
+                            maxLength={16}
+                            value={row.unit}
+                            onChange={(e) =>
+                              updateRow(row.original_code, {
+                                unit: e.target.value.toUpperCase(),
+                              })
+                            }
+                            placeholder="Ex.: CX"
+                            className="w-24 rounded-lg border border-[#E4002B]/40 bg-red-50/30 px-2 py-1 font-mono text-[11px] font-semibold uppercase text-neutral-900 placeholder:normal-case focus:border-[#E4002B] focus:outline-none"
+                          />
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-4 py-2.5 align-top text-right">
+                      <div className="inline-flex items-center rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5">
+                        <span className="mr-1.5 text-[11px] font-semibold text-neutral-400">
+                          R$
+                        </span>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          value={row.price}
+                          onChange={(e) =>
+                            updateRow(row.original_code, { price: Number(e.target.value) })
+                          }
+                          className="w-20 text-right font-mono text-xs font-semibold text-neutral-900 tabular-nums focus:outline-none"
+                        />
+                      </div>
+                    </td>
+                    <td className="px-3 py-2.5 align-top">
+                      <select
+                        value={row.mode}
+                        onChange={(e) =>
+                          updateRow(row.original_code, { mode: e.target.value as PriceMode })
+                        }
+                        className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-800 focus:border-[#E4002B] focus:outline-none"
+                      >
+                        <option value="auto">Automático</option>
+                        <option value="manual">Manual</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-3 align-top text-right font-mono text-xs text-neutral-500 tabular-nums">
+                      {row.microwork_price !== null ? formatBRL(row.microwork_price) : '–'}
+                    </td>
+                    <td className="px-3 py-3 align-top text-xs text-neutral-500">
+                      {row.sync_status || '—'}
+                    </td>
+                    <td className="px-3 py-2.5 align-top text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleDeletePart(row.original_code)}
+                        aria-label="Excluir peça"
+                        className="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-[#E4002B]"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   APIProvider,
   AdvancedMarker,
@@ -25,6 +25,9 @@ interface UnitsMapSectionProps {
   units: UnitLocation[];
   mapsActive: boolean;
   mapsApiKey: string;
+  renderEyebrow?: () => React.ReactNode;
+  renderTitle?: () => React.ReactNode;
+  renderSubtitle?: () => React.ReactNode;
 }
 
 interface RouteOverlayProps {
@@ -32,6 +35,17 @@ interface RouteOverlayProps {
   destination: google.maps.LatLngLiteral | null;
   travelMode: 'moto' | 'carro';
   onRouteResult: (info: { distanceKm: string; durationMin: number } | null, error: string | null) => void;
+}
+
+function formatUnitAddress(unit: UnitLocation): string {
+  const streetPart = unit.number ? `${unit.street}, ${unit.number}` : unit.street;
+  const neighborhoodPart = unit.neighborhood ? ` - ${unit.neighborhood}` : '';
+  return `${streetPart}${neighborhoodPart}, ${unit.city} - ${unit.state}, ${unit.zip}`;
+}
+
+function buildDirectMapsUrl(unit: UnitLocation): string {
+  const fullAddr = formatUnitAddress(unit);
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddr)}`;
 }
 
 function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteOverlayProps) {
@@ -121,12 +135,67 @@ function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteO
   return null;
 }
 
+/**
+ * Resolves exact coordinates from each unit's formatted address via Google Maps Geocoder
+ * so that updating the address in SEO & Identidade automatically drops the pin on the exact street/number.
+ */
+function UnitAddressGeocoder({
+  units,
+  onResolved,
+}: {
+  units: UnitLocation[];
+  onResolved: (coordsById: Record<string, google.maps.LatLngLiteral>) => void;
+}) {
+  const geocodingLib = useMapsLibrary('geocoding');
+  const cacheRef = useRef<Record<string, google.maps.LatLngLiteral>>({});
+
+  useEffect(() => {
+    if (!geocodingLib || units.length === 0) return;
+    let cancelled = false;
+    const geocoder = new geocodingLib.Geocoder();
+
+    (async () => {
+      const updates: Record<string, google.maps.LatLngLiteral> = {};
+      for (const unit of units) {
+        const addressQuery = formatUnitAddress(unit);
+        const cacheKey = `${unit.id}::${addressQuery}`;
+        if (cacheRef.current[cacheKey]) {
+          updates[unit.id] = cacheRef.current[cacheKey];
+          continue;
+        }
+        try {
+          const result = await geocoder.geocode({ address: addressQuery, region: 'BR' });
+          const loc = result.results?.[0]?.geometry?.location;
+          if (loc) {
+            const literal = { lat: loc.lat(), lng: loc.lng() };
+            cacheRef.current[cacheKey] = literal;
+            updates[unit.id] = literal;
+          }
+        } catch {
+          // Fall back silently to stored unit.lat / unit.lng if geocoding fails or quota reached
+        }
+      }
+      if (!cancelled && Object.keys(updates).length > 0) {
+        onResolved(updates);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [geocodingLib, units, onResolved]);
+
+  return null;
+}
+
 function UnitMarker({
   unit,
+  position,
   isSelected,
   onSelect,
 }: {
   unit: UnitLocation;
+  position: google.maps.LatLngLiteral;
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -136,7 +205,7 @@ function UnitMarker({
     <>
       <AdvancedMarker
         ref={markerRef}
-        position={{ lat: unit.lat, lng: unit.lng }}
+        position={position}
         onClick={onSelect}
         title={unit.name}
       >
@@ -149,21 +218,16 @@ function UnitMarker({
       </AdvancedMarker>
       {isSelected && marker && (
         <InfoWindow anchor={marker} onCloseClick={() => {}}>
-          <div className="min-w-[210px] p-1 text-neutral-900">
+          <div className="min-w-[220px] p-1 text-neutral-900">
             <p className="text-sm font-bold text-neutral-900">{unit.name}</p>
-            <p className="mt-1 text-xs text-neutral-600">
-              {unit.street}, {unit.number} · {unit.neighborhood}
-            </p>
-            <p className="text-xs text-neutral-600">
-              {unit.city} – {unit.state}, {unit.zip}
-            </p>
+            <p className="mt-1 text-xs text-neutral-600">{formatUnitAddress(unit)}</p>
             <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2">
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                 {unit.rating.toFixed(1)}
               </span>
               <a
-                href={unit.gmb_url}
+                href={unit.gmb_url || buildDirectMapsUrl(unit)}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-xs font-semibold text-[#E4002B] hover:underline"
@@ -180,9 +244,11 @@ function UnitMarker({
 
 function MapCameraController({
   units,
+  coordsById,
   selectedTab,
 }: {
   units: UnitLocation[];
+  coordsById: Record<string, google.maps.LatLngLiteral>;
   selectedTab: string;
 }) {
   const map = useMap();
@@ -193,19 +259,27 @@ function MapCameraController({
 
     if (selectedTab === 'both' && units.length > 1 && coreLib) {
       const bounds = new coreLib.LatLngBounds();
-      units.forEach((u) => bounds.extend({ lat: u.lat, lng: u.lng }));
+      units.forEach((u) => bounds.extend(coordsById[u.id] || { lat: u.lat, lng: u.lng }));
       map.fitBounds(bounds, 60);
     } else {
       const target = units.find((u) => u.id === selectedTab) || units[0];
-      map.panTo({ lat: target.lat, lng: target.lng });
-      map.setZoom(15);
+      const pos = coordsById[target.id] || { lat: target.lat, lng: target.lng };
+      map.panTo(pos);
+      map.setZoom(16);
     }
-  }, [map, coreLib, units, selectedTab]);
+  }, [map, coreLib, units, coordsById, selectedTab]);
 
   return null;
 }
 
-export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSectionProps) {
+export function UnitsMapSection({
+  units,
+  mapsActive,
+  mapsApiKey,
+  renderEyebrow,
+  renderTitle,
+  renderSubtitle,
+}: UnitsMapSectionProps) {
   const [selectedTab, setSelectedTab] = useState<string>(units[0]?.id || 'vitoria-da-conquista');
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite'>('roadmap');
   const [travelMode, setTravelMode] = useState<'moto' | 'carro'>('moto');
@@ -214,9 +288,21 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
   const [routeSummary, setRouteSummary] = useState<{ distanceKm: string; durationMin: number } | null>(null);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [locating, setLocating] = useState(false);
+  const [geocodedCoords, setGeocodedCoords] = useState<Record<string, google.maps.LatLngLiteral>>({});
 
-  const activeUnit =
-    units.find((u) => u.id === selectedTab) || units[0];
+  const activeUnit = units.find((u) => u.id === selectedTab) || units[0];
+
+  const handleGeocoded = useCallback((resolved: Record<string, google.maps.LatLngLiteral>) => {
+    setGeocodedCoords((prev) => ({ ...prev, ...resolved }));
+  }, []);
+
+  const coordsById = useMemo(() => {
+    const map: Record<string, google.maps.LatLngLiteral> = {};
+    for (const u of units) {
+      map[u.id] = geocodedCoords[u.id] || { lat: u.lat, lng: u.lng };
+    }
+    return map;
+  }, [units, geocodedCoords]);
 
   const handleFocusOnMap = useCallback((unitId: string) => {
     setSelectedTab(unitId);
@@ -272,6 +358,7 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
   const canRenderInteractiveMap = mapsActive && Boolean(mapsApiKey);
   const visibleUnits =
     selectedTab === 'both' ? units : units.filter((u) => u.id === activeUnit?.id);
+  const activeUnitCoords = coordsById[activeUnit.id] || { lat: activeUnit.lat, lng: activeUnit.lng };
 
   return (
     <section
@@ -281,15 +368,27 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
       <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-widest text-[#E4002B]">
-              Onde estamos
-            </p>
-            <h2 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl">
-              Unidades e Como Chegar
-            </h2>
-            <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-400">
-              Localize nossas concessionárias autorizadas em Vitória da Conquista e Guanambi.
-            </p>
+            {renderEyebrow ? (
+              renderEyebrow()
+            ) : (
+              <p className="text-xs font-bold uppercase tracking-widest text-[#E4002B]">
+                Onde estamos
+              </p>
+            )}
+            {renderTitle ? (
+              renderTitle()
+            ) : (
+              <h2 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl">
+                Unidades e Como Chegar
+              </h2>
+            )}
+            {renderSubtitle ? (
+              renderSubtitle()
+            ) : (
+              <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                Localize nossas concessionárias autorizadas em Vitória da Conquista e Guanambi.
+              </p>
+            )}
           </div>
 
           <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-900">
@@ -434,10 +533,7 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
                   <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
                     <p className="flex items-start gap-2">
                       <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
-                      <span>
-                        {unit.street}, {unit.number} – {unit.neighborhood}, {unit.city} – {unit.state},{' '}
-                        {unit.zip}
-                      </span>
+                      <span>{formatUnitAddress(unit)}</span>
                     </p>
                     <p className="flex items-center gap-2">
                       <Phone className="h-4 w-4 shrink-0 text-neutral-400" />
@@ -457,7 +553,7 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
                       Focar no mapa
                     </button>
                     <a
-                      href={unit.gmb_url}
+                      href={unit.gmb_url || buildDirectMapsUrl(unit)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
@@ -474,7 +570,7 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
           {/* Right Column: Interactive Google Map */}
           <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
             {canRenderInteractiveMap ? (
-              <APIProvider apiKey={mapsApiKey} language="pt-BR" region="BR" libraries={['marker', 'routes']}>
+              <APIProvider apiKey={mapsApiKey} language="pt-BR" region="BR" libraries={['marker', 'routes', 'geocoding']}>
                 {/* Map/Satellite switcher */}
                 <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
                   <button
@@ -503,8 +599,8 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
 
                 <div className="h-[460px] w-full flex-1 lg:h-full">
                   <GoogleMap
-                    defaultCenter={{ lat: activeUnit.lat, lng: activeUnit.lng }}
-                    defaultZoom={15}
+                    defaultCenter={activeUnitCoords}
+                    defaultZoom={16}
                     mapId="DEMO_MAP_ID"
                     mapTypeId={mapTypeId}
                     gestureHandling="greedy"
@@ -514,11 +610,13 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
                     internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
                     style={{ width: '100%', height: '100%' }}
                   >
-                    <MapCameraController units={units} selectedTab={selectedTab} />
+                    <UnitAddressGeocoder units={units} onResolved={handleGeocoded} />
+                    <MapCameraController units={units} coordsById={coordsById} selectedTab={selectedTab} />
                     {units.map((u) => (
                       <UnitMarker
                         key={u.id}
                         unit={u}
+                        position={coordsById[u.id] || { lat: u.lat, lng: u.lng }}
                         isSelected={selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)}
                         onSelect={() => setSelectedTab(u.id)}
                       />
@@ -526,7 +624,7 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
                     {activeOrigin && activeUnit && (
                       <RouteOverlay
                         origin={activeOrigin}
-                        destination={{ lat: activeUnit.lat, lng: activeUnit.lng }}
+                        destination={activeUnitCoords}
                         travelMode={travelMode}
                         onRouteResult={handleRouteResult}
                       />
@@ -541,10 +639,10 @@ export function UnitsMapSection({ units, mapsActive, mapsApiKey }: UnitsMapSecti
                   Visualização direta no Google Maps
                 </h4>
                 <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
-                  Abra a localização oficial da {activeUnit.name} diretamente no aplicativo do Google Maps.
+                  Abra a localização oficial da {activeUnit.name} ({formatUnitAddress(activeUnit)}) diretamente no Google Maps.
                 </p>
                 <a
-                  href={activeUnit.gmb_url}
+                  href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#E4002B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#C80024]"
