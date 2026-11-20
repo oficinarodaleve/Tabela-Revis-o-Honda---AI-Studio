@@ -1,23 +1,147 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Activity, AlertTriangle, Check, CheckCircle2, Copy, Download, Image as ImageIcon, Plus, Save, Trash2, Upload } from 'lucide-react';
 import {
-  AlertTriangle,
-  Check,
-  Copy,
-  Download,
-  Image as ImageIcon,
-  Plus,
-  Save,
-  Trash2,
-  Upload,
-} from 'lucide-react';
-import { SeoSettings, UnitLocation } from '../../types';
+  FaqItem,
+  GoogleTagConfig,
+  MetaPixelConfig,
+  SeoSettings,
+  TikTokPixelConfig,
+  UnitLocation,
+} from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
+import {
+  sanitizeGoogleConversionLabel,
+  sanitizeGoogleTagId,
+  sanitizePixelId,
+  sanitizeTikTokPixelId,
+} from '../../utils/metaPixel';
 import { buildJsonLd } from '../SeoHeadSync';
 
 interface TabSeoIdentityProps {
   seo: SeoSettings;
+  faqs?: FaqItem[];
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
+}
+
+const DEFAULT_META_PIXEL: MetaPixelConfig = {
+  enabled: false,
+  pixel_id: '',
+  events: {
+    page_view: true,
+    view_content: true,
+    lead_contact: true,
+  },
+  custom_code: '',
+};
+
+const DEFAULT_GOOGLE_TAG: GoogleTagConfig = {
+  enabled: false,
+  ga4_id: '',
+  ads_id: '',
+  conversion_label: '',
+  events: {
+    page_view: true,
+    view_content: true,
+    lead_contact: true,
+  },
+  custom_code: '',
+};
+
+const DEFAULT_TIKTOK_PIXEL: TikTokPixelConfig = {
+  enabled: false,
+  pixel_id: '',
+  events: {
+    page_view: true,
+    view_content: true,
+    lead_contact: true,
+  },
+  custom_code: '',
+};
+
+function normalizeSeoDraft(seo: SeoSettings): SeoSettings {
+  return {
+    favicon_url: seo.favicon_url || '',
+    logo_url: seo.logo_url || '',
+    logo_alt: seo.logo_alt || 'Rodaleve Honda – Concessionária Autorizada',
+    short_name: seo.short_name || 'Rodaleve',
+    meta_title: seo.meta_title || '',
+    meta_description: seo.meta_description || '',
+    meta_keywords: seo.meta_keywords || '',
+    author_brand: seo.author_brand || 'Rodaleve Honda',
+    canonical_url: seo.canonical_url || '',
+    og_same_title: seo.og_same_title ?? true,
+    og_title: seo.og_title || '',
+    og_same_description: seo.og_same_description ?? true,
+    og_description: seo.og_description || '',
+    og_image: seo.og_image || '',
+    og_type: seo.og_type || 'website',
+    twitter_card: seo.twitter_card || 'summary_large_image',
+    business_type: seo.business_type || 'MotorcycleDealer',
+    company_name: seo.company_name || 'Rodaleve Honda',
+    instagram_url: seo.instagram_url || '',
+    youtube_url: seo.youtube_url || '',
+    facebook_url: seo.facebook_url || 'https://www.facebook.com/concessionariarodaleve/',
+    robots_policy: seo.robots_policy || 'index, follow',
+    robots_txt: seo.robots_txt || '',
+    sitemap_xml: seo.sitemap_xml || '',
+    head_scripts: seo.head_scripts || '',
+    body_scripts: seo.body_scripts || '',
+    meta_pixel: {
+      enabled: Boolean(seo.meta_pixel?.enabled),
+      pixel_id: seo.meta_pixel?.pixel_id || '',
+      events: {
+        page_view: seo.meta_pixel?.events?.page_view ?? true,
+        view_content: seo.meta_pixel?.events?.view_content ?? true,
+        lead_contact: seo.meta_pixel?.events?.lead_contact ?? true,
+      },
+      custom_code: seo.meta_pixel?.custom_code || '',
+    },
+    google_tag: {
+      enabled: Boolean(seo.google_tag?.enabled),
+      ga4_id: seo.google_tag?.ga4_id || '',
+      ads_id: seo.google_tag?.ads_id || '',
+      conversion_label: seo.google_tag?.conversion_label || '',
+      events: {
+        page_view: seo.google_tag?.events?.page_view ?? true,
+        view_content: seo.google_tag?.events?.view_content ?? true,
+        lead_contact: seo.google_tag?.events?.lead_contact ?? true,
+      },
+      custom_code: seo.google_tag?.custom_code || '',
+    },
+    tiktok_pixel: {
+      enabled: Boolean(seo.tiktok_pixel?.enabled),
+      pixel_id: seo.tiktok_pixel?.pixel_id || '',
+      events: {
+        page_view: seo.tiktok_pixel?.events?.page_view ?? true,
+        view_content: seo.tiktok_pixel?.events?.view_content ?? true,
+        lead_contact: seo.tiktok_pixel?.events?.lead_contact ?? true,
+      },
+      custom_code: seo.tiktok_pixel?.custom_code || '',
+    },
+    units: (seo.units || []).map((u) => ({
+      id: u.id || `unidade-${Date.now()}`,
+      name: u.name || '',
+      cnpj: u.cnpj || '',
+      phone: u.phone || '',
+      whatsapp: u.whatsapp || '',
+      hours: u.hours || '',
+      gmb_url: u.gmb_url || '',
+      street: u.street || '',
+      number: u.number || '',
+      neighborhood: u.neighborhood || '',
+      city: u.city || '',
+      state: u.state || 'BA',
+      zip: u.zip || '',
+      rating: typeof u.rating === 'number' ? u.rating : 4.8,
+      lat: typeof u.lat === 'number' ? u.lat : -14.8655,
+      lng: typeof u.lng === 'number' ? u.lng : -40.8385,
+    })),
+  };
 }
 
 function downloadTextFile(filename: string, content: string, mime = 'text/plain') {
@@ -30,22 +154,118 @@ function downloadTextFile(filename: string, content: string, mime = 'text/plain'
   URL.revokeObjectURL(url);
 }
 
-export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
-  const [draft, setDraft] = useState<SeoSettings>(seo);
+export function TabSeoIdentity({
+  seo,
+  faqs = [],
+  onSaved,
+  onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
+}: TabSeoIdentityProps) {
+  const normalizedIncoming = useMemo(() => normalizeSeoDraft(seo), [seo]);
+  const [draft, setDraft] = useState<SeoSettings>(() => normalizeSeoDraft(seo));
   const [saving, setSaving] = useState(false);
+  const [justSavedMsg, setJustSavedMsg] = useState<string | null>(null);
   const [previewDevice, setPreviewDevice] = useState<'desktop' | 'mobile'>('desktop');
   const [uploadingField, setUploadingField] = useState<'favicon' | 'logo' | 'og' | null>(null);
 
   const faviconInputRef = useRef<HTMLInputElement | null>(null);
   const logoInputRef = useRef<HTMLInputElement | null>(null);
   const ogInputRef = useRef<HTMLInputElement | null>(null);
+  const lastAutoSavedRef = useRef<string>('');
 
   useEffect(() => {
-    setDraft(seo);
-  }, [seo]);
+    setDraft(normalizedIncoming);
+    lastAutoSavedRef.current = JSON.stringify(normalizedIncoming);
+  }, [normalizedIncoming]);
+
+  const hasPendingChanges = useMemo(
+    () => JSON.stringify(draft) !== JSON.stringify(normalizedIncoming),
+    [draft, normalizedIncoming]
+  );
+
+  useEffect(() => {
+    onDirtyChange?.(hasPendingChanges);
+  }, [hasPendingChanges, onDirtyChange]);
+
+  // Auto-save com debounce quando ativado
+  useEffect(() => {
+    if (!autoSaveEnabled || !hasPendingChanges || saving) return;
+    const serialized = JSON.stringify(draft);
+    if (serialized === lastAutoSavedRef.current) return;
+
+    const timer = setTimeout(async () => {
+      saveGestorDraftCache('seo', draft);
+      try {
+        const res = await adminFetch('/api/admin/seo', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: serialized,
+        });
+        if (res.ok) {
+          lastAutoSavedRef.current = serialized;
+          try {
+            window.localStorage?.setItem('rodaleve_seo_cache', serialized);
+          } catch {
+            // Ignora sandbox
+          }
+          await onSaved();
+          onAutoSaveComplete?.();
+        }
+      } catch {
+        // Cache local já atualizado em memória/localStorage
+      }
+    }, 550);
+
+    return () => clearTimeout(timer);
+  }, [autoSaveEnabled, hasPendingChanges, saving, draft, onSaved, onAutoSaveComplete]);
 
   const update = (patch: Partial<SeoSettings>) => {
+    setJustSavedMsg(null);
     setDraft((prev) => ({ ...prev, ...patch }));
+  };
+
+  const pixelCfg = draft.meta_pixel || DEFAULT_META_PIXEL;
+  const updatePixel = (patch: Partial<MetaPixelConfig>) => {
+    update({
+      meta_pixel: {
+        ...pixelCfg,
+        ...patch,
+        events: {
+          ...pixelCfg.events,
+          ...(patch.events || {}),
+        },
+      },
+    });
+  };
+
+  const googleTagCfg = draft.google_tag || DEFAULT_GOOGLE_TAG;
+  const updateGoogleTag = (patch: Partial<GoogleTagConfig>) => {
+    update({
+      google_tag: {
+        ...googleTagCfg,
+        ...patch,
+        events: {
+          ...googleTagCfg.events,
+          ...(patch.events || {}),
+        },
+      },
+    });
+  };
+
+  const tiktokPixelCfg = draft.tiktok_pixel || DEFAULT_TIKTOK_PIXEL;
+  const updateTikTokPixel = (patch: Partial<TikTokPixelConfig>) => {
+    update({
+      tiktok_pixel: {
+        ...tiktokPixelCfg,
+        ...patch,
+        events: {
+          ...tiktokPixelCfg.events,
+          ...(patch.events || {}),
+        },
+      },
+    });
   };
 
   const handleUpload = async (field: 'favicon' | 'logo' | 'og', file: File) => {
@@ -69,6 +289,7 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
 
   const handleSave = async () => {
     setSaving(true);
+    setJustSavedMsg(null);
     try {
       const res = await adminFetch('/api/admin/seo', {
         method: 'PUT',
@@ -76,8 +297,17 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
         body: JSON.stringify(draft),
       });
       if (!res.ok) throw new Error('Erro ao salvar SEO & Identidade.');
+      try {
+        window.localStorage?.setItem('rodaleve_seo_cache', JSON.stringify(draft));
+      } catch {
+        // Ignora bloqueio em sandbox
+      }
+      saveGestorDraftCache('seo', draft);
+      lastAutoSavedRef.current = JSON.stringify(draft);
       await onSaved();
-      onToast('success', 'Configurações de SEO e Identidade salvas e publicadas.');
+      const msg = 'Configurações de SEO e Identidade salvas e publicadas!';
+      setJustSavedMsg(msg);
+      onToast('success', msg);
     } catch (e) {
       onToast('error', e instanceof Error ? e.message : 'Erro ao salvar.');
     } finally {
@@ -92,9 +322,13 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
     ? draft.meta_description
     : draft.og_description || draft.meta_description;
 
-  const jsonLdString = useMemo(() => JSON.stringify(buildJsonLd(draft), null, 2), [draft]);
+  const jsonLdString = useMemo(
+    () => JSON.stringify(buildJsonLd(draft, faqs), null, 2),
+    [draft, faqs]
+  );
 
-  // Auditoria rápida checklist
+  // Análise / Auditoria rápida checklist
+  const pixelActiveAndValid = Boolean(pixelCfg.enabled && sanitizePixelId(pixelCfg.pixel_id));
   const auditItems = useMemo(() => {
     const titleOk = draft.meta_title.trim().length > 0 && draft.meta_title.trim().length <= 60;
     const descLen = draft.meta_description.trim().length;
@@ -115,8 +349,16 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
       { label: 'Imagem og:image (1200x630)', ok: ogImageOk },
       { label: 'Alt text da logo preenchido', ok: altOk },
       { label: 'Unidades com nome, telefone e cidade', ok: unitsOk },
+      {
+        label: pixelActiveAndValid
+          ? `Meta Pixel ativo (ID ${sanitizePixelId(pixelCfg.pixel_id)})`
+          : pixelCfg.enabled
+            ? 'Meta Pixel ativo, mas falta informar o Pixel ID'
+            : 'Meta Pixel inativo (pendente de ativação)',
+        ok: pixelActiveAndValid,
+      },
     ];
-  }, [draft]);
+  }, [draft, pixelActiveAndValid, pixelCfg.enabled, pixelCfg.pixel_id]);
 
   const auditScore = useMemo(() => {
     const passed = auditItems.filter((i) => i.ok).length;
@@ -176,9 +418,22 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="font-display text-2xl font-bold text-neutral-900">
-            SEO & Identidade
-          </h1>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-display text-2xl font-bold text-neutral-900">
+              SEO & Identidade
+            </h1>
+            {hasPendingChanges && (
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold text-amber-800">
+                Alterações pendentes
+              </span>
+            )}
+            {justSavedMsg && !hasPendingChanges && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                {justSavedMsg}
+              </span>
+            )}
+          </div>
           <p className="mt-1 text-sm text-neutral-500">
             Identidade visual, metadados de busca, compartilhamento social e dados estruturados locais.
           </p>
@@ -188,10 +443,18 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className="inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+          className={`inline-flex items-center gap-2 self-start rounded-xl px-5 py-2.5 text-xs font-bold text-white transition-all disabled:opacity-60 ${
+            hasPendingChanges
+              ? 'bg-[#E4002B] shadow-md ring-2 ring-[#E4002B]/30 hover:bg-[#C80024]'
+              : 'bg-[#E4002B] hover:bg-[#C80024]'
+          }`}
         >
           <Save className="h-4 w-4" />
-          {saving ? 'Salvando...' : 'Salvar Configurações'}
+          {saving
+            ? 'Salvando...'
+            : hasPendingChanges
+              ? 'Salvar Configurações *'
+              : 'Salvar Configurações'}
         </button>
       </div>
 
@@ -321,16 +584,30 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
                 </button>
               </div>
 
-              <div>
-                <label className="block text-[11px] font-semibold text-neutral-600">
-                  Texto alternativo (Alt Text) da logo
-                </label>
-                <input
-                  type="text"
-                  value={draft.logo_alt}
-                  onChange={(e) => update({ logo_alt: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
-                />
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-600">
+                    Nome curto da marca
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.short_name || ''}
+                    onChange={(e) => update({ short_name: e.target.value })}
+                    placeholder="Ex.: Rodaleve"
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-semibold text-neutral-600">
+                    Texto alternativo (Alt Text) da logo
+                  </label>
+                  <input
+                    type="text"
+                    value={draft.logo_alt}
+                    onChange={(e) => update({ logo_alt: e.target.value })}
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                  />
+                </div>
               </div>
             </div>
 
@@ -589,6 +866,15 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
                   className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs"
                 />
               </div>
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-semibold text-neutral-700">YouTube</label>
+                <input
+                  type="url"
+                  value={draft.youtube_url}
+                  onChange={(e) => update({ youtube_url: e.target.value })}
+                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs"
+                />
+              </div>
             </div>
 
             {/* Unidades / Lojas */}
@@ -648,10 +934,17 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
                     />
                     <input
                       type="text"
+                      value={unit.whatsapp}
+                      onChange={(e) => handleUpdateUnit(idx, { whatsapp: e.target.value })}
+                      placeholder="WhatsApp (ex: (77) 2888-0003)"
+                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                    />
+                    <input
+                      type="text"
                       value={unit.hours}
                       onChange={(e) => handleUpdateUnit(idx, { hours: e.target.value })}
                       placeholder="Horário (Mo-Fr 07:30-18:00)"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs sm:col-span-2"
+                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
                     />
                     <input
                       type="text"
@@ -697,13 +990,32 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
                         className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-xs"
                       />
                     </div>
-                    <input
-                      type="url"
-                      value={unit.gmb_url}
-                      onChange={(e) => handleUpdateUnit(idx, { gmb_url: e.target.value })}
-                      placeholder="Link do Google Meu Negócio"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs sm:col-span-3"
-                    />
+                    <div className="flex flex-wrap items-center gap-2 sm:col-span-3">
+                      <input
+                        type="url"
+                        value={unit.gmb_url}
+                        onChange={(e) => handleUpdateUnit(idx, { gmb_url: e.target.value })}
+                        placeholder="Link do Google Maps / Google Meu Negócio"
+                        className="min-w-[200px] flex-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const streetPart = unit.number ? `${unit.street}, ${unit.number}` : unit.street;
+                          const neighborhoodPart = unit.neighborhood ? ` - ${unit.neighborhood}` : '';
+                          const brandPrefix = unit.name?.toLowerCase().includes('rodaleve')
+                            ? 'Rodaleve Honda'
+                            : unit.name || 'Rodaleve Honda';
+                          const fullQuery = `${brandPrefix}, ${streetPart}${neighborhoodPart}, ${unit.city} - ${unit.state}, ${unit.zip}`;
+                          handleUpdateUnit(idx, {
+                            gmb_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullQuery)}`,
+                          });
+                        }}
+                        className="whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 hover:border-[#E4002B] hover:text-[#E4002B]"
+                      >
+                        Atualizar link pelo endereço
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -836,20 +1148,446 @@ export function TabSeoIdentity({ seo, onSaved, onToast }: TabSeoIdentityProps) {
                   rows={3}
                   value={draft.body_scripts}
                   onChange={(e) => update({ body_scripts: e.target.value })}
-                  placeholder="Pixel da Meta, GTM noscript..."
+                  placeholder="GTM noscript ou tags personalizadas..."
                   className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-[11px]"
                 />
               </div>
             </div>
           </div>
+
+          {/* Card 4: Meta Pixel (Facebook / Instagram) */}
+          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-50 text-blue-600">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-neutral-900">
+                    Meta Pixel (Facebook / Instagram)
+                  </h2>
+                  <p className="text-xs text-neutral-500">
+                    Rastreamento oficial automático de visualizações e agendamentos no site público.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={pixelCfg.enabled}
+                onClick={() => updatePixel({ enabled: !pixelCfg.enabled })}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  pixelCfg.enabled
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-neutral-200 bg-neutral-100 text-neutral-600'
+                }`}
+              >
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    pixelCfg.enabled ? 'bg-emerald-500' : 'bg-neutral-400'
+                  }`}
+                />
+                {pixelCfg.enabled ? 'Ativo' : 'Inativo'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700">
+                  ID do Pixel (Pixel ID numérico)
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={pixelCfg.pixel_id}
+                  onChange={(e) =>
+                    updatePixel({
+                      pixel_id: sanitizePixelId(e.target.value),
+                    })
+                  }
+                  placeholder="Ex.: 1234567890123456"
+                  className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  Apenas dígitos numéricos; espaços acidentais são removidos automaticamente.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3">
+                <p className="text-xs font-bold text-neutral-800">Eventos padrão disparados</p>
+                <div className="mt-2 space-y-1.5 text-xs text-neutral-700">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={pixelCfg.events.page_view}
+                      onChange={(e) =>
+                        updatePixel({
+                          events: { ...pixelCfg.events, page_view: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">PageView</code> (visualização da página)
+                    </span>
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={pixelCfg.events.view_content}
+                      onChange={(e) =>
+                        updatePixel({
+                          events: { ...pixelCfg.events, view_content: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">ViewContent</code> (filtro / revisão / modelo)
+                    </span>
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={pixelCfg.events.lead_contact}
+                      onChange={(e) =>
+                        updatePixel({
+                          events: { ...pixelCfg.events, lead_contact: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">Lead / Contact</code> (clique no WhatsApp)
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <details className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-xs">
+              <summary className="cursor-pointer font-semibold text-neutral-700">
+                Código base / complementar opcional (avançado)
+              </summary>
+              <p className="mt-1.5 text-[11px] text-neutral-500">
+                O script oficial (<code className="font-mono">fbq(&apos;init&apos;, PIXEL_ID)</code> +{' '}
+                <code className="font-mono">PageView</code>) já é injetado automaticamente ao ativar o Pixel. Use este campo apenas para comandos adicionais opcionais.
+              </p>
+              <textarea
+                rows={3}
+                value={pixelCfg.custom_code || ''}
+                onChange={(e) => updatePixel({ custom_code: e.target.value })}
+                placeholder="// Ex.: fbq('trackCustom', 'TabelaRevisoesHonda');"
+                className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-[11px]"
+              />
+            </details>
+          </div>
+
+          {/* Card 5: Tag do Google (Google Ads e GA4) */}
+          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-amber-50 text-amber-600">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-neutral-900">
+                    Tag do Google (Google Ads e GA4)
+                  </h2>
+                  <p className="text-xs text-neutral-500">
+                    Injeção automática do <code className="font-mono">gtag.js</code> para Google Analytics 4 e conversões do Google Ads.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={googleTagCfg.enabled}
+                onClick={() => updateGoogleTag({ enabled: !googleTagCfg.enabled })}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  googleTagCfg.enabled
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-neutral-200 bg-neutral-100 text-neutral-600'
+                }`}
+              >
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    googleTagCfg.enabled ? 'bg-emerald-500' : 'bg-neutral-400'
+                  }`}
+                />
+                {googleTagCfg.enabled ? 'Ativo' : 'Inativo'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-700">
+                    ID do Google Analytics 4 (GA4)
+                  </label>
+                  <input
+                    type="text"
+                    value={googleTagCfg.ga4_id}
+                    onChange={(e) =>
+                      updateGoogleTag({
+                        ga4_id: sanitizeGoogleTagId(e.target.value),
+                      })
+                    }
+                    placeholder="Ex.: G-XXXXXXXXXX"
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-700">
+                    ID do Google Ads
+                  </label>
+                  <input
+                    type="text"
+                    value={googleTagCfg.ads_id}
+                    onChange={(e) =>
+                      updateGoogleTag({
+                        ads_id: sanitizeGoogleTagId(e.target.value),
+                      })
+                    }
+                    placeholder="Ex.: AW-1234567890"
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-neutral-700">
+                    Rótulo de conversão Google Ads (opcional)
+                  </label>
+                  <input
+                    type="text"
+                    value={googleTagCfg.conversion_label || ''}
+                    onChange={(e) =>
+                      updateGoogleTag({
+                        conversion_label: sanitizeGoogleConversionLabel(e.target.value),
+                      })
+                    }
+                    placeholder="Ex.: AbC1dEfGhIjK_12345"
+                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  />
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    Dispara <code className="font-mono">gtag(&apos;event&apos;, &apos;conversion&apos;, &#123; send_to: &apos;AW-ID/ROTULO&apos; &#125;)</code> nos cliques de WhatsApp.
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3">
+                <p className="text-xs font-bold text-neutral-800">Eventos padrão disparados</p>
+                <div className="mt-2 space-y-1.5 text-xs text-neutral-700">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={googleTagCfg.events.page_view}
+                      onChange={(e) =>
+                        updateGoogleTag({
+                          events: { ...googleTagCfg.events, page_view: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">page_view</code> (visualização da página)
+                    </span>
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={googleTagCfg.events.view_content}
+                      onChange={(e) =>
+                        updateGoogleTag({
+                          events: { ...googleTagCfg.events, view_content: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">view_item</code> (filtro / revisão / modelo)
+                    </span>
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={googleTagCfg.events.lead_contact}
+                      onChange={(e) =>
+                        updateGoogleTag({
+                          events: { ...googleTagCfg.events, lead_contact: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">generate_lead / conversion</code> (clique no WhatsApp)
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <details className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-xs">
+              <summary className="cursor-pointer font-semibold text-neutral-700">
+                Código complementar opcional (avançado)
+              </summary>
+              <p className="mt-1.5 text-[11px] text-neutral-500">
+                A tag global <code className="font-mono">gtag(&apos;config&apos;, ID)</code> já é carregada automaticamente ao ativar. Use este campo apenas para comandos extras opcionais.
+              </p>
+              <textarea
+                rows={3}
+                value={googleTagCfg.custom_code || ''}
+                onChange={(e) => updateGoogleTag({ custom_code: e.target.value })}
+                placeholder="// Ex.: gtag('set', { currency: 'BRL' });"
+                className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-[11px]"
+              />
+            </details>
+          </div>
+
+          {/* Card 6: TikTok Pixel */}
+          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-neutral-900 text-white">
+                  <Activity className="h-4 w-4" />
+                </div>
+                <div>
+                  <h2 className="text-base font-bold text-neutral-900">
+                    TikTok Pixel
+                  </h2>
+                  <p className="text-xs text-neutral-500">
+                    Rastreamento oficial automático do TikTok Ads para visualizações e contatos via WhatsApp.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                role="switch"
+                aria-checked={tiktokPixelCfg.enabled}
+                onClick={() => updateTikTokPixel({ enabled: !tiktokPixelCfg.enabled })}
+                className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                  tiktokPixelCfg.enabled
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-800'
+                    : 'border-neutral-200 bg-neutral-100 text-neutral-600'
+                }`}
+              >
+                <span
+                  className={`h-2.5 w-2.5 rounded-full ${
+                    tiktokPixelCfg.enabled ? 'bg-emerald-500' : 'bg-neutral-400'
+                  }`}
+                />
+                {tiktokPixelCfg.enabled ? 'Ativo' : 'Inativo'}
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div>
+                <label className="block text-xs font-semibold text-neutral-700">
+                  ID do TikTok Pixel (Pixel Code)
+                </label>
+                <input
+                  type="text"
+                  value={tiktokPixelCfg.pixel_id}
+                  onChange={(e) =>
+                    updateTikTokPixel({
+                      pixel_id: sanitizeTikTokPixelId(e.target.value),
+                    })
+                  }
+                  placeholder="Ex.: CXXXXXXXXXXXXXXXXX"
+                  className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-neutral-500">
+                  Código alfanumérico exibido no TikTok Ads Manager; espaços são removidos automaticamente.
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3">
+                <p className="text-xs font-bold text-neutral-800">Eventos padrão disparados</p>
+                <div className="mt-2 space-y-1.5 text-xs text-neutral-700">
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={tiktokPixelCfg.events.page_view}
+                      onChange={(e) =>
+                        updateTikTokPixel({
+                          events: { ...tiktokPixelCfg.events, page_view: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">PageView</code> (<code className="font-mono">ttq.page()</code>)
+                    </span>
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={tiktokPixelCfg.events.view_content}
+                      onChange={(e) =>
+                        updateTikTokPixel({
+                          events: { ...tiktokPixelCfg.events, view_content: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">ViewContent</code> (filtro / revisão / modelo)
+                    </span>
+                  </label>
+
+                  <label className="flex cursor-pointer items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={tiktokPixelCfg.events.lead_contact}
+                      onChange={(e) =>
+                        updateTikTokPixel({
+                          events: { ...tiktokPixelCfg.events, lead_contact: e.target.checked },
+                        })
+                      }
+                      className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    />
+                    <span>
+                      <code className="font-mono font-semibold">Contact / SubmitForm</code> (clique no WhatsApp)
+                    </span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            <details className="rounded-xl border border-neutral-200 bg-neutral-50/60 px-3.5 py-2.5 text-xs">
+              <summary className="cursor-pointer font-semibold text-neutral-700">
+                Código complementar opcional (avançado)
+              </summary>
+              <p className="mt-1.5 text-[11px] text-neutral-500">
+                O script oficial (<code className="font-mono">ttq.load(PIXEL_ID)</code> +{' '}
+                <code className="font-mono">ttq.page()</code>) já é injetado automaticamente ao ativar o TikTok Pixel. Use este campo apenas para comandos extras opcionais.
+              </p>
+              <textarea
+                rows={3}
+                value={tiktokPixelCfg.custom_code || ''}
+                onChange={(e) => updateTikTokPixel({ custom_code: e.target.value })}
+                placeholder="// Ex.: ttq.track('ClickButton');"
+                className="mt-2 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 font-mono text-[11px]"
+              />
+            </details>
+          </div>
         </div>
 
-        {/* Painel Lateral Direito: Auditoria & Prévias */}
+        {/* Painel Lateral Direito: Análise rápida & Prévias */}
         <div className="space-y-5 lg:col-span-4">
-          {/* Auditoria rápida */}
+          {/* Análise rápida */}
           <div className="rounded-2xl border border-neutral-200 bg-white p-5">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-neutral-900">Auditoria rápida</h3>
+              <h3 className="text-sm font-bold text-neutral-900">Análise rápida</h3>
               <span className="font-mono text-sm font-extrabold text-emerald-600 tabular-nums">
                 {auditScore}/100
               </span>

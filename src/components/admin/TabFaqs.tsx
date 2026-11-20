@@ -1,15 +1,26 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { GripVertical, Plus, Save, Trash2 } from 'lucide-react';
 import { FaqItem } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
 
 interface TabFaqsProps {
   faqs: FaqItem[];
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
 }
 
-export function TabFaqs({ faqs, onSaved, onToast }: TabFaqsProps) {
+export function TabFaqs({
+  faqs,
+  onSaved,
+  onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
+}: TabFaqsProps) {
   const [items, setItems] = useState<Array<{ id: number; question: string; answer: string }>>([]);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
@@ -17,6 +28,40 @@ export function TabFaqs({ faqs, onSaved, onToast }: TabFaqsProps) {
   useEffect(() => {
     setItems(faqs.map((f) => ({ id: f.id, question: f.question, answer: f.answer })));
   }, [faqs]);
+
+  const isDirty = useMemo(() => {
+    const base = faqs.map((f) => ({ id: f.id, question: f.question, answer: f.answer }));
+    return JSON.stringify(items) !== JSON.stringify(base);
+  }, [items, faqs]);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !isDirty || saving) return;
+    const validToAutoSave = items.every((i) => i.question.trim().length > 0 && i.answer.trim().length > 0);
+    if (!validToAutoSave) return;
+
+    const timer = setTimeout(async () => {
+      saveGestorDraftCache('faqs', items);
+      try {
+        const res = await adminFetch('/api/admin/faqs', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ faqs: items }),
+        });
+        if (res.ok) {
+          await onSaved();
+          onAutoSaveComplete?.();
+        }
+      } catch {
+        // Cache local já salvo
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [autoSaveEnabled, isDirty, saving, items, onSaved, onAutoSaveComplete]);
 
   const handleUpdate = (idx: number, patch: Partial<{ question: string; answer: string }>) => {
     setItems((prev) => prev.map((it, i) => (i === idx ? { ...it, ...patch } : it)));
@@ -62,6 +107,7 @@ export function TabFaqs({ faqs, onSaved, onToast }: TabFaqsProps) {
         body: JSON.stringify({ faqs: items }),
       });
       if (!res.ok) throw new Error('Erro ao salvar perguntas.');
+      saveGestorDraftCache('faqs', items);
       await onSaved();
       onToast('success', 'Perguntas frequentes salvas e atualizadas no site.');
     } catch (e) {
@@ -87,7 +133,9 @@ export function TabFaqs({ faqs, onSaved, onToast }: TabFaqsProps) {
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className="inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
+            !autoSaveEnabled && isDirty ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+          }`}
         >
           <Save className="h-4 w-4" />
           {saving ? 'Salvando...' : 'Salvar alterações'}

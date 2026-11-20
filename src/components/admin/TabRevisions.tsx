@@ -4,6 +4,8 @@ import { MotoModel, Part, RevisionPart, RevisionTab } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
 import { computeLineTotal, computeModelRevision, formatBRL } from '../../utils/pricing';
 
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
+
 interface TabRevisionsProps {
   models: MotoModel[];
   revisionTabs: RevisionTab[];
@@ -11,6 +13,9 @@ interface TabRevisionsProps {
   revisionParts: RevisionPart[];
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
 }
 
 export function TabRevisions({
@@ -20,6 +25,9 @@ export function TabRevisions({
   revisionParts,
   onSaved,
   onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
 }: TabRevisionsProps) {
   const [selectedRev, setSelectedRev] = useState<number>(
     revisionTabs[0]?.revision_number ?? 1
@@ -71,6 +79,57 @@ export function TabRevisions({
     }
     setDraftItemsByModel(next);
   }, [models, revisionParts, selectedRev]);
+
+  const dirtyModelIds = useMemo(() => {
+    const dirty: number[] = [];
+    for (const m of models) {
+      const draftList = draftItemsByModel[m.id];
+      if (!draftList) continue;
+      const savedList = revisionParts
+        .filter((rp) => rp.model_id === m.id && rp.revision_number === selectedRev)
+        .map((rp) => ({ part_code: rp.part_code, quantity: rp.quantity }));
+      if (JSON.stringify(draftList) !== JSON.stringify(savedList)) {
+        dirty.push(m.id);
+      }
+    }
+    return dirty;
+  }, [models, draftItemsByModel, revisionParts, selectedRev]);
+
+  const isDirty = dirtyModelIds.length > 0;
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || dirtyModelIds.length === 0 || savingModelId !== null) return;
+    const timer = setTimeout(async () => {
+      saveGestorDraftCache(`revisoes_rev_${selectedRev}`, draftItemsByModel);
+      try {
+        for (const modelId of dirtyModelIds) {
+          const items = draftItemsByModel[modelId] || [];
+          await adminFetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ items }),
+          });
+        }
+        await onSaved();
+        onAutoSaveComplete?.();
+      } catch {
+        // Fallback em cache local já salvo
+      }
+    }, 550);
+    return () => clearTimeout(timer);
+  }, [
+    autoSaveEnabled,
+    dirtyModelIds,
+    draftItemsByModel,
+    onAutoSaveComplete,
+    onSaved,
+    savingModelId,
+    selectedRev,
+  ]);
 
   const handleCloneRevisionAll = async () => {
     if (availableSourceTabs.length === 0 || cloneSourceRev === selectedRev) return;
@@ -451,7 +510,11 @@ export function TabRevisions({
                         type="button"
                         disabled={savingModelId === model.id}
                         onClick={() => handleSaveModelRevision(model.id)}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
+                          !autoSaveEnabled && dirtyModelIds.includes(model.id)
+                            ? 'ring-2 ring-amber-400 ring-offset-2'
+                            : ''
+                        }`}
                       >
                         <Save className="h-3.5 w-3.5" />
                         {savingModelId === model.id ? 'Salvando...' : 'Salvar'}

@@ -118,7 +118,7 @@ export default function App() {
 
   return (
     <>
-      <SeoHeadSync seo={publicData?.seo ?? null} />
+      <SeoHeadSync seo={publicData?.seo ?? null} faqs={publicData?.faqs ?? []} />
 
       {gmpQuotaExceeded && !isGestor && (
         <div className="sticky top-0 z-50 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-xs text-amber-900 shadow-sm md:text-sm">

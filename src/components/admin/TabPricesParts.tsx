@@ -4,11 +4,16 @@ import { Part, PriceMode, STANDARD_PART_UNITS } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
 import { formatBRL, formatDateTimeBR } from '../../utils/pricing';
 
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
+
 interface TabPricesPartsProps {
   parts: Part[];
   lastSync: string;
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
 }
 
 interface EditablePart extends Part {
@@ -26,6 +31,9 @@ export function TabPricesParts({
   lastSync,
   onSaved,
   onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
 }: TabPricesPartsProps) {
   const [rows, setRows] = useState<EditablePart[]>([]);
   const [customModeByRow, setCustomModeByRow] = useState<Record<string, boolean>>({});
@@ -70,6 +78,45 @@ export function TabPricesParts({
       );
     });
   }, [rows, parts]);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !isDirty || savingBatch) return;
+    const allValid = rows.every((r) => r.code.trim() && r.description.trim() && r.unit.trim());
+    if (!allValid) return;
+
+    const timer = setTimeout(async () => {
+      saveGestorDraftCache('precos', rows);
+      try {
+        const res = await adminFetch('/api/admin/parts/batch', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            changes: rows.map((r) => ({
+              original_code: r.original_code,
+              code: r.code,
+              description: r.description,
+              unit: r.unit.trim().toUpperCase(),
+              price: Number(r.price),
+              mode: r.mode,
+              is_optional: r.is_optional,
+            })),
+          }),
+        });
+        if (res.ok) {
+          await onSaved();
+          onAutoSaveComplete?.();
+        }
+      } catch {
+        // Cache local já salvo
+      }
+    }, 650);
+
+    return () => clearTimeout(timer);
+  }, [autoSaveEnabled, isDirty, savingBatch, rows, onSaved, onAutoSaveComplete]);
 
   const filteredRows = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -379,7 +426,9 @@ export function TabPricesParts({
               onClick={handleSaveBatch}
               className={`rounded-xl px-4 py-2 text-xs font-bold transition-colors ${
                 isDirty
-                  ? 'bg-[#E4002B] text-white hover:bg-[#C80024]'
+                  ? `bg-[#E4002B] text-white hover:bg-[#C80024] ${
+                      !autoSaveEnabled ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+                    }`
                   : 'cursor-not-allowed bg-red-100 text-red-400'
               }`}
             >

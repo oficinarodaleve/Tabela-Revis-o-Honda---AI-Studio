@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { WhatsAppIcon } from './WhatsAppIcon';
 
 interface FloatingWhatsAppProps {
   href: string;
   isEditMode?: boolean;
+  onTrackClick?: () => void;
 }
 
 interface Position {
@@ -10,7 +12,7 @@ interface Position {
   y: number;
 }
 
-const STORAGE_KEY = 'rodaleve_whatsapp_pos';
+const STORAGE_KEY = 'rodaleve_whatsapp_pos_v2';
 const BUTTON_SIZE = 56;
 const MARGIN = 12;
 
@@ -43,8 +45,11 @@ function getInitialPosition(): Position {
   }
   const defaultPos =
     typeof window !== 'undefined'
-      ? clampPosition({ x: 20, y: window.innerHeight - BUTTON_SIZE - 20 })
-      : { x: 20, y: 500 };
+      ? clampPosition({
+          x: window.innerWidth - BUTTON_SIZE - 20,
+          y: window.innerHeight - BUTTON_SIZE - 20,
+        })
+      : { x: 1100, y: 500 };
   return defaultPos;
 }
 
@@ -57,7 +62,7 @@ function savePosition(pos: Position): void {
   }
 }
 
-export function FloatingWhatsApp({ href, isEditMode = false }: FloatingWhatsAppProps) {
+export function FloatingWhatsApp({ href, isEditMode = false, onTrackClick }: FloatingWhatsAppProps) {
   const [pos, setPos] = useState<Position>(() => getInitialPosition());
   const dragStateRef = useRef<{
     pointerId: number | null;
@@ -144,7 +149,9 @@ export function FloatingWhatsApp({ href, isEditMode = false }: FloatingWhatsAppP
       e.preventDefault();
       dragStateRef.current.wasDragged = false;
       dragStateRef.current.movedDistance = 0;
+      return;
     }
+    onTrackClick?.();
   };
 
   return (
@@ -168,14 +175,9 @@ export function FloatingWhatsApp({ href, isEditMode = false }: FloatingWhatsAppP
       }}
       className="fixed z-40 inline-flex touch-none select-none items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_6px_20px_rgba(37,211,102,0.42)] ring-2 ring-white/90 transition-transform hover:scale-105 hover:bg-[#20BD5A] active:scale-95"
     >
-      {/* Official WhatsApp glyph */}
-      <svg
-        viewBox="0 0 32 32"
-        className="pointer-events-none h-7 w-7 fill-current"
-        aria-hidden="true"
-      >
-        <path d="M16.004 3.2c-7.06 0-12.8 5.74-12.8 12.8 0 2.256.59 4.462 1.71 6.404L3.09 28.8l6.544-1.716a12.74 12.74 0 0 0 6.37 1.716h.006c7.058 0 12.796-5.74 12.796-12.8 0-3.418-1.33-6.632-3.748-9.05A12.71 12.71 0 0 0 16.004 3.2zm0 23.43h-.005a10.6 10.6 0 0 1-5.406-1.48l-.388-.23-3.884 1.018 1.036-3.786-.252-.4a10.57 10.57 0 0 1-1.622-5.632c0-5.854 4.764-10.618 10.622-10.618 2.836 0 5.502 1.106 7.506 3.112a10.55 10.55 0 0 1 3.108 7.508c0 5.856-4.764 10.618-10.615 10.618zm5.822-7.954c-.318-.16-1.886-.93-2.178-1.036-.292-.106-.504-.16-.718.16-.212.318-.824 1.036-1.01 1.248-.186.214-.372.24-.69.08-.318-.16-1.344-.496-2.56-1.58-.946-.844-1.584-1.886-1.77-2.204-.186-.318-.02-.49.14-.648.144-.144.318-.372.478-.558.16-.186.212-.318.318-.53.106-.212.054-.398-.026-.558-.08-.16-.718-1.728-.984-2.366-.258-.622-.522-.538-.718-.548-.186-.01-.398-.012-.61-.012s-.558.08-.85.398c-.292.318-1.116 1.09-1.116 2.658s1.142 3.084 1.302 3.296c.16.214 2.248 3.432 5.446 4.812.76.328 1.354.524 1.816.672.764.242 1.46.208 2.01.126.612-.092 1.886-.77 2.152-1.514.266-.744.266-1.382.186-1.514-.08-.132-.292-.212-.61-.372z" />
-      </svg>
+      <span className="pointer-events-none flex items-center justify-center">
+        <WhatsAppIcon className="h-7 w-7" />
+      </span>
     </a>
   );
 }

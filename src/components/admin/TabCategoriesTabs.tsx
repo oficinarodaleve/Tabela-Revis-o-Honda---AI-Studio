@@ -1,13 +1,17 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Plus, Save, Trash2 } from 'lucide-react';
 import { RevisionTab, Segment } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
 
 interface TabCategoriesTabsProps {
   segments: Segment[];
   revisionTabs: RevisionTab[];
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
 }
 
 export function TabCategoriesTabs({
@@ -15,6 +19,9 @@ export function TabCategoriesTabs({
   revisionTabs,
   onSaved,
   onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
 }: TabCategoriesTabsProps) {
   const [segDrafts, setSegDrafts] = useState<Array<{ slug: string; name: string; visible: boolean }>>([]);
   const [tabDrafts, setTabDrafts] = useState<
@@ -35,6 +42,48 @@ export function TabCategoriesTabs({
       }))
     );
   }, [segments, revisionTabs]);
+
+  const isDirty = useMemo(() => {
+    const baseSegs = segments.map((s) => ({ slug: s.slug, name: s.name, visible: s.visible }));
+    const baseTabs = revisionTabs.map((t) => ({
+      revision_number: t.revision_number,
+      label: t.label,
+      subtitle: t.subtitle,
+      visible: t.visible,
+    }));
+    return (
+      JSON.stringify(segDrafts) !== JSON.stringify(baseSegs) ||
+      JSON.stringify(tabDrafts) !== JSON.stringify(baseTabs)
+    );
+  }, [segDrafts, tabDrafts, segments, revisionTabs]);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !isDirty || saving) return;
+    if (segDrafts.some((s) => !s.name.trim())) return;
+
+    const timer = setTimeout(async () => {
+      saveGestorDraftCache('categorias', { segments: segDrafts, revision_tabs: tabDrafts });
+      try {
+        const res = await adminFetch('/api/admin/categories', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ segments: segDrafts, revision_tabs: tabDrafts }),
+        });
+        if (res.ok) {
+          await onSaved();
+          onAutoSaveComplete?.();
+        }
+      } catch {
+        // Cache local já salvo
+      }
+    }, 550);
+
+    return () => clearTimeout(timer);
+  }, [autoSaveEnabled, isDirty, saving, segDrafts, tabDrafts, onSaved, onAutoSaveComplete]);
 
   const handleAddSegment = () => {
     if (!newSegName.trim()) return;
@@ -88,6 +137,7 @@ export function TabCategoriesTabs({
         body: JSON.stringify({ segments: segDrafts, revision_tabs: tabDrafts }),
       });
       if (!res.ok) throw new Error('Erro ao salvar categorias e abas.');
+      saveGestorDraftCache('categorias', { segments: segDrafts, revision_tabs: tabDrafts });
       await onSaved();
       onToast('success', 'Categorias e abas atualizadas no site.');
     } catch (e) {
@@ -113,7 +163,9 @@ export function TabCategoriesTabs({
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className="inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
+            !autoSaveEnabled && isDirty ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+          }`}
         >
           <Save className="h-4 w-4" />
           {saving ? 'Salvando...' : 'Salvar alterações'}

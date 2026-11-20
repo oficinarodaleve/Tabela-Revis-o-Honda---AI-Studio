@@ -230,16 +230,44 @@ export function initDatabase() {
   } else {
     try {
       const parsedSeo = JSON.parse(seoRow.value);
+      let changed = false;
+      if (!parsedSeo.short_name) {
+        parsedSeo.short_name = 'Rodaleve';
+        changed = true;
+      }
+      if (!parsedSeo.business_type || parsedSeo.business_type === 'MotorcycleRepair') {
+        parsedSeo.business_type = 'MotorcycleDealer';
+        changed = true;
+      }
+      if (!parsedSeo.facebook_url || parsedSeo.facebook_url === 'https://facebook.com/rodalevehonda') {
+        parsedSeo.facebook_url = 'https://www.facebook.com/concessionariarodaleve/';
+        changed = true;
+      }
+      if (!parsedSeo.meta_pixel) {
+        parsedSeo.meta_pixel = INITIAL_SEO_SETTINGS.meta_pixel;
+        changed = true;
+      }
+      if (!parsedSeo.google_tag) {
+        parsedSeo.google_tag = INITIAL_SEO_SETTINGS.google_tag;
+        changed = true;
+      }
+      if (!parsedSeo.tiktok_pixel) {
+        parsedSeo.tiktok_pixel = INITIAL_SEO_SETTINGS.tiktok_pixel;
+        changed = true;
+      }
       if (Array.isArray(parsedSeo?.units)) {
-        let changed = false;
         parsedSeo.units = parsedSeo.units.map((u: Record<string, unknown>) => {
           if (
             u.id === 'vitoria-da-conquista' &&
-            (u.zip === '45005-075' || u.street === 'Av. Presidente Dutra')
+            (u.name === 'Rodaleve Vitória da Conquista' ||
+              u.zip === '45005-075' ||
+              u.street === 'Av. Presidente Dutra' ||
+              !String(u.gmb_url || '').includes('Rodaleve'))
           ) {
             changed = true;
             return {
               ...u,
+              name: 'Rodaleve Honda – Vitória da Conquista',
               street: 'Av. Pres. Dutra',
               number: '2879',
               neighborhood: 'Centro',
@@ -249,17 +277,34 @@ export function initDatabase() {
               lat: -14.8655,
               lng: -40.8385,
               gmb_url:
-                'https://www.google.com/maps/search/?api=1&query=Av.+Pres.+Dutra,+2879+-+Centro,+Vit%C3%B3ria+da+Conquista+-+BA,+45065-075',
+                'https://www.google.com/maps/search/?api=1&query=Rodaleve%20Honda%2C%20Av.%20Pres.%20Dutra%2C%202879%20-%20Centro%2C%20Vit%C3%B3ria%20da%20Conquista%20-%20BA%2C%2045065-075',
+            };
+          }
+          if (
+            u.id === 'guanambi' &&
+            (u.number === '1427' || u.neighborhood === 'Lot Municipal')
+          ) {
+            changed = true;
+            return {
+              ...u,
+              street: 'Av. Santos Dumont',
+              number: '1837',
+              neighborhood: 'Aeroporto Velho',
+              city: 'Guanambi',
+              state: 'BA',
+              zip: '46430-000',
+              gmb_url:
+                'https://www.google.com/maps/search/?api=1&query=Av.+Santos+Dumont,+1837+-+Aeroporto+Velho,+Guanambi+-+BA,+46430-000',
             };
           }
           return u;
         });
-        if (changed) {
-          db.prepare('UPDATE site_settings SET value = ? WHERE key = ?').run(
-            JSON.stringify(parsedSeo),
-            'seo'
-          );
-        }
+      }
+      if (changed) {
+        db.prepare('UPDATE site_settings SET value = ? WHERE key = ?').run(
+          JSON.stringify(parsedSeo),
+          'seo'
+        );
       }
     } catch {
       // Ignore malformed JSON
@@ -347,8 +392,51 @@ export function initDatabase() {
 }
 
 export function getSeoSettings() {
-  const row = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('seo') as { value: string } | undefined;
-  return row ? JSON.parse(row.value) : INITIAL_SEO_SETTINGS;
+  const row = db.prepare('SELECT value FROM site_settings WHERE key = ?').get('seo') as
+    | { value: string }
+    | undefined;
+  if (!row) return INITIAL_SEO_SETTINGS;
+  try {
+    const parsed = JSON.parse(row.value) as Partial<typeof INITIAL_SEO_SETTINGS>;
+    const units =
+      Array.isArray(parsed.units) && parsed.units.length > 0
+        ? parsed.units.map((u, idx) => ({
+            ...(INITIAL_SEO_SETTINGS.units[idx] || INITIAL_SEO_SETTINGS.units[0]),
+            ...u,
+          }))
+        : INITIAL_SEO_SETTINGS.units;
+    return {
+      ...INITIAL_SEO_SETTINGS,
+      ...parsed,
+      meta_pixel: {
+        ...INITIAL_SEO_SETTINGS.meta_pixel,
+        ...(parsed.meta_pixel || {}),
+        events: {
+          ...INITIAL_SEO_SETTINGS.meta_pixel.events,
+          ...(parsed.meta_pixel?.events || {}),
+        },
+      },
+      google_tag: {
+        ...INITIAL_SEO_SETTINGS.google_tag,
+        ...(parsed.google_tag || {}),
+        events: {
+          ...INITIAL_SEO_SETTINGS.google_tag.events,
+          ...(parsed.google_tag?.events || {}),
+        },
+      },
+      tiktok_pixel: {
+        ...INITIAL_SEO_SETTINGS.tiktok_pixel,
+        ...(parsed.tiktok_pixel || {}),
+        events: {
+          ...INITIAL_SEO_SETTINGS.tiktok_pixel.events,
+          ...(parsed.tiktok_pixel?.events || {}),
+        },
+      },
+      units,
+    };
+  } catch {
+    return INITIAL_SEO_SETTINGS;
+  }
 }
 
 export function getVisualBuilderConfig() {

@@ -1,13 +1,17 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
 import { MotoModel, Segment } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
 
 interface TabModelsPhotosProps {
   models: MotoModel[];
   segments: Segment[];
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
 }
 
 export function TabModelsPhotos({
@@ -15,6 +19,9 @@ export function TabModelsPhotos({
   segments,
   onSaved,
   onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
 }: TabModelsPhotosProps) {
   const [drafts, setDrafts] = useState<Record<number, MotoModel>>({});
   const [savingId, setSavingId] = useState<number | null>(null);
@@ -31,6 +38,64 @@ export function TabModelsPhotos({
     for (const m of models) map[m.id] = { ...m };
     setDrafts(map);
   }, [models]);
+
+  const dirtyModelIds = useMemo(() => {
+    const dirty: number[] = [];
+    for (const m of models) {
+      const d = drafts[m.id];
+      if (!d) continue;
+      if (
+        d.name !== m.name ||
+        d.segment_slug !== m.segment_slug ||
+        d.image_url !== m.image_url ||
+        Boolean(d.hidden) !== Boolean(m.hidden)
+      ) {
+        dirty.push(m.id);
+      }
+    }
+    return dirty;
+  }, [models, drafts]);
+
+  useEffect(() => {
+    onDirtyChange?.(dirtyModelIds.length > 0);
+  }, [dirtyModelIds.length, onDirtyChange]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || dirtyModelIds.length === 0 || savingId !== null || uploadingId !== null) {
+      return;
+    }
+    const timer = setTimeout(async () => {
+      saveGestorDraftCache('modelos', drafts);
+      try {
+        let savedAny = false;
+        for (const id of dirtyModelIds) {
+          const draft = drafts[id];
+          if (!draft?.name?.trim()) continue;
+          const res = await adminFetch(`/api/admin/models/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(draft),
+          });
+          if (res.ok) savedAny = true;
+        }
+        if (savedAny) {
+          await onSaved();
+          onAutoSaveComplete?.();
+        }
+      } catch {
+        // Cache local já salvo
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [
+    autoSaveEnabled,
+    dirtyModelIds,
+    drafts,
+    onAutoSaveComplete,
+    onSaved,
+    savingId,
+    uploadingId,
+  ]);
 
   const updateDraft = (id: number, patch: Partial<MotoModel>) => {
     setDrafts((prev) => ({
@@ -218,7 +283,11 @@ export function TabModelsPhotos({
                   type="button"
                   disabled={savingId === m.id}
                   onClick={() => handleSaveModel(m.id)}
-                  className="rounded-xl bg-neutral-900 px-3.5 py-2 text-xs font-bold text-white hover:bg-neutral-800 disabled:opacity-60"
+                  className={`rounded-xl px-3.5 py-2 text-xs font-bold text-white disabled:opacity-60 ${
+                    !autoSaveEnabled && dirtyModelIds.includes(m.id)
+                      ? 'bg-[#E4002B] ring-2 ring-amber-400 ring-offset-2 hover:bg-[#C80024]'
+                      : 'bg-neutral-900 hover:bg-neutral-800'
+                  }`}
                 >
                   {savingId === m.id ? 'Salvando...' : 'Salvar'}
                 </button>

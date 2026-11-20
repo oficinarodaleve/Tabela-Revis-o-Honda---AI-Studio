@@ -56,7 +56,7 @@ export const DEFAULT_SITE_CONTENT: Record<string, string> = {
   footer_disclaimer:
     'Os valores exibidos nesta tabela são estimados para peças genuínas e insumos básicos de cada revisão e podem variar conforme inspeção técnica ou necessidade adicional da motocicleta.',
   footer_slogan: 'DESBRAVE SEU BEM MAIOR É A VIDA',
-  footer_credits: 'Site criado por Zarvic Marketing –',
+  footer_credits: 'Site criado por',
 };
 
 export function createDefaultVisualConfig(modelIds: number[] = []): VisualBuilderConfig {

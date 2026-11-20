@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   CheckCircle2,
   Eye,
@@ -11,18 +11,25 @@ import {
 } from 'lucide-react';
 import { CustomIntegration, IntegrationsData } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
+import { saveGestorDraftCache } from '../../utils/gestorBackup';
 import { formatDateTimeBR } from '../../utils/pricing';
 
 interface TabIntegrationsProps {
   integrations: IntegrationsData;
   onSaved: () => Promise<void>;
   onToast: (type: 'success' | 'error', msg: string) => void;
+  autoSaveEnabled?: boolean;
+  onDirtyChange?: (dirty: boolean) => void;
+  onAutoSaveComplete?: () => void;
 }
 
 export function TabIntegrations({
   integrations,
   onSaved,
   onToast,
+  autoSaveEnabled = true,
+  onDirtyChange,
+  onAutoSaveComplete,
 }: TabIntegrationsProps) {
   const [mapsActive, setMapsActive] = useState(integrations.google_maps.active);
   const [mapsKey, setMapsKey] = useState(integrations.google_maps.custom_api_key);
@@ -62,28 +69,108 @@ export function TabIntegrations({
     setCustomItems(integrations.custom_integrations || []);
   }, [integrations]);
 
+  const isDirty = useMemo(() => {
+    return (
+      mapsActive !== integrations.google_maps.active ||
+      mapsKey.trim() !== (integrations.google_maps.custom_api_key || '').trim() ||
+      mwAuto !== integrations.microwork.auto_sync_enabled ||
+      mwMode !== integrations.microwork.update_mode ||
+      mwEndpoint.trim() !== (integrations.microwork.endpoint_url || '').trim() ||
+      mwFreq !== integrations.microwork.frequency ||
+      mwNewToken.trim().length > 0 ||
+      JSON.stringify(customItems) !== JSON.stringify(integrations.custom_integrations || [])
+    );
+  }, [
+    mapsActive,
+    mapsKey,
+    mwAuto,
+    mwMode,
+    mwEndpoint,
+    mwFreq,
+    mwNewToken,
+    customItems,
+    integrations,
+  ]);
+
+  useEffect(() => {
+    onDirtyChange?.(isDirty);
+  }, [isDirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!autoSaveEnabled || !isDirty || saving) return;
+    const timer = setTimeout(async () => {
+      const payload = {
+        google_maps: {
+          active: mapsActive,
+          custom_api_key: mapsKey.trim(),
+        },
+        microwork: {
+          auto_sync_enabled: mwAuto,
+          update_mode: mwMode,
+          endpoint_url: mwEndpoint.trim(),
+          new_token: mwNewToken.trim() || undefined,
+          frequency: mwFreq,
+        },
+        custom_integrations: customItems,
+      };
+      saveGestorDraftCache('integracoes', payload);
+      try {
+        const res = await adminFetch('/api/admin/integrations', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          if (mwNewToken.trim()) setMwNewToken('');
+          await onSaved();
+          onAutoSaveComplete?.();
+        }
+      } catch {
+        // Cache local já salvo
+      }
+    }, 650);
+
+    return () => clearTimeout(timer);
+  }, [
+    autoSaveEnabled,
+    isDirty,
+    saving,
+    mapsActive,
+    mapsKey,
+    mwAuto,
+    mwMode,
+    mwEndpoint,
+    mwNewToken,
+    mwFreq,
+    customItems,
+    onSaved,
+    onAutoSaveComplete,
+  ]);
+
   const handleSave = async () => {
     setSaving(true);
     try {
+      const payload = {
+        google_maps: {
+          active: mapsActive,
+          custom_api_key: mapsKey.trim(),
+        },
+        microwork: {
+          auto_sync_enabled: mwAuto,
+          update_mode: mwMode,
+          endpoint_url: mwEndpoint.trim(),
+          new_token: mwNewToken.trim() || undefined,
+          frequency: mwFreq,
+        },
+        custom_integrations: customItems,
+      };
       const res = await adminFetch('/api/admin/integrations', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          google_maps: {
-            active: mapsActive,
-            custom_api_key: mapsKey.trim(),
-          },
-          microwork: {
-            auto_sync_enabled: mwAuto,
-            update_mode: mwMode,
-            endpoint_url: mwEndpoint.trim(),
-            new_token: mwNewToken.trim() || undefined,
-            frequency: mwFreq,
-          },
-          custom_integrations: customItems,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error('Erro ao salvar integrações.');
+      saveGestorDraftCache('integracoes', payload);
       setMwNewToken('');
       await onSaved();
       onToast('success', 'Configurações de integrações e APIs salvas.');
@@ -166,7 +253,9 @@ export function TabIntegrations({
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className="inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
+            !autoSaveEnabled && isDirty ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+          }`}
         >
           <Save className="h-4 w-4" />
           {saving ? 'Salvando...' : 'Salvar Configurações'}

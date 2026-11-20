@@ -14,12 +14,16 @@ import {
   Car,
   Crosshair,
   ExternalLink,
+  Loader2,
   MapPin,
   Navigation,
   Phone,
+  Search,
   Star,
+  X,
 } from 'lucide-react';
 import { UnitLocation } from '../types';
+import { WhatsAppIcon, buildWhatsAppHref, getUnitWhatsAppNumber } from './WhatsAppIcon';
 
 interface UnitsMapSectionProps {
   units: UnitLocation[];
@@ -43,9 +47,19 @@ function formatUnitAddress(unit: UnitLocation): string {
   return `${streetPart}${neighborhoodPart}, ${unit.city} - ${unit.state}, ${unit.zip}`;
 }
 
-function buildDirectMapsUrl(unit: UnitLocation): string {
+function buildUnitPlaceQuery(unit: UnitLocation): string {
   const fullAddr = formatUnitAddress(unit);
-  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullAddr)}`;
+  const nameLower = (unit.name || '').toLowerCase();
+  const brandPrefix =
+    nameLower.includes('rodaleve') || unit.id === 'vitoria-da-conquista'
+      ? 'Rodaleve Honda'
+      : unit.name || 'Rodaleve Honda';
+  return `${brandPrefix}, ${fullAddr}`;
+}
+
+function buildDirectMapsUrl(unit: UnitLocation): string {
+  const query = buildUnitPlaceQuery(unit);
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
 function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteOverlayProps) {
@@ -136,8 +150,8 @@ function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteO
 }
 
 /**
- * Resolves exact coordinates from each unit's formatted address via Google Maps Geocoder
- * so that updating the address in SEO & Identidade automatically drops the pin on the exact street/number.
+ * Resolves exact coordinates for each dealership unit using Places API (New) Place.searchByText
+ * (so business name + address resolves directly onto the dealership POI) with Geocoder fallback.
  */
 function UnitAddressGeocoder({
   units,
@@ -146,33 +160,65 @@ function UnitAddressGeocoder({
   units: UnitLocation[];
   onResolved: (coordsById: Record<string, google.maps.LatLngLiteral>) => void;
 }) {
+  const placesLib = useMapsLibrary('places');
   const geocodingLib = useMapsLibrary('geocoding');
   const cacheRef = useRef<Record<string, google.maps.LatLngLiteral>>({});
 
   useEffect(() => {
-    if (!geocodingLib || units.length === 0) return;
+    if ((!placesLib && !geocodingLib) || units.length === 0) return;
     let cancelled = false;
-    const geocoder = new geocodingLib.Geocoder();
+    const geocoder = geocodingLib ? new geocodingLib.Geocoder() : null;
 
     (async () => {
       const updates: Record<string, google.maps.LatLngLiteral> = {};
       for (const unit of units) {
-        const addressQuery = formatUnitAddress(unit);
-        const cacheKey = `${unit.id}::${addressQuery}`;
+        const placeQuery = buildUnitPlaceQuery(unit);
+        const addrQuery = formatUnitAddress(unit);
+        const cacheKey = `${unit.id}::${placeQuery}`;
         if (cacheRef.current[cacheKey]) {
           updates[unit.id] = cacheRef.current[cacheKey];
           continue;
         }
-        try {
-          const result = await geocoder.geocode({ address: addressQuery, region: 'BR' });
-          const loc = result.results?.[0]?.geometry?.location;
-          if (loc) {
-            const literal = { lat: loc.lat(), lng: loc.lng() };
-            cacheRef.current[cacheKey] = literal;
-            updates[unit.id] = literal;
+
+        let resolved: google.maps.LatLngLiteral | null = null;
+
+        if (placesLib?.Place?.searchByText) {
+          try {
+            const { places } = await placesLib.Place.searchByText({
+              textQuery: placeQuery,
+              fields: ['displayName', 'location'],
+              locationBias: { lat: unit.lat, lng: unit.lng },
+              maxResultCount: 1,
+              language: 'pt-BR',
+              region: 'br',
+            });
+            const loc = places?.[0]?.location;
+            if (loc) {
+              resolved = { lat: loc.lat(), lng: loc.lng() };
+            }
+          } catch {
+            // Fall through to Geocoder fallback
           }
-        } catch {
-          // Fall back silently to stored unit.lat / unit.lng if geocoding fails or quota reached
+        }
+
+        if (!resolved && geocoder) {
+          for (const q of [placeQuery, addrQuery]) {
+            try {
+              const result = await geocoder.geocode({ address: q, region: 'BR' });
+              const loc = result.results?.[0]?.geometry?.location;
+              if (loc) {
+                resolved = { lat: loc.lat(), lng: loc.lng() };
+                break;
+              }
+            } catch {
+              // Try next query or fall back silently to stored unit.lat / unit.lng
+            }
+          }
+        }
+
+        if (resolved) {
+          cacheRef.current[cacheKey] = resolved;
+          updates[unit.id] = resolved;
         }
       }
       if (!cancelled && Object.keys(updates).length > 0) {
@@ -183,7 +229,7 @@ function UnitAddressGeocoder({
     return () => {
       cancelled = true;
     };
-  }, [geocodingLib, units, onResolved]);
+  }, [placesLib, geocodingLib, units, onResolved]);
 
   return null;
 }
@@ -192,12 +238,16 @@ function UnitMarker({
   unit,
   position,
   isSelected,
+  isInfoOpen,
   onSelect,
+  onCloseInfo,
 }: {
   unit: UnitLocation;
   position: google.maps.LatLngLiteral;
   isSelected: boolean;
+  isInfoOpen: boolean;
   onSelect: () => void;
+  onCloseInfo: () => void;
 }) {
   const [markerRef, marker] = useAdvancedMarkerRef();
 
@@ -216,8 +266,8 @@ function UnitMarker({
           scale={isSelected ? 1.25 : 1.05}
         />
       </AdvancedMarker>
-      {isSelected && marker && (
-        <InfoWindow anchor={marker} onCloseClick={() => {}}>
+      {isInfoOpen && marker && (
+        <InfoWindow anchor={marker} onCloseClick={onCloseInfo}>
           <div className="min-w-[220px] p-1 text-neutral-900">
             <p className="text-sm font-bold text-neutral-900">{unit.name}</p>
             <p className="mt-1 text-xs text-neutral-600">{formatUnitAddress(unit)}</p>
@@ -239,6 +289,279 @@ function UnitMarker({
         </InfoWindow>
       )}
     </>
+  );
+}
+
+interface OriginSuggestionItem {
+  id: string;
+  mainText: string;
+  secondaryText: string;
+  fullText: string;
+  placePrediction?: google.maps.places.PlacePrediction;
+  coords?: google.maps.LatLngLiteral;
+}
+
+function OriginAutocompleteInput({
+  value,
+  onChange,
+  onSelectOrigin,
+  onClear,
+  biasCenter,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  onSelectOrigin: (label: string, origin: string | google.maps.LatLngLiteral) => void;
+  onClear: () => void;
+  biasCenter: google.maps.LatLngLiteral;
+}) {
+  const placesLib = useMapsLibrary('places');
+  const geocodingLib = useMapsLibrary('geocoding');
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const sessionTokenRef = useRef<google.maps.places.AutocompleteSessionToken | null>(null);
+  const skipNextFetchRef = useRef(false);
+  const requestIdRef = useRef(0);
+
+  const [suggestions, setSuggestions] = useState<OriginSuggestionItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+
+  useEffect(() => {
+    const onPointerDown = (ev: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(ev.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onPointerDown);
+    return () => document.removeEventListener('mousedown', onPointerDown);
+  }, []);
+
+  useEffect(() => {
+    if (skipNextFetchRef.current) {
+      skipNextFetchRef.current = false;
+      return;
+    }
+
+    const trimmed = value.trim();
+    const isCoordString = /^(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$/.test(trimmed);
+    if (trimmed.length < 3 || isCoordString || (!placesLib && !geocodingLib)) {
+      setSuggestions([]);
+      setIsLoading(false);
+      setIsOpen(false);
+      return;
+    }
+
+    const reqId = ++requestIdRef.current;
+    setIsLoading(true);
+
+    const timer = setTimeout(async () => {
+      let items: OriginSuggestionItem[] = [];
+
+      if (placesLib?.AutocompleteSuggestion?.fetchAutocompleteSuggestions) {
+        try {
+          if (!sessionTokenRef.current && placesLib.AutocompleteSessionToken) {
+            sessionTokenRef.current = new placesLib.AutocompleteSessionToken();
+          }
+          const request: google.maps.places.AutocompleteRequest = {
+            input: trimmed,
+            sessionToken: sessionTokenRef.current ?? undefined,
+            language: 'pt-BR',
+            region: 'br',
+            includedRegionCodes: ['br'],
+            origin: biasCenter,
+            locationBias: {
+              north: biasCenter.lat + 0.8,
+              south: biasCenter.lat - 0.8,
+              east: biasCenter.lng + 0.8,
+              west: biasCenter.lng - 0.8,
+            },
+            internalUsageAttributionIds: ['gmp_git_agentskills_v1'],
+          };
+          const { suggestions: raw } =
+            await placesLib.AutocompleteSuggestion.fetchAutocompleteSuggestions(request);
+
+          items = (raw || [])
+            .filter((s) => Boolean(s.placePrediction))
+            .slice(0, 5)
+            .map((s, idx) => {
+              const pred = s.placePrediction!;
+              return {
+                id: pred.placeId || `pred-${idx}`,
+                mainText: pred.mainText?.text || pred.text.text,
+                secondaryText: pred.secondaryText?.text || '',
+                fullText: pred.text.text,
+                placePrediction: pred,
+              };
+            });
+        } catch {
+          // Fall back to Geocoding API below if Places Autocomplete isn't active
+        }
+      }
+
+      if (items.length === 0 && geocodingLib?.Geocoder) {
+        try {
+          const geocoder = new geocodingLib.Geocoder();
+          const { results } = await geocoder.geocode({
+            address: trimmed,
+            region: 'BR',
+            componentRestrictions: { country: 'BR' },
+            bounds: {
+              north: biasCenter.lat + 0.8,
+              south: biasCenter.lat - 0.8,
+              east: biasCenter.lng + 0.8,
+              west: biasCenter.lng - 0.8,
+            },
+          });
+          items = (results || []).slice(0, 5).map((r, idx) => {
+            const parts = r.formatted_address.split(',');
+            const main = parts[0]?.trim() || r.formatted_address;
+            const sec = parts.slice(1).join(',').trim();
+            return {
+              id: r.place_id || `geo-${idx}`,
+              mainText: main,
+              secondaryText: sec,
+              fullText: r.formatted_address,
+              coords: {
+                lat: r.geometry.location.lat(),
+                lng: r.geometry.location.lng(),
+              },
+            };
+          });
+        } catch {
+          items = [];
+        }
+      }
+
+      if (reqId !== requestIdRef.current) return;
+      setSuggestions(items);
+      setActiveIndex(-1);
+      setIsLoading(false);
+      setIsOpen(items.length > 0);
+    }, 220);
+
+    return () => clearTimeout(timer);
+  }, [value, placesLib, geocodingLib, biasCenter]);
+
+  const handleSelectItem = useCallback(
+    async (item: OriginSuggestionItem) => {
+      skipNextFetchRef.current = true;
+      setIsOpen(false);
+      setSuggestions([]);
+      setActiveIndex(-1);
+
+      if (item.placePrediction) {
+        try {
+          const place = item.placePrediction.toPlace();
+          await place.fetchFields({
+            fields: ['location', 'formattedAddress', 'displayName'],
+          });
+          sessionTokenRef.current = null;
+          const label = place.formattedAddress || item.fullText;
+          const coords = place.location
+            ? { lat: place.location.lat(), lng: place.location.lng() }
+            : undefined;
+          onSelectOrigin(label, coords || label);
+          return;
+        } catch {
+          sessionTokenRef.current = null;
+          onSelectOrigin(item.fullText, item.fullText);
+          return;
+        }
+      }
+
+      onSelectOrigin(item.fullText, item.coords || item.fullText);
+    },
+    [onSelectOrigin]
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!isOpen || suggestions.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((prev) => (prev <= 0 ? suggestions.length - 1 : prev - 1));
+    } else if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault();
+      void handleSelectItem(suggestions[activeIndex]);
+    } else if (e.key === 'Escape') {
+      setIsOpen(false);
+    }
+  };
+
+  return (
+    <div ref={containerRef} className="relative">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={() => {
+            if (suggestions.length > 0) setIsOpen(true);
+          }}
+          onKeyDown={handleKeyDown}
+          autoComplete="off"
+          placeholder="Digite seu endereço, rua ou bairro de partida..."
+          aria-autocomplete="list"
+          aria-expanded={isOpen}
+          className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-9 pr-9 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
+        />
+        {isLoading ? (
+          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-neutral-400" />
+        ) : value ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSuggestions([]);
+              setIsOpen(false);
+              onClear();
+            }}
+            aria-label="Limpar endereço"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
+      </div>
+
+      {isOpen && suggestions.length > 0 && (
+        <ul
+          role="listbox"
+          className="absolute left-0 right-0 top-full z-40 mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+        >
+          {suggestions.map((item, idx) => (
+            <li key={item.id} role="option" aria-selected={idx === activeIndex}>
+              <button
+                type="button"
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  void handleSelectItem(item);
+                }}
+                className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
+                  idx === activeIndex
+                    ? 'bg-neutral-100 dark:bg-neutral-800'
+                    : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/70'
+                }`}
+              >
+                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-xs font-semibold text-neutral-900 dark:text-white">
+                    {item.mainText}
+                  </p>
+                  {item.secondaryText && (
+                    <p className="truncate text-[11px] text-neutral-500 dark:text-neutral-400">
+                      {item.secondaryText}
+                    </p>
+                  )}
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -281,6 +604,7 @@ export function UnitsMapSection({
   renderSubtitle,
 }: UnitsMapSectionProps) {
   const [selectedTab, setSelectedTab] = useState<string>(units[0]?.id || 'vitoria-da-conquista');
+  const [infoOpenUnitId, setInfoOpenUnitId] = useState<string | null>(units[0]?.id || 'vitoria-da-conquista');
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite'>('roadmap');
   const [travelMode, setTravelMode] = useState<'moto' | 'carro'>('moto');
   const [originInput, setOriginInput] = useState('');
@@ -306,6 +630,7 @@ export function UnitsMapSection({
 
   const handleFocusOnMap = useCallback((unitId: string) => {
     setSelectedTab(unitId);
+    setInfoOpenUnitId(unitId);
   }, []);
 
   const handleUseMyLocation = () => {
@@ -359,6 +684,287 @@ export function UnitsMapSection({
   const visibleUnits =
     selectedTab === 'both' ? units : units.filter((u) => u.id === activeUnit?.id);
   const activeUnitCoords = coordsById[activeUnit.id] || { lat: activeUnit.lat, lng: activeUnit.lng };
+  const originMarkerCoords =
+    activeOrigin && typeof activeOrigin === 'object' ? activeOrigin : null;
+
+  const gridContent = (
+    <div className="mt-8 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
+      {/* Left Column: Route Planner + Unit Card(s) */}
+      <div className="flex flex-col gap-5 lg:col-span-5">
+        {/* Route Card */}
+        <form
+          onSubmit={handleTraceRoute}
+          className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-5 dark:border-neutral-800 dark:bg-neutral-900"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
+              Trace rota até {activeUnit?.city || activeUnit?.name}
+            </h3>
+            <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
+              <button
+                type="button"
+                onClick={() => setTravelMode('moto')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  travelMode === 'moto'
+                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                    : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                }`}
+              >
+                <Bike className="h-3.5 w-3.5" />
+                Moto
+              </button>
+              <button
+                type="button"
+                onClick={() => setTravelMode('carro')}
+                className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                  travelMode === 'carro'
+                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                    : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                }`}
+              >
+                <Car className="h-3.5 w-3.5" />
+                Carro
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-3.5 space-y-2.5">
+            {canRenderInteractiveMap ? (
+              <OriginAutocompleteInput
+                value={originInput}
+                onChange={(next) => setOriginInput(next)}
+                onSelectOrigin={(label, origin) => {
+                  setOriginInput(label);
+                  setRouteError(null);
+                  setActiveOrigin(origin);
+                }}
+                onClear={() => {
+                  setOriginInput('');
+                  setActiveOrigin(null);
+                  setRouteSummary(null);
+                  setRouteError(null);
+                }}
+                biasCenter={activeUnitCoords}
+              />
+            ) : (
+              <input
+                type="text"
+                value={originInput}
+                onChange={(e) => setOriginInput(e.target.value)}
+                placeholder="Digite seu endereço ou bairro de partida..."
+                className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
+              />
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={handleUseMyLocation}
+                disabled={locating}
+                className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+              >
+                <Crosshair className="h-3.5 w-3.5 text-[#E4002B]" />
+                {locating ? 'Localizando...' : 'Usar minha localização'}
+              </button>
+
+              <button
+                type="submit"
+                className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
+              >
+                <Navigation className="h-3.5 w-3.5" />
+                Traçar rota no mapa
+              </button>
+            </div>
+          </div>
+
+          {routeSummary && (
+            <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <span className="font-medium">Rota calculada ({travelMode === 'moto' ? 'Moto' : 'Carro'})</span>
+              <span className="font-mono font-semibold tabular-nums">
+                {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
+              </span>
+            </div>
+          )}
+
+          {routeError && (
+            <p className="mt-2.5 text-xs font-medium text-[#E4002B]">{routeError}</p>
+          )}
+        </form>
+
+        {/* Unit Details Cards */}
+        <div className="flex flex-col gap-3">
+          {visibleUnits.map((unit) => (
+            <div
+              key={unit.id}
+              className="rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-bold text-neutral-900 dark:text-white">
+                    {unit.name}
+                  </h4>
+                  <p className="mt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400">
+                    CNPJ {unit.cnpj}
+                  </p>
+                </div>
+                <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
+                  {unit.rating.toFixed(1)}
+                  <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
+                </span>
+              </div>
+
+              <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                <p className="flex items-start gap-2">
+                  <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
+                  <span>{formatUnitAddress(unit)}</span>
+                </p>
+                <p className="flex items-center gap-2">
+                  <Phone className="h-4 w-4 shrink-0 text-neutral-400" />
+                  <a href={`tel:${unit.phone.replace(/\D/g, '')}`} className="tabular-nums hover:underline">
+                    {unit.phone}
+                  </a>
+                </p>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleFocusOnMap(unit.id)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
+                  Focar no mapa
+                </button>
+                <a
+                  href={unit.gmb_url || buildDirectMapsUrl(unit)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                  Abrir no Maps
+                </a>
+                <a
+                  href={buildWhatsAppHref(
+                    getUnitWhatsAppNumber(unit),
+                    `Olá, Rodaleve ${unit.city}! Gostaria de informações sobre revisão Honda.`
+                  )}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#25D366] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#1FB858]"
+                >
+                  <WhatsAppIcon className="h-3.5 w-3.5" />
+                  WhatsApp
+                </a>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Right Column: Interactive Google Map */}
+      <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
+        {canRenderInteractiveMap ? (
+          <>
+            {/* Map/Satellite switcher */}
+            <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
+              <button
+                type="button"
+                onClick={() => setMapTypeId('roadmap')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  mapTypeId === 'roadmap'
+                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                    : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                }`}
+              >
+                Mapa
+              </button>
+              <button
+                type="button"
+                onClick={() => setMapTypeId('satellite')}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                  mapTypeId === 'satellite'
+                    ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                    : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                }`}
+              >
+                Satélite
+              </button>
+            </div>
+
+            <div className="h-[460px] w-full flex-1 lg:h-full">
+              <GoogleMap
+                defaultCenter={activeUnitCoords}
+                defaultZoom={16}
+                mapId="DEMO_MAP_ID"
+                mapTypeId={mapTypeId}
+                gestureHandling="greedy"
+                disableDefaultUI={false}
+                streetViewControl={false}
+                mapTypeControl={false}
+                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                style={{ width: '100%', height: '100%' }}
+              >
+                <UnitAddressGeocoder units={units} onResolved={handleGeocoded} />
+                <MapCameraController units={units} coordsById={coordsById} selectedTab={selectedTab} />
+                {originMarkerCoords && (
+                  <AdvancedMarker position={originMarkerCoords} title="Seu ponto de partida">
+                    <Pin
+                      background="#16A34A"
+                      borderColor="#FFFFFF"
+                      glyphColor="#FFFFFF"
+                      scale={1.0}
+                    />
+                  </AdvancedMarker>
+                )}
+                {units.map((u) => (
+                  <UnitMarker
+                    key={u.id}
+                    unit={u}
+                    position={coordsById[u.id] || { lat: u.lat, lng: u.lng }}
+                    isSelected={selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)}
+                    isInfoOpen={infoOpenUnitId === u.id}
+                    onSelect={() => {
+                      setSelectedTab(u.id);
+                      setInfoOpenUnitId(u.id);
+                    }}
+                    onCloseInfo={() => setInfoOpenUnitId(null)}
+                  />
+                ))}
+                {activeOrigin && activeUnit && (
+                  <RouteOverlay
+                    origin={activeOrigin}
+                    destination={activeUnitCoords}
+                    travelMode={travelMode}
+                    onRouteResult={handleRouteResult}
+                  />
+                )}
+              </GoogleMap>
+            </div>
+          </>
+        ) : (
+          <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
+            <MapPin className="h-10 w-10 text-[#E4002B]" />
+            <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
+              Visualização direta no Google Maps
+            </h4>
+            <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
+              Abra a localização oficial da {activeUnit.name} ({formatUnitAddress(activeUnit)}) diretamente no Google Maps.
+            </p>
+            <a
+              href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#E4002B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#C80024]"
+            >
+              <ExternalLink className="h-4 w-4" />
+              Abrir {activeUnit.city} no Google Maps
+            </a>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <section
@@ -399,7 +1005,10 @@ export function UnitsMapSection({
                 <button
                   key={u.id}
                   type="button"
-                  onClick={() => setSelectedTab(u.id)}
+                  onClick={() => {
+                    setSelectedTab(u.id);
+                    setInfoOpenUnitId(u.id);
+                  }}
                   className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
                     active
                       ? 'bg-[#E4002B] text-white shadow-sm'
@@ -424,236 +1033,18 @@ export function UnitsMapSection({
           </div>
         </div>
 
-        <div className="mt-8 grid grid-cols-1 items-stretch gap-6 lg:grid-cols-12">
-          {/* Left Column: Route Planner + Unit Card(s) */}
-          <div className="flex flex-col gap-5 lg:col-span-5">
-            {/* Route Card */}
-            <form
-              onSubmit={handleTraceRoute}
-              className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-5 dark:border-neutral-800 dark:bg-neutral-900"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
-                  Trace rota até {activeUnit?.city || activeUnit?.name}
-                </h3>
-                <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
-                  <button
-                    type="button"
-                    onClick={() => setTravelMode('moto')}
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      travelMode === 'moto'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
-                    }`}
-                  >
-                    <Bike className="h-3.5 w-3.5" />
-                    Moto
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTravelMode('carro')}
-                    className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                      travelMode === 'carro'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
-                    }`}
-                  >
-                    <Car className="h-3.5 w-3.5" />
-                    Carro
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-3.5 space-y-2.5">
-                <input
-                  type="text"
-                  value={originInput}
-                  onChange={(e) => setOriginInput(e.target.value)}
-                  placeholder="Digite seu endereço ou bairro de partida..."
-                  className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white"
-                />
-
-                <div className="flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleUseMyLocation}
-                    disabled={locating}
-                    className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
-                  >
-                    <Crosshair className="h-3.5 w-3.5 text-[#E4002B]" />
-                    {locating ? 'Localizando...' : 'Usar minha localização'}
-                  </button>
-
-                  <button
-                    type="submit"
-                    className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
-                  >
-                    <Navigation className="h-3.5 w-3.5" />
-                    Traçar rota no mapa
-                  </button>
-                </div>
-              </div>
-
-              {routeSummary && (
-                <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
-                  <span className="font-medium">Rota calculada ({travelMode === 'moto' ? 'Moto' : 'Carro'})</span>
-                  <span className="font-mono font-semibold tabular-nums">
-                    {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
-                  </span>
-                </div>
-              )}
-
-              {routeError && (
-                <p className="mt-2.5 text-xs font-medium text-[#E4002B]">{routeError}</p>
-              )}
-            </form>
-
-            {/* Unit Details Cards */}
-            <div className="flex flex-col gap-3">
-              {visibleUnits.map((unit) => (
-                <div
-                  key={unit.id}
-                  className="rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h4 className="text-base font-bold text-neutral-900 dark:text-white">
-                        {unit.name}
-                      </h4>
-                      <p className="mt-0.5 font-mono text-xs text-neutral-500 dark:text-neutral-400">
-                        CNPJ {unit.cnpj}
-                      </p>
-                    </div>
-                    <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
-                      {unit.rating.toFixed(1)}
-                      <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                    </span>
-                  </div>
-
-                  <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
-                    <p className="flex items-start gap-2">
-                      <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
-                      <span>{formatUnitAddress(unit)}</span>
-                    </p>
-                    <p className="flex items-center gap-2">
-                      <Phone className="h-4 w-4 shrink-0 text-neutral-400" />
-                      <a href={`tel:${unit.phone.replace(/\D/g, '')}`} className="tabular-nums hover:underline">
-                        {unit.phone}
-                      </a>
-                    </p>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleFocusOnMap(unit.id)}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
-                    >
-                      <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
-                      Focar no mapa
-                    </button>
-                    <a
-                      href={unit.gmb_url || buildDirectMapsUrl(unit)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                      Abrir no Maps
-                    </a>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Right Column: Interactive Google Map */}
-          <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
-            {canRenderInteractiveMap ? (
-              <APIProvider apiKey={mapsApiKey} language="pt-BR" region="BR" libraries={['marker', 'routes', 'geocoding']}>
-                {/* Map/Satellite switcher */}
-                <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
-                  <button
-                    type="button"
-                    onClick={() => setMapTypeId('roadmap')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      mapTypeId === 'roadmap'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
-                    }`}
-                  >
-                    Mapa
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMapTypeId('satellite')}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
-                      mapTypeId === 'satellite'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
-                    }`}
-                  >
-                    Satélite
-                  </button>
-                </div>
-
-                <div className="h-[460px] w-full flex-1 lg:h-full">
-                  <GoogleMap
-                    defaultCenter={activeUnitCoords}
-                    defaultZoom={16}
-                    mapId="DEMO_MAP_ID"
-                    mapTypeId={mapTypeId}
-                    gestureHandling="greedy"
-                    disableDefaultUI={false}
-                    streetViewControl={false}
-                    mapTypeControl={false}
-                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                    style={{ width: '100%', height: '100%' }}
-                  >
-                    <UnitAddressGeocoder units={units} onResolved={handleGeocoded} />
-                    <MapCameraController units={units} coordsById={coordsById} selectedTab={selectedTab} />
-                    {units.map((u) => (
-                      <UnitMarker
-                        key={u.id}
-                        unit={u}
-                        position={coordsById[u.id] || { lat: u.lat, lng: u.lng }}
-                        isSelected={selectedTab === u.id || (selectedTab === 'both' && u.id === activeUnit.id)}
-                        onSelect={() => setSelectedTab(u.id)}
-                      />
-                    ))}
-                    {activeOrigin && activeUnit && (
-                      <RouteOverlay
-                        origin={activeOrigin}
-                        destination={activeUnitCoords}
-                        travelMode={travelMode}
-                        onRouteResult={handleRouteResult}
-                      />
-                    )}
-                  </GoogleMap>
-                </div>
-              </APIProvider>
-            ) : (
-              <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
-                <MapPin className="h-10 w-10 text-[#E4002B]" />
-                <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
-                  Visualização direta no Google Maps
-                </h4>
-                <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-400">
-                  Abra a localização oficial da {activeUnit.name} ({formatUnitAddress(activeUnit)}) diretamente no Google Maps.
-                </p>
-                <a
-                  href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#E4002B] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#C80024]"
-                >
-                  <ExternalLink className="h-4 w-4" />
-                  Abrir {activeUnit.city} no Google Maps
-                </a>
-              </div>
-            )}
-          </div>
-        </div>
+        {canRenderInteractiveMap ? (
+          <APIProvider
+            apiKey={mapsApiKey}
+            language="pt-BR"
+            region="BR"
+            libraries={['marker', 'routes', 'geocoding', 'places']}
+          >
+            {gridContent}
+          </APIProvider>
+        ) : (
+          gridContent
+        )}
       </div>
     </section>
   );

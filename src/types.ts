@@ -86,10 +86,46 @@ export interface UnitLocation {
   lng: number;
 }
 
+export interface MetaPixelConfig {
+  enabled: boolean;
+  pixel_id: string;
+  events: {
+    page_view: boolean;
+    view_content: boolean;
+    lead_contact: boolean;
+  };
+  custom_code?: string;
+}
+
+export interface GoogleTagConfig {
+  enabled: boolean;
+  ga4_id: string;
+  ads_id: string;
+  conversion_label?: string;
+  events: {
+    page_view: boolean;
+    view_content: boolean;
+    lead_contact: boolean;
+  };
+  custom_code?: string;
+}
+
+export interface TikTokPixelConfig {
+  enabled: boolean;
+  pixel_id: string;
+  events: {
+    page_view: boolean;
+    view_content: boolean;
+    lead_contact: boolean;
+  };
+  custom_code?: string;
+}
+
 export interface SeoSettings {
   favicon_url: string;
   logo_url: string;
   logo_alt: string;
+  short_name?: string;
   meta_title: string;
   meta_description: string;
   meta_keywords: string;
@@ -112,6 +148,9 @@ export interface SeoSettings {
   sitemap_xml: string;
   head_scripts: string;
   body_scripts: string;
+  meta_pixel?: MetaPixelConfig;
+  google_tag?: GoogleTagConfig;
+  tiktok_pixel?: TikTokPixelConfig;
   units: UnitLocation[];
 }
 

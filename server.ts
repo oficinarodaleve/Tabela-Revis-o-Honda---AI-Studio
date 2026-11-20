@@ -1,8 +1,10 @@
 import 'dotenv/config';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
+import JSZip from 'jszip';
 import multer from 'multer';
 import {
   db,
@@ -13,6 +15,7 @@ import {
   maskSecret,
   verifyPassword,
 } from './src/server/db.ts';
+import { INITIAL_SEO_SETTINGS } from './src/server/seedData.ts';
 import { startWeeklySyncScheduler, syncMicroWorkPrices } from './src/server/microwork.ts';
 
 initDatabase();
@@ -705,11 +708,380 @@ app.put('/api/admin/seo', requireAdmin, (req, res) => {
     return;
   }
 
+  const incomingPixel = (seoPayload as { meta_pixel?: Record<string, unknown> }).meta_pixel;
+  const incomingGoogleTag = (seoPayload as { google_tag?: Record<string, unknown> }).google_tag;
+  const incomingTikTok = (seoPayload as { tiktok_pixel?: Record<string, unknown> }).tiktok_pixel;
+  const mergedSeo = {
+    ...INITIAL_SEO_SETTINGS,
+    ...seoPayload,
+    meta_pixel: {
+      ...INITIAL_SEO_SETTINGS.meta_pixel,
+      ...(incomingPixel || {}),
+      events: {
+        ...INITIAL_SEO_SETTINGS.meta_pixel.events,
+        ...((incomingPixel?.events as Record<string, boolean>) || {}),
+      },
+    },
+    google_tag: {
+      ...INITIAL_SEO_SETTINGS.google_tag,
+      ...(incomingGoogleTag || {}),
+      events: {
+        ...INITIAL_SEO_SETTINGS.google_tag.events,
+        ...((incomingGoogleTag?.events as Record<string, boolean>) || {}),
+      },
+    },
+    tiktok_pixel: {
+      ...INITIAL_SEO_SETTINGS.tiktok_pixel,
+      ...(incomingTikTok || {}),
+      events: {
+        ...INITIAL_SEO_SETTINGS.tiktok_pixel.events,
+        ...((incomingTikTok?.events as Record<string, boolean>) || {}),
+      },
+    },
+    units: Array.isArray((seoPayload as { units?: unknown[] }).units)
+      ? (seoPayload as { units: unknown[] }).units
+      : INITIAL_SEO_SETTINGS.units,
+  };
+
   db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
     'seo',
-    JSON.stringify(seoPayload)
+    JSON.stringify(mergedSeo)
   );
-  res.json({ ok: true, seo: seoPayload });
+  res.json({ ok: true, seo: mergedSeo });
+});
+
+// Backup & Restore (Gestor)
+app.post('/api/admin/backup/restore', requireAdmin, (req, res) => {
+  const payload = req.body as Record<string, unknown>;
+  if (!payload || typeof payload !== 'object') {
+    res.status(400).json({ error: 'Arquivo de backup inválido.' });
+    return;
+  }
+
+  const nowIso = new Date().toISOString();
+
+  const tx = db.transaction(() => {
+    if (Array.isArray(payload.segments) && payload.segments.length > 0) {
+      db.prepare('DELETE FROM segments').run();
+      const insSeg = db.prepare(
+        'INSERT INTO segments (slug, name, visible, sort_order) VALUES (?, ?, ?, ?)'
+      );
+      payload.segments.forEach((s: Record<string, unknown>, idx: number) => {
+        if (!s.slug || !s.name) return;
+        insSeg.run(
+          String(s.slug),
+          String(s.name),
+          s.visible === false || s.visible === 0 ? 0 : 1,
+          Number(s.sort_order ?? idx + 1)
+        );
+      });
+    }
+
+    if (Array.isArray(payload.revision_tabs) && payload.revision_tabs.length > 0) {
+      db.prepare('DELETE FROM revision_tabs').run();
+      const insTab = db.prepare(
+        'INSERT INTO revision_tabs (revision_number, label, subtitle, visible, sort_order) VALUES (?, ?, ?, ?, ?)'
+      );
+      payload.revision_tabs.forEach((t: Record<string, unknown>, idx: number) => {
+        const revNum = Number(t.revision_number);
+        if (!revNum) return;
+        insTab.run(
+          revNum,
+          String(t.label || `${revNum}ª Revisão`),
+          String(t.subtitle || ''),
+          t.visible === false || t.visible === 0 ? 0 : 1,
+          Number(t.sort_order ?? idx + 1)
+        );
+      });
+    }
+
+    if (Array.isArray(payload.parts) && payload.parts.length > 0) {
+      const upsertPart = db.prepare(
+        `INSERT OR REPLACE INTO parts (code, description, unit, default_qty, price, mode, is_optional, microwork_price, sync_status, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      );
+      for (const p of payload.parts as Array<Record<string, unknown>>) {
+        if (!p.code || !p.description) continue;
+        upsertPart.run(
+          String(p.code).trim(),
+          String(p.description).trim(),
+          String(p.unit || 'UN').trim().toUpperCase().slice(0, 16) || 'UN',
+          Number(p.default_qty ?? 1),
+          Number(p.price ?? 0),
+          p.mode === 'manual' ? 'manual' : 'auto',
+          p.is_optional ? 1 : 0,
+          p.microwork_price != null ? Number(p.microwork_price) : null,
+          String(p.sync_status || 'Restaurado'),
+          String(p.updated_at || nowIso)
+        );
+      }
+    }
+
+    if (Array.isArray(payload.models) && payload.models.length > 0) {
+      db.prepare('DELETE FROM revision_parts').run();
+      db.prepare('DELETE FROM models').run();
+      const insModel = db.prepare(
+        'INSERT INTO models (id, name, segment_slug, image_url, hidden, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+      );
+      for (const m of payload.models as Array<Record<string, unknown>>) {
+        if (!m.name) continue;
+        insModel.run(
+          Number(m.id),
+          String(m.name).trim(),
+          String(m.segment_slug || 'cub_scooter'),
+          String(m.image_url || ''),
+          m.hidden ? 1 : 0,
+          Number(m.sort_order ?? 0)
+        );
+      }
+    }
+
+    if (Array.isArray(payload.revision_parts)) {
+      db.prepare('DELETE FROM revision_parts').run();
+      const insRev = db.prepare(
+        'INSERT INTO revision_parts (model_id, revision_number, part_code, quantity) VALUES (?, ?, ?, ?)'
+      );
+      for (const rp of payload.revision_parts as Array<Record<string, unknown>>) {
+        const modelExists = db.prepare('SELECT id FROM models WHERE id = ?').get(Number(rp.model_id));
+        const partExists = db.prepare('SELECT code FROM parts WHERE code = ?').get(String(rp.part_code));
+        if (!modelExists || !partExists) continue;
+        insRev.run(
+          Number(rp.model_id),
+          Number(rp.revision_number),
+          String(rp.part_code),
+          Number(rp.quantity ?? 1)
+        );
+      }
+    }
+
+    if (Array.isArray(payload.faqs)) {
+      db.prepare('DELETE FROM faqs').run();
+      const insFaq = db.prepare('INSERT INTO faqs (question, answer, sort_order) VALUES (?, ?, ?)');
+      payload.faqs.forEach((f: Record<string, unknown>, idx: number) => {
+        if (!f.question) return;
+        insFaq.run(String(f.question), String(f.answer || ''), Number(f.sort_order ?? idx + 1));
+      });
+    }
+
+    if (payload.seo && typeof payload.seo === 'object') {
+      const mergedSeo = {
+        ...INITIAL_SEO_SETTINGS,
+        ...(payload.seo as Record<string, unknown>),
+      };
+      db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
+        'seo',
+        JSON.stringify(mergedSeo)
+      );
+    }
+
+    if (payload.visual_builder && typeof payload.visual_builder === 'object') {
+      db.prepare('INSERT OR REPLACE INTO site_settings (key, value) VALUES (?, ?)').run(
+        'visual_builder',
+        JSON.stringify(payload.visual_builder)
+      );
+    }
+
+    if (payload.integrations && typeof payload.integrations === 'object') {
+      const ints = payload.integrations as Record<string, Record<string, unknown>>;
+      if (ints.google_maps) {
+        db.prepare(
+          'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(
+          'google_maps',
+          'Google Maps Platform',
+          JSON.stringify({ custom_api_key: String(ints.google_maps.custom_api_key || '') }),
+          '',
+          ints.google_maps.active ? 1 : 0,
+          nowIso
+        );
+      }
+      if (ints.microwork) {
+        const existingMw = db
+          .prepare('SELECT secret_value FROM integrations WHERE key = ?')
+          .get('microwork') as { secret_value: string } | undefined;
+        db.prepare(
+          'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(
+          'microwork',
+          'ERP MicroWork',
+          JSON.stringify({
+            auto_sync_enabled: Boolean(ints.microwork.auto_sync_enabled),
+            update_mode: ints.microwork.update_mode === 'manual' ? 'manual' : 'auto_api',
+            endpoint_url: String(ints.microwork.endpoint_url || ''),
+            frequency: ints.microwork.frequency === 'daily' ? 'daily' : 'weekly',
+            last_sync_at: String(ints.microwork.last_sync_at || nowIso),
+            last_sync_result: String(ints.microwork.last_sync_result || 'Restaurado via backup'),
+          }),
+          existingMw?.secret_value || '',
+          1,
+          nowIso
+        );
+      }
+      if (Array.isArray(ints.custom_integrations)) {
+        db.prepare(
+          'INSERT OR REPLACE INTO integrations (key, name, config_json, secret_value, active, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(
+          'custom_integrations',
+          'Outras chaves e webhooks',
+          JSON.stringify(ints.custom_integrations),
+          '',
+          1,
+          nowIso
+        );
+      }
+    }
+  });
+
+  tx();
+  res.json({ ok: true });
+});
+
+// Exportar Estrutura Completa do Site + Banco + Assets + Backup Gestor (.zip)
+const ZIP_IGNORED_DIRS = new Set([
+  'node_modules',
+  'dist',
+  '.git',
+  '.gmp_cache',
+  '.aistudio',
+  '.next',
+  '.turbo',
+]);
+
+function shouldSkipZipEntry(relPath: string, isDir: boolean): boolean {
+  const normalized = relPath.replace(/\\/g, '/');
+  const baseName = path.posix.basename(normalized);
+
+  if (isDir) {
+    return ZIP_IGNORED_DIRS.has(baseName);
+  }
+
+  if (baseName === '.DS_Store' || baseName.endsWith('.log')) return true;
+  // Nunca incluir segredos locais (.env, .env.local, etc.), mantendo .env.example
+  if (baseName === '.env' || (baseName.startsWith('.env.') && baseName !== '.env.example')) {
+    return true;
+  }
+  // O banco SQLite é incluído via snapshot atômico db.backup()
+  if (
+    normalized === 'data/rodaleve.db' ||
+    normalized === 'data/rodaleve.db-wal' ||
+    normalized === 'data/rodaleve.db-shm'
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function addWorkspaceDirToZip(zip: JSZip, rootDir: string, currentDir: string): void {
+  const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+    const relPath = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+    if (!relPath) continue;
+
+    if (entry.isDirectory()) {
+      if (shouldSkipZipEntry(relPath, true)) continue;
+      addWorkspaceDirToZip(zip, rootDir, fullPath);
+    } else if (entry.isFile()) {
+      if (shouldSkipZipEntry(relPath, false)) continue;
+      zip.file(relPath, fs.readFileSync(fullPath));
+    }
+  }
+}
+
+app.post('/api/admin/export-site-zip', requireAdmin, async (req, res) => {
+  const rootDir = process.cwd();
+  const zip = new JSZip();
+
+  try {
+    addWorkspaceDirToZip(zip, rootDir, rootDir);
+
+    // Snapshot consistente do banco SQLite atual
+    const tmpDbPath = path.join(
+      os.tmpdir(),
+      `rodaleve-export-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.db`
+    );
+    try {
+      await db.backup(tmpDbPath);
+      const dbBuffer = fs.readFileSync(tmpDbPath);
+      zip.file('data/rodaleve.db', dbBuffer);
+    } finally {
+      if (fs.existsSync(tmpDbPath)) {
+        fs.unlinkSync(tmpDbPath);
+      }
+    }
+
+    // Inclui os arquivos JSON estruturados do Gestor em backup-gestor/
+    const backupFiles = (req.body as { backup_files?: Record<string, unknown> })?.backup_files;
+    if (backupFiles && typeof backupFiles === 'object') {
+      for (const [name, content] of Object.entries(backupFiles)) {
+        if (typeof content === 'string' && /^[a-z0-9._-]+\.json$/i.test(name)) {
+          zip.file(`backup-gestor/${name}`, content);
+        }
+      }
+    }
+
+    // Inclui README.md caso não exista na raiz para facilitar importação em outras plataformas
+    if (!zip.file('README.md')) {
+      zip.file(
+        'README.md',
+        `# Rodaleve Honda — Tabela de Manutenção e Revisões + Rodaleve Gestor
+
+Pacote completo exportado com toda a estrutura do site (frontend React + Vite + Tailwind, backend Express + SQLite, imagens enviadas e backup do Gestor).
+
+## Como executar em outra plataforma
+
+1. Instale as dependências:
+   \`\`\`bash
+   npm install
+   \`\`\`
+2. (Opcional) Configure as variáveis de ambiente copiando \`.env.example\` para \`.env\`:
+   - \`PORT\` (padrão \`3000\`)
+   - \`VITE_GOOGLE_MAPS_API_KEY\` (opcional, caso não use a chave configurada no Gestor)
+   - \`MICROWORK_TOKEN\` (opcional, sincronização ERP)
+   - \`SESSION_SECRET\`
+3. Ambiente de desenvolvimento:
+   \`\`\`bash
+   npm run dev
+   \`\`\`
+4. Build e execução em produção:
+   \`\`\`bash
+   npm run build
+   npm start
+   \`\`\`
+
+## Estrutura incluída neste ZIP
+
+- \`src/\`: código-fonte completo do site público e do painel Rodaleve Gestor
+- \`server.ts\`: servidor Express com APIs públicas, autenticação e integração com banco SQLite
+- \`public/\` e \`data/uploads/\`: ativos estáticos e imagens enviadas no Gestor
+- \`data/rodaleve.db\`: snapshot completo do banco SQLite com todos os dados atuais
+- \`backup-gestor/\`: arquivos JSON organizados por aba (também compatíveis com o botão **Importar** do Gestor)
+`
+      );
+    }
+
+    const zipBuffer = await zip.generateAsync({
+      type: 'nodebuffer',
+      compression: 'DEFLATE',
+      compressionOptions: { level: 6 },
+    });
+
+    const dateSlug = new Date().toISOString().slice(0, 10);
+    const filename = `rodaleve-site-completo-${dateSlug}.zip`;
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', String(zipBuffer.length));
+    res.send(zipBuffer);
+  } catch (err) {
+    console.error('Erro ao exportar ZIP completo do site:', err);
+    res.status(500).json({
+      error:
+        err instanceof Error
+          ? `Falha ao gerar ZIP completo: ${err.message}`
+          : 'Falha ao gerar ZIP completo do site.',
+    });
+  }
 });
 
 // Visual Builder config persistence
@@ -844,6 +1216,18 @@ app.post('/api/upload', requireAdmin, upload.single('file'), (req, res) => {
     return;
   }
   res.json({ url: `/uploads/${req.file.filename}` });
+});
+
+app.get('/robots.txt', (_req, res) => {
+  const seo = getSeoSettings();
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.send(seo.robots_txt || INITIAL_SEO_SETTINGS.robots_txt);
+});
+
+app.get('/sitemap.xml', (_req, res) => {
+  const seo = getSeoSettings();
+  res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+  res.send(seo.sitemap_xml || INITIAL_SEO_SETTINGS.sitemap_xml);
 });
 
 async function startServer() {

@@ -1,25 +1,28 @@
 import { useEffect } from 'react';
-import { SeoSettings } from '../types';
+import { FaqItem, SeoSettings } from '../types';
 
-export function buildJsonLd(seo: SeoSettings) {
+export function buildJsonLd(seo: SeoSettings, faqs: FaqItem[] = []) {
   const sameAs = [seo.instagram_url, seo.facebook_url, seo.youtube_url].filter(Boolean);
   const canonical = seo.canonical_url || (typeof window !== 'undefined' ? window.location.origin : '');
+  const dealerType = seo.business_type || 'MotorcycleDealer';
 
-  return [
+  const schemas: Record<string, unknown>[] = [
     {
       '@context': 'https://schema.org',
       '@type': 'Organization',
       name: seo.company_name || 'Rodaleve Honda',
+      alternateName: seo.short_name || 'Rodaleve',
       url: canonical,
       logo: seo.logo_url || undefined,
       sameAs: sameAs.length > 0 ? sameAs : undefined,
     },
     ...(seo.units || []).map((u) => ({
       '@context': 'https://schema.org',
-      '@type': seo.business_type || 'MotorcycleRepair',
+      '@type': dealerType,
       name: u.name,
       telephone: u.phone,
       url: canonical,
+      hasMap: u.gmb_url || undefined,
       address: {
         '@type': 'PostalAddress',
         streetAddress: `${u.street}, ${u.number}${u.neighborhood ? ` - ${u.neighborhood}` : ''}`,
@@ -44,6 +47,23 @@ export function buildJsonLd(seo: SeoSettings) {
         : undefined,
     })),
   ];
+
+  if (faqs && faqs.length > 0) {
+    schemas.push({
+      '@context': 'https://schema.org',
+      '@type': 'FAQPage',
+      mainEntity: faqs.map((faq) => ({
+        '@type': 'Question',
+        name: faq.question,
+        acceptedAnswer: {
+          '@type': 'Answer',
+          text: faq.answer,
+        },
+      })),
+    });
+  }
+
+  return schemas;
 }
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
@@ -56,14 +76,21 @@ function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
   el.setAttribute('content', content);
 }
 
-export function SeoHeadSync({ seo }: { seo: SeoSettings | null }) {
+export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?: FaqItem[] }) {
   useEffect(() => {
     if (!seo) return;
+
+    // Espelhar no localStorage para consistência imediata
+    try {
+      window.localStorage?.setItem('rodaleve_seo_cache', JSON.stringify(seo));
+    } catch {
+      // Ignora bloqueio em sandbox/iframe
+    }
 
     document.title = seo.meta_title || 'Rodaleve Honda – Tabela de Manutenção e Revisões';
     upsertMeta('name', 'description', seo.meta_description || '');
     upsertMeta('name', 'keywords', seo.meta_keywords || '');
-    upsertMeta('name', 'author', seo.author_brand || 'Rodaleve Honda');
+    upsertMeta('name', 'author', seo.author_brand || seo.company_name || 'Rodaleve Honda');
     upsertMeta('name', 'robots', seo.robots_policy || 'index, follow');
 
     const ogTitle = seo.og_same_title ? seo.meta_title : seo.og_title || seo.meta_title;
@@ -72,7 +99,7 @@ export function SeoHeadSync({ seo }: { seo: SeoSettings | null }) {
     upsertMeta('property', 'og:type', seo.og_type || 'website');
     upsertMeta('property', 'og:title', ogTitle || '');
     upsertMeta('property', 'og:description', ogDesc || '');
-    upsertMeta('property', 'og:site_name', seo.company_name || 'Rodaleve Honda');
+    upsertMeta('property', 'og:site_name', seo.company_name || seo.short_name || 'Rodaleve Honda');
     if (seo.og_image) upsertMeta('property', 'og:image', seo.og_image);
 
     upsertMeta('name', 'twitter:card', seo.twitter_card || 'summary_large_image');
@@ -91,17 +118,19 @@ export function SeoHeadSync({ seo }: { seo: SeoSettings | null }) {
     canonicalLink.href = canonicalUrl;
 
     // Favicon
+    let iconLink = document.head.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
     if (seo.favicon_url) {
-      let iconLink = document.head.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
       if (!iconLink) {
         iconLink = document.createElement('link');
         iconLink.rel = 'icon';
         document.head.appendChild(iconLink);
       }
       iconLink.href = seo.favicon_url;
+    } else if (iconLink) {
+      iconLink.remove();
     }
 
-    // JSON-LD Schema.org
+    // JSON-LD Schema.org (Organization + MotorcycleDealer + FAQPage)
     let ldScript = document.head.querySelector('script[data-rodaleve-jsonld="true"]') as HTMLScriptElement | null;
     if (!ldScript) {
       ldScript = document.createElement('script');
@@ -109,8 +138,8 @@ export function SeoHeadSync({ seo }: { seo: SeoSettings | null }) {
       ldScript.setAttribute('data-rodaleve-jsonld', 'true');
       document.head.appendChild(ldScript);
     }
-    ldScript.textContent = JSON.stringify(buildJsonLd(seo));
-  }, [seo]);
+    ldScript.textContent = JSON.stringify(buildJsonLd(seo, faqs));
+  }, [seo, faqs]);
 
   return null;
 }

@@ -1,33 +1,46 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
-  Calendar,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+  Clock,
   Eye,
   EyeOff,
+  Facebook,
   GripVertical,
+  HelpCircle,
   Image as ImageIcon,
   Instagram,
   LayoutGrid,
   List,
+  MapPin,
   Moon,
   Paintbrush,
   Search,
   Sun,
+  Wrench,
   X,
   Youtube,
 } from 'lucide-react';
 import {
   CustomBlockVariant,
   EditableTextEntry,
+  MotoModel,
   PageSectionBlock,
   PublicBootstrapData,
   VisualBuilderConfig,
 } from '../types';
 import { adminFetch } from '../utils/adminAuth';
-import { computeModelRevision, formatBRL, formatPartQuantity } from '../utils/pricing';
+import {
+  ComputedRevisionSummary,
+  computeModelRevision,
+  formatBRL,
+  formatPartQuantity,
+} from '../utils/pricing';
 import {
   DEFAULT_SITE_CONTENT,
   clearLocalVisualConfig,
@@ -37,8 +50,19 @@ import {
   mergeWithDefaultVisualConfig,
   saveLocalVisualConfig,
 } from '../utils/visualBuilder';
+import {
+  initAllTrackingPixels,
+  trackAllPixelsLeadContact,
+  trackAllPixelsViewContent,
+} from '../utils/metaPixel';
 import { FloatingWhatsApp } from './FloatingWhatsApp';
 import { UnitsMapSection } from './UnitsMapSection';
+import {
+  WhatsAppIcon,
+  buildWhatsAppHref,
+  getUnitWhatsAppNumber,
+} from './WhatsAppIcon';
+import { WhatsAppScheduleModal } from './WhatsAppScheduleModal';
 import { AddBlockModal } from './editor/AddBlockModal';
 import { EditableText } from './editor/EditableText';
 import { ImageSwapModal } from './editor/ImageSwapModal';
@@ -57,14 +81,16 @@ interface PublicPageProps {
   onPublicDataChanged: () => Promise<void>;
 }
 
-const WHATSAPP_NUMBER = '557728880003';
-
-function buildWhatsAppUrl(modelName?: string, revisionLabel?: string): string {
+function buildWhatsAppUrl(
+  rawPhone: string | undefined,
+  modelName?: string,
+  revisionLabel?: string
+): string {
   const text =
     modelName && revisionLabel
-      ? `Olá! Gostaria de agendar a ${revisionLabel} da minha Honda ${modelName} na Rodaleve.`
-      : `Olá! Gostaria de agendar uma revisão da minha moto Honda na Rodaleve.`;
-  return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
+      ? `Olá, Rodaleve! Gostaria de agendar a ${revisionLabel} da minha Honda ${modelName}.`
+      : `Olá, Rodaleve! Gostaria de agendar uma revisão da minha moto Honda.`;
+  return buildWhatsAppHref(rawPhone, text);
 }
 
 type ActiveImageModalTarget =
@@ -92,8 +118,52 @@ export function PublicPage({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSegment, setSelectedSegment] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [showAllModels, setShowAllModels] = useState(false);
+  const [highlightedModelId, setHighlightedModelId] = useState<number | null>(null);
+  const [scheduleTarget, setScheduleTarget] = useState<{
+    model: MotoModel;
+    summary: ComputedRevisionSummary;
+    includeOptionals: boolean;
+  } | null>(null);
   const [openFaqId, setOpenFaqId] = useState<number | null>(data.faqs[0]?.id ?? null);
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const railRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true);
+
+  // Meta Pixel, Tag do Google (GA4/Ads) e TikTok Pixel: injeção única no site público
+  useEffect(() => {
+    if (!isEditMode) {
+      initAllTrackingPixels(data.seo);
+    }
+  }, [data.seo, isEditMode]);
+
+  // Glassmorphism scroll shadow + scroll-spy de seção ativa na navbar
+  useEffect(() => {
+    if (isEditMode) return;
+    const handleScroll = () => {
+      const y = window.scrollY;
+      setIsScrolled(y > 10);
+
+      const unitsEl = document.getElementById('unidades');
+      const faqEl = document.getElementById('perguntas-frequentes');
+      const unitsTop = unitsEl ? unitsEl.getBoundingClientRect().top : Infinity;
+      const faqTop = faqEl ? faqEl.getBoundingClientRect().top : Infinity;
+
+      if (unitsTop <= 190) {
+        setActiveNav('unidades');
+      } else if (faqTop <= 190 || heroTab === 'faq') {
+        setActiveNav('faq');
+      } else {
+        setActiveNav('revisoes');
+      }
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, [isEditMode, heroTab]);
 
   // Visual Builder state + Undo/Redo stacks
   const allModelIds = useMemo(() => data.models.map((m) => m.id), [data.models]);
@@ -551,18 +621,96 @@ export function PublicPage({
     isEditMode,
   ]);
 
+  const primaryWhatsAppNumber = useMemo(
+    () => getUnitWhatsAppNumber(data.seo.units?.[0]),
+    [data.seo.units]
+  );
+
+  const quickJumpModels = useMemo(() => {
+    const hiddenSet = new Set(vbConfig.hiddenModelIds);
+    return orderedModels.filter((m) => isEditMode || !hiddenSet.has(m.id));
+  }, [orderedModels, vbConfig.hiddenModelIds, isEditMode]);
+
+  const scrollToSection = useCallback((elementId: string) => {
+    const el = document.getElementById(elementId);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
+
+  const updateRailScrollState = useCallback(() => {
+    const el = railRef.current;
+    if (!el) {
+      setCanScrollLeft(false);
+      setCanScrollRight(false);
+      return;
+    }
+    setCanScrollLeft(el.scrollLeft > 8);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 8);
+  }, []);
+
+  const scrollRailBy = useCallback((direction: -1 | 1) => {
+    const el = railRef.current;
+    if (!el) return;
+    const step = Math.max(320, Math.round(el.clientWidth * 0.72));
+    el.scrollBy({ left: direction * step, behavior: 'smooth' });
+  }, []);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(updateRailScrollState);
+    window.addEventListener('resize', updateRailScrollState, { passive: true });
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('resize', updateRailScrollState);
+    };
+  }, [updateRailScrollState, computedModels.length, viewMode, heroTab]);
+
+  const handleQuickSelectModel = useCallback(
+    (modelIdStr: string) => {
+      const id = Number(modelIdStr);
+      if (!id) return;
+      const matchedModel = orderedModels.find((m) => m.id === id);
+      if (matchedModel) {
+        trackAllPixelsViewContent(data.seo, {
+          content_name: matchedModel.name,
+          content_category: segmentNameMap[matchedModel.segment_slug] || 'Honda',
+          content_ids: [String(matchedModel.id)],
+        });
+      }
+      setHeroTab('tabela');
+      setSearchQuery('');
+      setSelectedSegment('all');
+      setShowAllModels(true);
+      setHighlightedModelId(id);
+      setTimeout(() => {
+        const card = document.getElementById(`model-card-${id}`);
+        if (card) {
+          card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+          const rect = card.getBoundingClientRect();
+          if (rect.top < 120 || rect.bottom > window.innerHeight) {
+            const topTarget = Math.max(0, window.scrollY + rect.top - 165);
+            window.scrollTo({ top: topTarget, behavior: 'smooth' });
+          }
+        }
+        updateRailScrollState();
+      }, 90);
+      setTimeout(() => {
+        setHighlightedModelId((curr) => (curr === id ? null : curr));
+      }, 2400);
+    },
+    [orderedModels, data.seo, segmentNameMap, updateRailScrollState]
+  );
+
   const handleNavClick = (target: 'revisoes' | 'faq' | 'unidades') => {
     setActiveNav(target);
     if (target === 'revisoes') {
       setHeroTab('tabela');
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else if (target === 'faq') {
-      setHeroTab('faq');
-      const el = document.getElementById('hero-tabs');
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      setHeroTab('tabela');
+      setTimeout(() => scrollToSection('perguntas-frequentes'), 40);
     } else if (target === 'unidades') {
-      const el = document.getElementById('unidades');
-      if (el) el.scrollIntoView({ behavior: 'smooth' });
+      scrollToSection('unidades');
     }
   };
 
@@ -665,7 +813,13 @@ export function PublicPage({
                   <button
                     key={tab.revision_number}
                     type="button"
-                    onClick={() => setSelectedRevision(tab.revision_number)}
+                    onClick={() => {
+                      setSelectedRevision(tab.revision_number);
+                      trackAllPixelsViewContent(data.seo, {
+                        content_name: tab.label,
+                        content_category: 'Revisão Programada',
+                      });
+                    }}
                     className={`flex min-w-[210px] flex-col items-start rounded-2xl border px-5 py-4 text-left transition-all ${
                       isSelected
                         ? 'border-[#E4002B] bg-[#E4002B] text-white shadow-sm'
@@ -727,32 +881,93 @@ export function PublicPage({
           </div>
         );
 
-      case 'filters_catalog':
+      case 'filters_catalog': {
         if (heroTab !== 'tabela' && !isEditMode) return null;
+        const canCollapseModels =
+          viewMode === 'list' &&
+          !isEditMode &&
+          !searchQuery.trim() &&
+          computedModels.length > 9;
+        const visibleModels =
+          viewMode === 'grid'
+            ? computedModels
+            : canCollapseModels && !showAllModels
+              ? computedModels.slice(0, 9)
+              : computedModels;
+        const isFreeLabor = selectedRevision <= 2;
+
         return (
-          <main className="mx-auto max-w-[1180px] px-4 py-7 sm:px-6 sm:pb-12">
-            {/* Barra de busca e filtros */}
-            <div className="flex flex-col gap-3.5 lg:flex-row lg:items-center lg:justify-between">
-              <div className="relative flex-1 lg:max-w-md">
-                <Search className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar modelo, peça ou código..."
-                  className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-10 pr-4 text-sm text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none dark:border-neutral-800 dark:bg-neutral-900 dark:text-white"
-                />
+          <main className="mx-auto max-w-[1180px] px-4 py-5 sm:px-6 sm:pb-10">
+            {/* Barra horizontal compacta de busca, seleção rápida e filtros */}
+            <div
+              className="relative -mx-1 rounded-2xl border border-neutral-200/90 bg-white/95 p-2.5 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95 sm:mx-0 sm:p-3"
+            >
+              {/* Linha 1 horizontal: Busca + Ir direto para a moto + Atalhos */}
+              <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
+                <div className="relative min-w-[210px] flex-1">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Buscar modelo (ex.: CG 160, Sahara, Biz, PCX), peça ou código..."
+                    className="w-full rounded-xl border border-neutral-200 bg-neutral-50/70 py-2 pl-9 pr-8 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:bg-white focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-white sm:text-sm"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      aria-label="Limpar busca"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                <select
+                  aria-label="Ir direto para a moto"
+                  value=""
+                  onChange={(e) => handleQuickSelectModel(e.target.value)}
+                  className="w-full shrink-0 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 focus:border-[#E4002B] focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 sm:w-auto sm:min-w-[190px]"
+                >
+                  <option value="">Ir direto para a moto...</option>
+                  {quickJumpModels.map((m) => (
+                    <option key={m.id} value={String(m.id)}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => scrollToSection('perguntas-frequentes')}
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300"
+                >
+                  <HelpCircle className="h-3.5 w-3.5 text-[#E4002B]" />
+                  Perguntas Frequentes
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => scrollToSection('unidades')}
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300"
+                >
+                  <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
+                  Unidades e Como Chegar
+                </button>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex flex-wrap items-center gap-1.5">
+              {/* Linha 2 horizontal: Pílulas de segmento + contador + setas do carrossel + alternador grade/lista */}
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-2 dark:border-neutral-800">
+                <div className="no-scrollbar flex max-w-full items-center gap-1.5 overflow-x-auto">
                   <button
                     type="button"
                     onClick={() => setSelectedSegment('all')}
-                    className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
+                    className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                       selectedSegment === 'all'
                         ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800'
+                        : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800'
                     }`}
                   >
                     <EditableText
@@ -767,11 +982,17 @@ export function PublicPage({
                     <button
                       key={seg.slug}
                       type="button"
-                      onClick={() => setSelectedSegment(seg.slug)}
-                      className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors ${
+                      onClick={() => {
+                        setSelectedSegment(seg.slug);
+                        trackAllPixelsViewContent(data.seo, {
+                          content_name: seg.name,
+                          content_category: 'Segmento',
+                        });
+                      }}
+                      className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                         selectedSegment === seg.slug
                           ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                          : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800'
+                          : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800'
                       }`}
                     >
                       <EditableText
@@ -785,39 +1006,70 @@ export function PublicPage({
                   ))}
                 </div>
 
-                {/* Grid/List switcher */}
-                <div className="inline-flex rounded-xl border border-neutral-200 bg-white p-1 dark:border-neutral-800 dark:bg-neutral-900">
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('grid')}
-                    aria-label="Visualização em grade"
-                    className={`rounded-lg p-1.5 transition-colors ${
-                      viewMode === 'grid'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
-                    }`}
-                  >
-                    <LayoutGrid className="h-4 w-4" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setViewMode('list')}
-                    aria-label="Visualização em lista"
-                    className={`rounded-lg p-1.5 transition-colors ${
-                      viewMode === 'list'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
-                    }`}
-                  >
-                    <List className="h-4 w-4" />
-                  </button>
+                <div className="flex shrink-0 items-center gap-2.5">
+                  <span className="whitespace-nowrap text-xs font-medium text-neutral-500 tabular-nums">
+                    Exibindo {visibleModels.length} de {computedModels.length} modelos
+                  </span>
+
+                  {viewMode === 'grid' && computedModels.length > 0 && (
+                    <div className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white p-0.5 dark:border-neutral-800 dark:bg-neutral-950">
+                      <button
+                        type="button"
+                        onClick={() => scrollRailBy(-1)}
+                        disabled={!canScrollLeft}
+                        aria-label="Modelo anterior"
+                        title="Rolar modelos para a esquerda"
+                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      >
+                        <ArrowLeft className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => scrollRailBy(1)}
+                        disabled={!canScrollRight}
+                        aria-label="Próximo modelo"
+                        title="Rolar modelos para a direita"
+                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      >
+                        <ArrowRight className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Grid/List switcher */}
+                  <div className="inline-flex rounded-xl border border-neutral-200 bg-white p-0.5 dark:border-neutral-800 dark:bg-neutral-950">
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('grid')}
+                      aria-label="Visualização em carrossel horizontal"
+                      className={`rounded-lg p-1.5 transition-colors ${
+                        viewMode === 'grid'
+                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
+                      }`}
+                    >
+                      <LayoutGrid className="h-4 w-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewMode('list')}
+                      aria-label="Visualização em lista"
+                      className={`rounded-lg p-1.5 transition-colors ${
+                        viewMode === 'list'
+                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
+                          : 'text-neutral-500 hover:text-neutral-900 dark:text-neutral-400'
+                      }`}
+                    >
+                      <List className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Grade / Lista de cards de motos */}
+            {/* Trilho horizontal rolável / Lista de cards de motos */}
             {computedModels.length === 0 ? (
-              <div className="mt-10 rounded-2xl border border-neutral-200 bg-white p-12 text-center dark:border-neutral-800 dark:bg-neutral-900">
+              <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-10 text-center dark:border-neutral-800 dark:bg-neutral-900">
                 <p className="text-base font-semibold text-neutral-900 dark:text-white">
                   Nenhum modelo encontrado
                 </p>
@@ -836,224 +1088,307 @@ export function PublicPage({
                 </button>
               </div>
             ) : viewMode === 'grid' ? (
-              <div className="mt-7 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {computedModels.map(({ model, summary, isVisuallyHidden }) => {
-                  const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
-                  const revTitleUpper = `TOTAL DA ${revisionLabel.toUpperCase()}`;
-                  const scheduleText = `Agendar ${revisionLabel.toLowerCase()} desta moto`;
+              <div className="relative mt-5">
+                <button
+                  type="button"
+                  onClick={() => scrollRailBy(-1)}
+                  disabled={!canScrollLeft}
+                  aria-label="Rolar modelos para a esquerda"
+                  className="hidden sm:flex absolute -left-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-neutral-800 shadow-md backdrop-blur transition-all hover:border-[#E4002B] hover:text-[#E4002B] disabled:pointer-events-none disabled:opacity-0 dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-white"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
 
-                  return (
-                    <article
-                      key={model.id}
-                      draggable={isEditMode}
-                      onDragStart={(e) => {
-                        if (!isEditMode) return;
-                        e.stopPropagation();
-                        setDragModelId(model.id);
-                      }}
-                      onDragOver={(e) => {
-                        if (!isEditMode || dragModelId === null) return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setDragOverModelId(model.id);
-                      }}
-                      onDrop={(e) => {
-                        if (!isEditMode || dragModelId === null) return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        reorderModelCards(dragModelId, model.id);
-                        setDragModelId(null);
-                        setDragOverModelId(null);
-                      }}
-                      className={`relative flex flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all duration-200 dark:bg-neutral-900 ${
-                        isEditMode && dragOverModelId === model.id
-                          ? 'border-[#E4002B] ring-2 ring-[#E4002B]'
-                          : 'border-neutral-200 hover:-translate-y-0.5 hover:shadow-md dark:border-neutral-800'
-                      } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
-                    >
-                      {isEditMode && (
-                        <div className="flex items-center justify-between gap-1 border-b border-indigo-100 bg-indigo-50/90 px-3 py-1.5 text-[11px] text-indigo-950">
-                          <span className="inline-flex cursor-grab items-center gap-1 font-bold active:cursor-grabbing">
-                            <GripVertical className="h-3.5 w-3.5 text-indigo-500" />
-                            Arrastar card
-                          </span>
-                          <div className="flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => moveModelCard(model.id, -1)}
-                              title="Mover para esquerda/acima"
-                              className="rounded bg-white p-1 hover:bg-indigo-100"
-                            >
-                              <ArrowLeft className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => moveModelCard(model.id, 1)}
-                              title="Mover para direita/abaixo"
-                              className="rounded bg-white p-1 hover:bg-indigo-100"
-                            >
-                              <ArrowRight className="h-3 w-3" />
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => toggleModelCardHidden(model.id)}
-                              title={isVisuallyHidden ? 'Exibir card' : 'Ocultar card'}
-                              className="rounded bg-white p-1 hover:bg-indigo-100"
-                            >
-                              {isVisuallyHidden ? (
-                                <EyeOff className="h-3 w-3 text-[#E4002B]" />
-                              ) : (
-                                <Eye className="h-3 w-3" />
-                              )}
-                            </button>
-                          </div>
-                        </div>
-                      )}
+                <div
+                  ref={railRef}
+                  onScroll={updateRailScrollState}
+                  className="flex flex-row items-stretch gap-4 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-3 pt-1"
+                >
+                  {visibleModels.map(({ model, summary, isVisuallyHidden }) => {
+                    const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
+                    const revTitleUpper = `TOTAL DA ${revisionLabel.toUpperCase()}`;
+                    const includeOptionals = true;
+                    const activeTotal = summary.totalWithOptionals;
+                    const isHighlighted = highlightedModelId === model.id;
 
-                      {/* Foto grande da moto (fundo branco, centralizada) */}
-                      <div className="group/img relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden border-b border-neutral-100 bg-white p-5 dark:border-neutral-800">
-                        {model.image_url ? (
-                          <img
-                            src={model.image_url}
-                            alt={`Honda ${model.name}`}
-                            referrerPolicy="no-referrer"
-                            className="h-full w-full object-contain"
-                          />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-400">
-                            Honda {model.name}
-                          </div>
-                        )}
-                        {isEditMode && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setImageModal({
-                                kind: 'model',
-                                modelId: model.id,
-                                title: `Foto de ${model.name}`,
-                                currentUrl: model.image_url,
-                              })
-                            }
-                            className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-neutral-950/85 px-3.5 py-1.5 text-xs font-bold text-white opacity-95 shadow-lg backdrop-blur transition-all hover:bg-[#E4002B] group-hover/img:opacity-100"
-                          >
-                            <ImageIcon className="h-3.5 w-3.5" />
-                            Trocar Imagem
-                          </button>
-                        )}
-                      </div>
-
-                      {/* Cabeçalho do card */}
-                      <div className="flex items-start justify-between gap-3 px-5 pt-4">
-                        <div>
-                          <EditableText
-                            as="h2"
-                            textKey={`model_name_${model.id}`}
-                            defaultText={model.name}
-                            entry={vbConfig.siteContent[`model_name_${model.id}`]}
-                            isEditMode={isEditMode}
-                            onCommit={handleCommitText}
-                            className="font-display text-lg font-bold tracking-tight text-neutral-900 dark:text-white"
-                          />
-                          <EditableText
-                            as="p"
-                            textKey={`model_cat_${model.id}`}
-                            defaultText={categoryLabel}
-                            entry={vbConfig.siteContent[`model_cat_${model.id}`]}
-                            isEditMode={isEditMode}
-                            onCommit={handleCommitText}
-                            className="block text-xs font-medium text-neutral-500 dark:text-neutral-400"
-                          />
-                        </div>
-                        <span className="shrink-0 text-xs font-semibold text-neutral-500 tabular-nums dark:text-neutral-400">
-                          {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
-                        </span>
-                      </div>
-
-                      {/* Lista de peças da revisão */}
-                      <div className="mt-4 flex-1 divide-y divide-neutral-100 px-5 dark:divide-neutral-800">
-                        {summary.items.length === 0 ? (
-                          <p className="py-6 text-center text-xs text-neutral-400">
-                            Nenhuma peça vinculada a esta revisão.
-                          </p>
-                        ) : (
-                          summary.items.map(({ revisionPart, part, lineTotal }) => (
-                            <div
-                              key={`${revisionPart.id}-${part.code}`}
-                              className="flex items-start justify-between gap-3 py-2.5"
-                            >
-                              <div className="min-w-0">
-                                <p className="text-[13px] font-medium leading-snug text-neutral-800 dark:text-neutral-200">
-                                  {part.description}
-                                  {part.is_optional && !part.description.includes('[Opcional]') ? (
-                                    <span className="ml-1 text-neutral-500">[Opcional]</span>
-                                  ) : null}
-                                </p>
-                                <p className="mt-0.5 font-mono text-[11px] text-neutral-400 dark:text-neutral-500">
-                                  CÓD. {part.code}
-                                  {(part.unit === 'ML' || revisionPart.quantity > 1) &&
-                                    ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
-                                </p>
-                              </div>
-                              <span className="shrink-0 text-[13px] font-bold text-neutral-900 tabular-nums dark:text-white">
-                                {formatBRL(lineTotal)}
-                              </span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-
-                      {/* Rodapé vermelho de destaque */}
-                      <div className="mt-4 bg-[#E4002B] px-5 py-3.5 text-white">
-                        <div className="flex items-center justify-between gap-2">
-                          <div>
-                            <p className="text-[11px] font-bold uppercase tracking-wider text-white/95">
-                              {revTitleUpper}
-                            </p>
-                            <p className="text-[11px] text-white/85 tabular-nums">
-                              sem opcionais {formatBRL(summary.totalWithoutOptionals)}
-                            </p>
-                          </div>
-                          <p className="font-display text-xl font-extrabold tracking-tight tabular-nums">
-                            {formatBRL(summary.totalWithOptionals)}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* Link inferior */}
-                      <a
-                        href={buildWhatsAppUrl(model.name, revisionLabel)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => {
-                          if (isEditMode) e.preventDefault();
+                    return (
+                      <article
+                        id={`model-card-${model.id}`}
+                        key={model.id}
+                        draggable={isEditMode}
+                        onDragStart={(e) => {
+                          if (!isEditMode) return;
+                          e.stopPropagation();
+                          setDragModelId(model.id);
                         }}
-                        className="flex items-center justify-center gap-2 bg-neutral-50 px-5 py-3 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#E4002B] dark:bg-neutral-950/60 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        onDragOver={(e) => {
+                          if (!isEditMode || dragModelId === null) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDragOverModelId(model.id);
+                        }}
+                        onDrop={(e) => {
+                          if (!isEditMode || dragModelId === null) return;
+                          e.preventDefault();
+                          e.stopPropagation();
+                          reorderModelCards(dragModelId, model.id);
+                          setDragModelId(null);
+                          setDragOverModelId(null);
+                        }}
+                        className={`relative flex w-[285px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all duration-200 dark:bg-neutral-900 sm:w-[318px] md:w-[336px] ${
+                          isEditMode && dragOverModelId === model.id
+                            ? 'border-[#E4002B] ring-2 ring-[#E4002B]'
+                            : isHighlighted
+                              ? 'border-[#E4002B] ring-2 ring-[#E4002B]/50 shadow-lg'
+                              : 'border-neutral-200 hover:-translate-y-0.5 hover:shadow-md dark:border-neutral-800'
+                        } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                       >
-                        <Calendar className="h-3.5 w-3.5 text-[#E4002B]" />
-                        <EditableText
-                          textKey={`model_cta_${model.id}`}
-                          defaultText={scheduleText}
-                          entry={vbConfig.siteContent[`model_cta_${model.id}`]}
-                          isEditMode={isEditMode}
-                          onCommit={handleCommitText}
-                        />
-                      </a>
-                    </article>
-                  );
-                })}
+                        {isEditMode && (
+                          <div className="flex items-center justify-between gap-1 border-b border-indigo-100 bg-indigo-50/90 px-3 py-1.5 text-[11px] text-indigo-950">
+                            <span className="inline-flex cursor-grab items-center gap-1 font-bold active:cursor-grabbing">
+                              <GripVertical className="h-3.5 w-3.5 text-indigo-500" />
+                              Arrastar card
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => moveModelCard(model.id, -1)}
+                                title="Mover para esquerda"
+                                className="rounded bg-white p-1 hover:bg-indigo-100"
+                              >
+                                <ArrowLeft className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => moveModelCard(model.id, 1)}
+                                title="Mover para direita"
+                                className="rounded bg-white p-1 hover:bg-indigo-100"
+                              >
+                                <ArrowRight className="h-3 w-3" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => toggleModelCardHidden(model.id)}
+                                title={isVisuallyHidden ? 'Exibir card' : 'Ocultar card'}
+                                className="rounded bg-white p-1 hover:bg-indigo-100"
+                              >
+                                {isVisuallyHidden ? (
+                                  <EyeOff className="h-3 w-3 text-[#E4002B]" />
+                                ) : (
+                                  <Eye className="h-3 w-3" />
+                                )}
+                              </button>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Foto compacta da moto (fundo branco, centralizada) */}
+                        <div className="group/img relative flex h-40 w-full items-center justify-center overflow-hidden border-b border-neutral-100 bg-white p-3.5 dark:border-neutral-800 sm:h-44">
+                          {model.image_url ? (
+                            <img
+                              src={model.image_url}
+                              alt={`Honda ${model.name}`}
+                              referrerPolicy="no-referrer"
+                              className="h-full w-full object-contain"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-400">
+                              Honda {model.name}
+                            </div>
+                          )}
+                          {isEditMode && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setImageModal({
+                                  kind: 'model',
+                                  modelId: model.id,
+                                  title: `Foto de ${model.name}`,
+                                  currentUrl: model.image_url,
+                                })
+                              }
+                              className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-neutral-950/85 px-3.5 py-1.5 text-xs font-bold text-white opacity-95 shadow-lg backdrop-blur transition-all hover:bg-[#E4002B] group-hover/img:opacity-100"
+                            >
+                              <ImageIcon className="h-3.5 w-3.5" />
+                              Trocar Imagem
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Cabeçalho do card */}
+                        <div className="flex items-start justify-between gap-2.5 px-4 pt-3">
+                          <div className="min-w-0">
+                            <EditableText
+                              as="h2"
+                              textKey={`model_name_${model.id}`}
+                              defaultText={model.name}
+                              entry={vbConfig.siteContent[`model_name_${model.id}`]}
+                              isEditMode={isEditMode}
+                              onCommit={handleCommitText}
+                              className="truncate font-display text-base font-bold tracking-tight text-neutral-900 dark:text-white sm:text-lg"
+                            />
+                            <EditableText
+                              as="p"
+                              textKey={`model_cat_${model.id}`}
+                              defaultText={categoryLabel}
+                              entry={vbConfig.siteContent[`model_cat_${model.id}`]}
+                              isEditMode={isEditMode}
+                              onCommit={handleCommitText}
+                              className="block text-xs font-medium text-neutral-500 dark:text-neutral-400"
+                            />
+                          </div>
+                          <span className="shrink-0 text-xs font-semibold text-neutral-500 tabular-nums dark:text-neutral-400">
+                            {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
+                          </span>
+                        </div>
+
+                        {/* Badges informativos transparentes (Atendimento, Mão de obra e Opcionais) */}
+                        <div className="mt-2 flex flex-wrap items-center gap-1 px-4">
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold ${
+                              isFreeLabor
+                                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                            }`}
+                          >
+                            <Clock className="h-3 w-3 shrink-0" />
+                            {isFreeLabor
+                              ? 'Atendimento por ordem de chegada'
+                              : 'Necessário agendamento prévio'}
+                          </span>
+
+                          <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                            <Wrench className="h-3 w-3 shrink-0 text-[#E4002B]" />
+                            {isFreeLabor
+                              ? 'Mão de obra gratuita (conforme manual)'
+                              : 'Consultar mão de obra'}
+                          </span>
+                        </div>
+
+                        {/* Lista compacta de peças da revisão (altura alinhada no carrossel) */}
+                        <div className="mt-2.5 h-[196px] flex-1 overflow-y-auto divide-y divide-neutral-100 px-4 dark:divide-neutral-800">
+                          {summary.items.length === 0 ? (
+                            <p className="py-6 text-center text-xs text-neutral-400">
+                              Nenhuma peça vinculada a esta revisão.
+                            </p>
+                          ) : (
+                            summary.items.map(({ revisionPart, part, lineTotal }) => {
+                              const dimmedOptional = part.is_optional && !includeOptionals;
+                              return (
+                                <div
+                                  key={`${revisionPart.id}-${part.code}`}
+                                  className={`flex items-start justify-between gap-2.5 py-2 transition-opacity ${
+                                    dimmedOptional ? 'opacity-45' : ''
+                                  }`}
+                                >
+                                  <div className="min-w-0">
+                                    <p
+                                      className={`text-xs font-medium leading-snug text-neutral-800 dark:text-neutral-200 ${
+                                        dimmedOptional ? 'line-through' : ''
+                                      }`}
+                                    >
+                                      {part.description}
+                                      {part.is_optional && !part.description.includes('[Opcional]') ? (
+                                        <span className="ml-1 text-neutral-500">[Opcional]</span>
+                                      ) : null}
+                                    </p>
+                                    <p className="mt-0.5 font-mono text-[10px] text-neutral-400 dark:text-neutral-500">
+                                      CÓD. {part.code}
+                                      {(part.unit === 'ML' || revisionPart.quantity > 1) &&
+                                        ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
+                                    </p>
+                                  </div>
+                                  <span
+                                    className={`shrink-0 text-xs font-bold text-neutral-900 tabular-nums dark:text-white ${
+                                      dimmedOptional ? 'line-through' : ''
+                                    }`}
+                                  >
+                                    {formatBRL(lineTotal)}
+                                  </span>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+
+                        {/* Rodapé vermelho de destaque */}
+                        <div className="mt-2.5 bg-[#E4002B] px-4 py-3 text-white">
+                          <div className="flex items-center justify-between gap-2">
+                            <div>
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-white/95">
+                                {revTitleUpper}
+                              </p>
+                              <p className="text-[10px] text-white/90 tabular-nums">
+                                Sem opcionais: {formatBRL(summary.totalWithoutOptionals)}
+                              </p>
+                            </div>
+                            <p className="font-display text-lg font-extrabold tracking-tight tabular-nums sm:text-xl">
+                              {formatBRL(activeTotal)}
+                            </p>
+                          </div>
+                        </div>
+
+                        {/* Botão de agendamento direto via modal WhatsApp */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (isEditMode) return;
+                            trackAllPixelsLeadContact(data.seo, {
+                              content_name: model.name,
+                              content_category: revisionLabel,
+                            });
+                            setScheduleTarget({
+                              model,
+                              summary,
+                              includeOptionals,
+                            });
+                          }}
+                          className="flex items-center justify-center gap-2 bg-neutral-50 px-4 py-2.5 text-xs font-bold text-neutral-800 transition-colors hover:bg-emerald-50 hover:text-emerald-800 dark:bg-neutral-950/60 dark:text-neutral-200 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
+                        >
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#25D366] text-white">
+                            <WhatsAppIcon className="h-3 w-3" />
+                          </span>
+                          <EditableText
+                            textKey={`model_cta_${model.id}`}
+                            defaultText="Agendar esta revisão no WhatsApp"
+                            entry={vbConfig.siteContent[`model_cta_${model.id}`]}
+                            isEditMode={isEditMode}
+                            onCommit={handleCommitText}
+                          />
+                        </button>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => scrollRailBy(1)}
+                  disabled={!canScrollRight}
+                  aria-label="Rolar modelos para a direita"
+                  className="hidden sm:flex absolute -right-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-neutral-800 shadow-md backdrop-blur transition-all hover:border-[#E4002B] hover:text-[#E4002B] disabled:pointer-events-none disabled:opacity-0 dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-white"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </button>
               </div>
             ) : (
               /* List View */
               <div className="mt-7 space-y-4">
-                {computedModels.map(({ model, summary, isVisuallyHidden }) => {
+                {visibleModels.map(({ model, summary, isVisuallyHidden }) => {
                   const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
+                  const includeOptionals = true;
+                  const activeTotal = summary.totalWithOptionals;
+                  const isHighlighted = highlightedModelId === model.id;
+
                   return (
                     <article
+                      id={`model-card-${model.id}`}
                       key={model.id}
-                      className={`flex flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900 md:flex-row ${
-                        isVisuallyHidden ? 'opacity-45 grayscale' : ''
-                      }`}
+                      className={`flex flex-col overflow-hidden rounded-2xl border bg-white dark:bg-neutral-900 md:flex-row ${
+                        isHighlighted
+                          ? 'border-[#E4002B] ring-2 ring-[#E4002B]/50 shadow-lg'
+                          : 'border-neutral-200 dark:border-neutral-800'
+                      } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                     >
                       <div className="relative flex w-full shrink-0 items-center justify-center bg-white p-5 md:w-60 md:border-r md:border-neutral-100 dark:md:border-neutral-800">
                         <img
@@ -1095,26 +1430,53 @@ export function PublicPage({
                               {summary.items.length} {summary.items.length === 1 ? 'item' : 'itens'}
                             </span>
                           </div>
+
+                          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            <span
+                              className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
+                                isFreeLabor
+                                  ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                  : 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+                              }`}
+                            >
+                              <Clock className="h-3 w-3" />
+                              {isFreeLabor
+                                ? 'Atendimento por ordem de chegada'
+                                : 'Necessário agendamento prévio'}
+                            </span>
+                            <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
+                              <Wrench className="h-3 w-3 text-[#E4002B]" />
+                              {isFreeLabor
+                                ? 'Mão de obra gratuita (conforme manual)'
+                                : 'Consultar mão de obra'}
+                            </span>
+                          </div>
+
                           <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
-                            {summary.items.map(({ revisionPart, part, lineTotal }) => (
-                              <div
-                                key={`${revisionPart.id}-${part.code}`}
-                                className="flex items-center justify-between border-b border-neutral-100 py-1.5 text-xs dark:border-neutral-800"
-                              >
-                                <span className="truncate pr-2 text-neutral-700 dark:text-neutral-300">
-                                  {part.description}
-                                  {part.is_optional && !part.description.includes('[Opcional]')
-                                    ? ' [Opcional]'
-                                    : ''}
-                                  <span className="ml-1.5 font-mono text-[10px] text-neutral-400">
-                                    ({part.code})
+                            {summary.items.map(({ revisionPart, part, lineTotal }) => {
+                              const dimmedOptional = part.is_optional && !includeOptionals;
+                              return (
+                                <div
+                                  key={`${revisionPart.id}-${part.code}`}
+                                  className={`flex items-center justify-between border-b border-neutral-100 py-1.5 text-xs dark:border-neutral-800 ${
+                                    dimmedOptional ? 'opacity-45 line-through' : ''
+                                  }`}
+                                >
+                                  <span className="truncate pr-2 text-neutral-700 dark:text-neutral-300">
+                                    {part.description}
+                                    {part.is_optional && !part.description.includes('[Opcional]')
+                                      ? ' [Opcional]'
+                                      : ''}
+                                    <span className="ml-1.5 font-mono text-[10px] text-neutral-400">
+                                      ({part.code})
+                                    </span>
                                   </span>
-                                </span>
-                                <span className="shrink-0 font-semibold text-neutral-900 tabular-nums dark:text-white">
-                                  {formatBRL(lineTotal)}
-                                </span>
-                              </div>
-                            ))}
+                                  <span className="shrink-0 font-semibold text-neutral-900 tabular-nums dark:text-white">
+                                    {formatBRL(lineTotal)}
+                                  </span>
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
 
@@ -1123,26 +1485,35 @@ export function PublicPage({
                             <span className="text-xs font-bold uppercase tracking-wider">
                               TOTAL DA {revisionLabel.toUpperCase()}
                             </span>
-                            <span className="ml-3 text-xs text-white/85 tabular-nums">
-                              sem opcionais {formatBRL(summary.totalWithoutOptionals)}
+                            <span className="ml-3 text-xs text-white/90 tabular-nums">
+                              Sem opcionais: {formatBRL(summary.totalWithoutOptionals)}
                             </span>
                           </div>
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3">
                             <span className="font-display text-lg font-extrabold tabular-nums">
-                              {formatBRL(summary.totalWithOptionals)}
+                              {formatBRL(activeTotal)}
                             </span>
-                            <a
-                              href={buildWhatsAppUrl(model.name, revisionLabel)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              onClick={(e) => {
-                                if (isEditMode) e.preventDefault();
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (isEditMode) return;
+                                trackAllPixelsLeadContact(data.seo, {
+                                  content_name: model.name,
+                                  content_category: revisionLabel,
+                                });
+                                setScheduleTarget({
+                                  model,
+                                  summary,
+                                  includeOptionals,
+                                });
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-[#E4002B] hover:bg-neutral-100"
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-neutral-900 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
                             >
-                              <Calendar className="h-3.5 w-3.5" />
-                              Agendar
-                            </a>
+                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#25D366] text-white">
+                                <WhatsAppIcon className="h-2.5 w-2.5" />
+                              </span>
+                              Agendar no WhatsApp
+                            </button>
                           </div>
                         </div>
                       </div>
@@ -1151,18 +1522,39 @@ export function PublicPage({
                 })}
               </div>
             )}
+
+            {/* Controle de exibição: Ver todos os modelos (X) / Recolher */}
+            {canCollapseModels && (
+              <div className="mt-8 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAllModels((prev) => !prev)}
+                  className="inline-flex items-center gap-2 rounded-full border border-neutral-300 bg-white px-6 py-3 text-sm font-bold text-neutral-900 shadow-sm transition-all hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-900 dark:text-white"
+                >
+                  {showAllModels ? (
+                    <>
+                      <ChevronUp className="h-4 w-4 text-[#E4002B]" />
+                      Recolher lista (mostrar 9 principais)
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-4 w-4 text-[#E4002B]" />
+                      Ver todos os modelos ({computedModels.length})
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
           </main>
         );
+      }
 
       case 'faq_section':
-        if (heroTab !== 'faq' && !isEditMode) return null;
         return (
-          <section className="mx-auto max-w-[920px] px-4 py-10 sm:px-6 sm:py-12">
-            {isEditMode && heroTab !== 'faq' && (
-              <p className="mb-3 inline-block rounded bg-indigo-50 px-2.5 py-1 text-[11px] font-bold text-indigo-700">
-                Prévia da aba Perguntas Frequentes (exibida ao selecionar a aba no site)
-              </p>
-            )}
+          <section
+            id="perguntas-frequentes"
+            className="mx-auto max-w-[920px] scroll-mt-24 px-4 py-10 sm:px-6 sm:py-12"
+          >
             <div className="mb-6 flex items-center justify-between">
               <div>
                 <EditableText
@@ -1344,6 +1736,18 @@ export function PublicPage({
                     >
                       <Youtube className="h-4 w-4" />
                     </a>
+                    <a
+                      href={
+                        data.seo.facebook_url ||
+                        'https://www.facebook.com/concessionariarodaleve/'
+                      }
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label="Facebook Rodaleve"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                    >
+                      <Facebook className="h-4 w-4" />
+                    </a>
                   </div>
                   <button
                     type="button"
@@ -1397,12 +1801,17 @@ export function PublicPage({
                     <li className="pt-1 font-semibold text-neutral-800 dark:text-neutral-200">
                       WhatsApp:{' '}
                       <a
-                        href={buildWhatsAppUrl()}
+                        href={buildWhatsAppUrl(primaryWhatsAppNumber)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={() =>
+                          trackAllPixelsLeadContact(data.seo, {
+                            content_name: 'WhatsApp Rodapé',
+                          })
+                        }
                         className="tabular-nums text-[#E4002B] hover:underline"
                       >
-                        (77) 2888-0003
+                        {primaryWhatsAppNumber}
                       </a>
                     </li>
                   </ul>
@@ -1462,10 +1871,28 @@ export function PublicPage({
                   <EditableText
                     textKey="footer_credits"
                     defaultText={DEFAULT_SITE_CONTENT.footer_credits}
-                    entry={vbConfig.siteContent.footer_credits}
+                    entry={
+                      vbConfig.siteContent.footer_credits
+                        ? {
+                            ...vbConfig.siteContent.footer_credits,
+                            text: vbConfig.siteContent.footer_credits.text
+                              .replace(/\s*Zarvic Marketing\s*[–-]?\s*/gi, '')
+                              .trim() || DEFAULT_SITE_CONTENT.footer_credits,
+                          }
+                        : undefined
+                    }
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
                   />{' '}
+                  <a
+                    href="https://api.whatsapp.com/send?phone=5577981677591&text=Ola%20tudo%20bem%20Vi%20o%20site%20da%20Rodaleve%20e%20achei%20muito%20bem%20estruturado%20Tenho%20um%20negocio%20e%20gostaria%20de%20solicitar%20um%20orcamento%20para%20criar%20um%20site%20completo%20para%20a%20minha%20empresa%20Podemos%20conversar%20sobre%20possibilidades%20prazos%20e%20valores"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="font-semibold text-neutral-700 underline-offset-4 transition-colors hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                  >
+                    Zarvic Marketing
+                  </a>
+                  {' · '}
                   <a
                     href="/gestor"
                     onClick={(e) => {
@@ -1536,7 +1963,7 @@ export function PublicPage({
                   {custom.cta_label && (
                     <div className="pt-2">
                       <a
-                        href={custom.cta_url || buildWhatsAppUrl()}
+                        href={custom.cta_url || buildWhatsAppUrl(primaryWhatsAppNumber)}
                         target="_blank"
                         rel="noopener noreferrer"
                         onClick={(e) => {
@@ -1650,11 +2077,13 @@ export function PublicPage({
             : 'min-h-screen bg-[#FAFAFA] text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100'
         }
       >
-        {/* 1. Cabeçalho fixo no topo */}
+        {/* 1. Cabeçalho fixo no topo com Glassmorphism */}
         <header
           className={`${
             isEditMode ? 'relative' : 'sticky top-0'
-          } z-40 border-b border-neutral-200/80 bg-white/95 backdrop-blur dark:border-neutral-800 dark:bg-neutral-950/95`}
+          } z-50 w-full border-b border-gray-200/70 bg-white/75 backdrop-blur-md transition-shadow duration-200 dark:border-white/10 dark:bg-gray-900/75 ${
+            isScrolled && !isEditMode ? 'shadow-sm' : ''
+          }`}
         >
           <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-4 px-4 sm:px-6">
             <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
@@ -1708,8 +2137,8 @@ export function PublicPage({
                 onClick={() => handleNavClick('revisoes')}
                 className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
                   activeNav === 'revisoes' && heroTab === 'tabela'
-                    ? 'border-[#E4002B] text-neutral-900 dark:text-white'
-                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                    ? 'border-[#dc2626] text-neutral-900 dark:text-white'
+                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
                 }`}
               >
                 <EditableText
@@ -1724,9 +2153,9 @@ export function PublicPage({
                 type="button"
                 onClick={() => handleNavClick('faq')}
                 className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
-                  heroTab === 'faq'
-                    ? 'border-[#E4002B] text-neutral-900 dark:text-white'
-                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                  activeNav === 'faq' || heroTab === 'faq'
+                    ? 'border-[#dc2626] text-neutral-900 dark:text-white'
+                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
                 }`}
               >
                 <EditableText
@@ -1742,8 +2171,8 @@ export function PublicPage({
                 onClick={() => handleNavClick('unidades')}
                 className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
                   activeNav === 'unidades'
-                    ? 'border-[#E4002B] text-neutral-900 dark:text-white'
-                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                    ? 'border-[#dc2626] text-neutral-900 dark:text-white'
+                    : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
                 }`}
               >
                 <EditableText
@@ -1757,13 +2186,19 @@ export function PublicPage({
             </nav>
 
             <a
-              href={buildWhatsAppUrl()}
+              href={buildWhatsAppUrl(primaryWhatsAppNumber)}
               target="_blank"
               rel="noopener noreferrer"
               onClick={(e) => {
-                if (isEditMode) e.preventDefault();
+                if (isEditMode) {
+                  e.preventDefault();
+                  return;
+                }
+                trackAllPixelsLeadContact(data.seo, {
+                  content_name: 'Botão Agendar Revisão (Header)',
+                });
               }}
-              className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#C80024] sm:text-sm"
+              className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-red-600 px-5 py-2.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-red-700 sm:text-sm"
             >
               <EditableText
                 textKey="header_cta"
@@ -1774,6 +2209,43 @@ export function PublicPage({
               />
             </a>
           </div>
+
+          {/* Navegação mobile compacta dentro do header glass */}
+          <nav className="flex items-center justify-around border-t border-gray-200/50 px-3 dark:border-white/10 md:hidden">
+            <button
+              type="button"
+              onClick={() => handleNavClick('revisoes')}
+              className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
+                activeNav === 'revisoes' && heroTab === 'tabela'
+                  ? 'border-[#dc2626] text-neutral-900 dark:text-white'
+                  : 'border-transparent text-neutral-600 dark:text-neutral-300'
+              }`}
+            >
+              {vbConfig.siteContent.nav_revisions?.text || DEFAULT_SITE_CONTENT.nav_revisions}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleNavClick('faq')}
+              className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
+                activeNav === 'faq' || heroTab === 'faq'
+                  ? 'border-[#dc2626] text-neutral-900 dark:text-white'
+                  : 'border-transparent text-neutral-600 dark:text-neutral-300'
+              }`}
+            >
+              {vbConfig.siteContent.nav_faq?.text || DEFAULT_SITE_CONTENT.nav_faq}
+            </button>
+            <button
+              type="button"
+              onClick={() => handleNavClick('unidades')}
+              className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
+                activeNav === 'unidades'
+                  ? 'border-[#dc2626] text-neutral-900 dark:text-white'
+                  : 'border-transparent text-neutral-600 dark:text-neutral-300'
+              }`}
+            >
+              {vbConfig.siteContent.nav_units?.text || DEFAULT_SITE_CONTENT.nav_units}
+            </button>
+          </nav>
         </header>
 
         {/* Render Dynamic Section Blocks */}
@@ -1814,7 +2286,35 @@ export function PublicPage({
       </div>
 
       {/* Botão flutuante e arrastável do WhatsApp */}
-      <FloatingWhatsApp href={buildWhatsAppUrl()} isEditMode={isEditMode} />
+      <FloatingWhatsApp
+        href={buildWhatsAppUrl(primaryWhatsAppNumber)}
+        isEditMode={isEditMode}
+        onTrackClick={() =>
+          trackAllPixelsLeadContact(data.seo, {
+            content_name: 'Botão Flutuante WhatsApp',
+          })
+        }
+      />
+
+      {/* Modal rápido de escolha de unidade para agendamento via WhatsApp */}
+      {scheduleTarget && (
+        <WhatsAppScheduleModal
+          model={scheduleTarget.model}
+          revisionNumber={selectedRevision}
+          revisionLabel={revisionLabel}
+          revisionSubtitle={activeRevisionObj?.subtitle}
+          summary={scheduleTarget.summary}
+          initialIncludeOptionals={scheduleTarget.includeOptionals}
+          units={data.seo.units}
+          onClose={() => setScheduleTarget(null)}
+          onTrackLead={(unitName) =>
+            trackAllPixelsLeadContact(data.seo, {
+              content_name: `${scheduleTarget.model.name} - ${revisionLabel}`,
+              content_category: unitName,
+            })
+          }
+        />
+      )}
 
       {/* Botão flutuante discreto para o administrador autenticado */}
       {isAdminLoggedIn && !isEditMode && (
