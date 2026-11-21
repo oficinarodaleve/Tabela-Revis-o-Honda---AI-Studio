@@ -165,10 +165,10 @@ export function TabCategoriesTabs({
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="font-display text-2xl font-bold text-neutral-900">
+          <h1 className="font-display text-2xl font-bold text-ink">
             Categorias e abas
           </h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Inclua, oculte ou remova os segmentos e as abas de revisão do site.
           </p>
         </div>
@@ -177,8 +177,8 @@ export function TabCategoriesTabs({
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className={`inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
-            !autoSaveEnabled && isDirty ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-brand px-5 py-2.5 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60 ${
+            !autoSaveEnabled && isDirty ? 'ring-2 ring-brand/40 ring-offset-2' : ''
           }`}
         >
           <Save className="h-4 w-4" />
@@ -187,9 +187,9 @@ export function TabCategoriesTabs({
       </div>
 
       {/* Card Segmentos */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <h2 className="text-base font-bold text-neutral-900">Segmentos</h2>
-        <p className="mt-0.5 text-xs text-neutral-500">
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <h2 className="text-base font-bold text-ink">Segmentos</h2>
+        <p className="mt-0.5 text-xs text-ink-muted">
           Edite o nome, marque para aparecer no filtro do site ou remova o segmento.
         </p>
 
@@ -197,10 +197,10 @@ export function TabCategoriesTabs({
           {segDrafts.map((seg, idx) => (
             <div
               key={seg.slug}
-              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50/50 px-3.5 py-2.5"
+              className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface px-3.5 py-2.5"
             >
               <div className="flex flex-1 flex-wrap items-center gap-3">
-                <span className="w-32 font-mono text-xs text-neutral-500">
+                <span className="w-32 font-mono text-xs text-ink-muted">
                   {seg.slug}
                 </span>
                 <input
@@ -211,12 +211,12 @@ export function TabCategoriesTabs({
                       prev.map((s, i) => (i === idx ? { ...s, name: e.target.value } : s))
                     )
                   }
-                  className="min-w-[180px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="min-w-[180px] flex-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink focus:border-brand focus:outline-none"
                 />
               </div>
 
               <div className="flex items-center gap-3">
-                <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-700">
+                <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-ink">
                   <input
                     type="checkbox"
                     checked={seg.visible}
@@ -227,7 +227,7 @@ export function TabCategoriesTabs({
                         )
                       )
                     }
-                    className="h-4 w-4 rounded accent-[#E4002B]"
+                    className="h-4 w-4 rounded accent-brand"
                   />
                   Visível
                 </label>
@@ -238,7 +238,7 @@ export function TabCategoriesTabs({
                     setSegDrafts((prev) => prev.filter((_, i) => i !== idx))
                   }
                   aria-label="Remover segmento"
-                  className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-[#E4002B]"
+                  className="rounded-lg p-1.5 text-ink-muted hover:bg-brand-soft hover:text-brand-text"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -247,18 +247,18 @@ export function TabCategoriesTabs({
           ))}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-neutral-100 pt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border/70 pt-4">
           <input
             type="text"
             value={newSegName}
             onChange={(e) => setNewSegName(e.target.value)}
             placeholder="Novo segmento (ex.: Scooter elétrica)"
-            className="min-w-[220px] flex-1 rounded-xl border border-neutral-200 px-3.5 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+            className="min-w-[220px] flex-1 rounded-xl border border-border bg-card px-3.5 py-2 text-xs text-ink focus:border-brand focus:outline-none"
           />
           <button
             type="button"
             onClick={handleAddSegment}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-bold text-white hover:bg-neutral-800"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-xs font-bold text-on-ink transition-opacity hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
             Adicionar
@@ -267,9 +267,9 @@ export function TabCategoriesTabs({
       </div>
 
       {/* Card Abas de revisão */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <h2 className="text-base font-bold text-neutral-900">Abas de revisão</h2>
-        <p className="mt-0.5 text-xs text-neutral-500">
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <h2 className="text-base font-bold text-ink">Abas de revisão</h2>
+        <p className="mt-0.5 text-xs text-ink-muted">
           Desmarque para ocultar a aba do site ou use a lixeira para removê-la.
         </p>
 
@@ -279,8 +279,8 @@ export function TabCategoriesTabs({
               key={tab.revision_number}
               className={`inline-flex items-center gap-2.5 rounded-xl border px-3.5 py-2 text-xs ${
                 tab.visible
-                  ? 'border-[#E4002B]/40 bg-red-50/40 text-neutral-900'
-                  : 'border-neutral-200 bg-neutral-50 text-neutral-600'
+                  ? 'border-brand/40 bg-brand-soft/60 text-ink'
+                  : 'border-border bg-surface-neutral text-ink-muted'
               }`}
             >
               <label className="inline-flex cursor-pointer items-center gap-2 font-bold">
@@ -294,7 +294,7 @@ export function TabCategoriesTabs({
                       )
                     )
                   }
-                  className="h-4 w-4 rounded accent-[#E4002B]"
+                  className="h-4 w-4 rounded accent-brand"
                 />
                 <span>{tab.revision_number}ª</span>
               </label>
@@ -305,7 +305,7 @@ export function TabCategoriesTabs({
                   setTabDrafts((prev) => prev.filter((_, i) => i !== idx))
                 }
                 aria-label="Remover aba de revisão"
-                className="rounded p-1 text-neutral-400 hover:text-[#E4002B]"
+                className="rounded p-1 text-ink-muted hover:text-brand-text"
               >
                 <Trash2 className="h-3.5 w-3.5" />
               </button>
@@ -313,19 +313,19 @@ export function TabCategoriesTabs({
           ))}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-neutral-100 pt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border/70 pt-4">
           <input
             type="number"
             min={1}
             value={newRevNumber}
             onChange={(e) => setNewRevNumber(e.target.value)}
             placeholder="Nº da revisão (ex.: 8)"
-            className="w-56 rounded-xl border border-neutral-200 px-3.5 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+            className="w-56 rounded-xl border border-border bg-card px-3.5 py-2 text-xs text-ink focus:border-brand focus:outline-none"
           />
           <button
             type="button"
             onClick={handleAddTab}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-bold text-white hover:bg-neutral-800"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-xs font-bold text-on-ink transition-opacity hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
             Adicionar aba

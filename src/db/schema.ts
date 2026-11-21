@@ -41,6 +41,7 @@ export const models = pgTable('models', {
   imageUrl: text('image_url').notNull().default(''),
   hidden: integer('hidden').notNull().default(0),
   sortOrder: integer('sort_order').notNull().default(0),
+  laborPrice: doublePrecision('labor_price'),
 });
 
 export const parts = pgTable('parts', {

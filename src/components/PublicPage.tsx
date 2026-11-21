@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ChevronUp,
   Clock,
+  Code2,
   Eye,
   EyeOff,
   Facebook,
@@ -37,10 +38,19 @@ import {
 import { adminFetch } from '../utils/adminAuth';
 import { getAutoSavePreference } from '../utils/gestorBackup';
 import {
+  buildHtmlEditableTargets,
+  buildModelDefaultHtml,
+  buildNoticeBoxDefaultHtml,
+  buildSectionDefaultHtml,
+} from '../utils/htmlTargets';
+import {
   ComputedRevisionSummary,
+  LABOR_POLICY_TEXTS,
   computeModelRevision,
   formatBRL,
   formatPartQuantity,
+  getLaborBadgeText,
+  isFreeLaborRevision,
 } from '../utils/pricing';
 import {
   CURRENT_SECTIONS_VERSION,
@@ -61,12 +71,14 @@ import {
 import { ErrorBoundary } from './ErrorBoundary';
 import { FloatingWhatsApp } from './FloatingWhatsApp';
 import { LanguageSelector } from './LanguageSelector';
+import { SafeHtml } from './SafeHtml';
 import {
   WhatsAppIcon,
   buildWhatsAppHref,
   getUnitWhatsAppNumber,
 } from './WhatsAppIcon';
-import { EditableText } from './editor/EditableText';
+import { EditableText, HtmlEditorProvider } from './editor/EditableText';
+import type { HtmlModalTarget } from './editor/HtmlEditorModal';
 import { DropPosition, SectionEditorWrapper } from './editor/SectionEditorWrapper';
 
 const UnitsMapSection = lazy(() =>
@@ -83,6 +95,9 @@ const ImageSwapModal = lazy(() =>
 );
 const VisualEditorToolbar = lazy(() =>
   import('./editor/VisualEditorToolbar').then((m) => ({ default: m.VisualEditorToolbar }))
+);
+const HtmlEditorModal = lazy(() =>
+  import('./editor/HtmlEditorModal').then((m) => ({ default: m.HtmlEditorModal }))
 );
 import {
   SITE_CONTENT_TRANSLATIONS,
@@ -103,7 +118,11 @@ interface PublicPageProps {
   onNavigate: (path: string) => void;
   isAdminLoggedIn: boolean;
   isEditMode: boolean;
+  isHtmlEditMode?: boolean;
   onEnterEditMode: () => void;
+  onEnterHtmlEditMode?: () => void;
+  onExitHtmlEditMode?: () => void;
+  onExitHtmlEditModeToGestor?: () => void;
   onExitEditModeToGestor: () => void;
   onPublicDataChanged: () => Promise<void>;
 }
@@ -148,7 +167,7 @@ function FooterClock() {
   return (
     <time
       dateTime={now.toISOString()}
-      className="block text-center text-xs font-normal text-neutral-600 tabular-nums dark:text-neutral-300"
+      className="block text-center text-xs font-normal text-ink-muted tabular-nums"
     >
       {formatFooterDateTimeBR(now)}
     </time>
@@ -161,6 +180,18 @@ type ActiveImageModalTarget =
   | { kind: 'model'; modelId: number; title: string; currentUrl: string }
   | { kind: 'custom_block'; blockId: string; title: string; currentUrl: string };
 
+function getOptimizedMotoImageSources(rawUrl: string): { webpSrc?: string; fallbackSrc: string } {
+  const clean = (rawUrl || '').trim();
+  if (!clean) return { fallbackSrc: '' };
+  if (/^\/src\/assets\/images\/moto_[^/?#]+\.jpe?g$/i.test(clean)) {
+    return {
+      webpSrc: clean.replace(/\.jpe?g$/i, '.webp'),
+      fallbackSrc: clean,
+    };
+  }
+  return { fallbackSrc: clean };
+}
+
 export function PublicPage({
   data,
   language,
@@ -170,10 +201,15 @@ export function PublicPage({
   onNavigate,
   isAdminLoggedIn,
   isEditMode,
+  isHtmlEditMode = false,
   onEnterEditMode,
+  onEnterHtmlEditMode,
+  onExitHtmlEditMode,
+  onExitHtmlEditModeToGestor,
   onExitEditModeToGestor,
   onPublicDataChanged,
 }: PublicPageProps) {
+  const activeHtmlEditMode = Boolean(isHtmlEditMode && isAdminLoggedIn && !isEditMode);
   const dict = UI_TRANSLATIONS[language];
   const [activeNav, setActiveNav] = useState<'revisoes' | 'faq' | 'unidades'>('revisoes');
   const [heroTab, setHeroTab] = useState<'tabela' | 'faq'>('tabela');
@@ -224,21 +260,53 @@ export function PublicPage({
     return () => observer.disconnect();
   }, [shouldMountUnits]);
 
-  // Pixels, Tags (GTM, GA4, Google Ads, Meta Pixel, TikTok Pixel): injeção única no site público
+  // Pixels, Tags (GTM, GA4, Google Ads, Meta Pixel, TikTok Pixel): adiado até 1ª interação ou pós-carga para priorizar LCP mobile
   useEffect(() => {
-    if (!isEditMode) {
+    if (isEditMode) return;
+    let triggered = false;
+    let timerId: number | null = null;
+    const cleanupListeners = () => {
+      window.removeEventListener('pointerdown', trigger);
+      window.removeEventListener('keydown', trigger);
+      window.removeEventListener('touchstart', trigger);
+      window.removeEventListener('scroll', trigger);
+    };
+    const trigger = () => {
+      if (triggered) return;
+      triggered = true;
+      cleanupListeners();
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+        timerId = null;
+      }
       try {
         initAllTrackingPixels(data.seo, data.tracking_config);
       } catch {
         // Ignore tracking script errors so the public page never fails to render
       }
-    }
+    };
+
+    window.addEventListener('pointerdown', trigger, { passive: true, once: true });
+    window.addEventListener('keydown', trigger, { passive: true, once: true });
+    window.addEventListener('touchstart', trigger, { passive: true, once: true });
+    window.addEventListener('scroll', trigger, { passive: true, once: true });
+    timerId = window.setTimeout(trigger, 2600);
+
+    return () => {
+      cleanupListeners();
+      if (timerId !== null) {
+        window.clearTimeout(timerId);
+      }
+    };
   }, [data.seo, data.tracking_config, isEditMode]);
 
-  // Glassmorphism scroll shadow + scroll-spy de seção ativa na navbar
+  // Glassmorphism scroll shadow + scroll-spy batido via requestAnimationFrame (evita forced reflow)
   useEffect(() => {
     if (isEditMode) return;
-    const handleScroll = () => {
+    let rafId: number | null = null;
+
+    const measureScroll = () => {
+      rafId = null;
       const y = window.scrollY;
       setIsScrolled(y > 10);
 
@@ -256,9 +324,19 @@ export function PublicPage({
       }
     };
 
-    handleScroll();
+    const handleScroll = () => {
+      if (rafId !== null) return;
+      rafId = window.requestAnimationFrame(measureScroll);
+    };
+
+    measureScroll();
     window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+    return () => {
+      if (rafId !== null) {
+        window.cancelAnimationFrame(rafId);
+      }
+      window.removeEventListener('scroll', handleScroll);
+    };
   }, [isEditMode, heroTab]);
 
   // Visual Builder state + Undo/Redo stacks
@@ -309,10 +387,12 @@ export function PublicPage({
   const [dragModelId, setDragModelId] = useState<number | null>(null);
   const [dragOverModelId, setDragOverModelId] = useState<number | null>(null);
 
-  // Modals for visual editor
+  // Modals for visual & HTML editor
   const [addBlockAfterIndex, setAddBlockAfterIndex] = useState<number | null>(null);
   const [isAddBlockOpen, setIsAddBlockOpen] = useState(false);
   const [imageModal, setImageModal] = useState<ActiveImageModalTarget | null>(null);
+  const [htmlModalTarget, setHtmlModalTarget] = useState<HtmlModalTarget | null>(null);
+  const [savingHtmlModal, setSavingHtmlModal] = useState(false);
 
   // Pending image syncs (applied cleanly on Save & Publish to SEO & Model tables)
   const [pendingLogoUrl, setPendingLogoUrl] = useState<string | undefined>(undefined);
@@ -449,6 +529,114 @@ export function PublicPage({
       }));
     },
     [commitVisualChange]
+  );
+
+  const htmlTargetsMap = useMemo(() => {
+    const list = buildHtmlEditableTargets({
+      sections: vbConfig.sections,
+      models: data.models || [],
+      faqs: data.faqs || [],
+      vbConfig,
+    });
+    return new Map(list.map((t) => [t.key, t]));
+  }, [vbConfig, data.models, data.faqs]);
+
+  const openHtmlModalForKey = useCallback(
+    (key: string, fallbackInitial?: string) => {
+      if (!isAdminLoggedIn) return;
+      const meta = htmlTargetsMap.get(key);
+      const currentOverride = vbConfig.htmlOverrides?.[key];
+      const hasOverride = typeof currentOverride === 'string' && currentOverride.trim().length > 0;
+      setHtmlModalTarget({
+        key,
+        label: meta?.label || key,
+        categoryLabel: meta?.categoryLabel,
+        description: meta?.description,
+        initialHtml: hasOverride ? currentOverride! : fallbackInitial ?? meta?.defaultHtml ?? '',
+        hasOverride,
+      });
+    },
+    [isAdminLoggedIn, htmlTargetsMap, vbConfig.htmlOverrides]
+  );
+
+  const handleSaveHtmlOverride = useCallback(
+    async (key: string, nextHtml: string) => {
+      if (!isAdminLoggedIn) return;
+      setSavingHtmlModal(true);
+      try {
+        const nextOverrides = { ...(vbConfig.htmlOverrides || {}) };
+        if (nextHtml.trim()) {
+          nextOverrides[key] = nextHtml;
+        } else {
+          delete nextOverrides[key];
+        }
+        const nextConfig: VisualBuilderConfig = {
+          ...vbConfig,
+          sectionsVersion: CURRENT_SECTIONS_VERSION,
+          htmlOverrides: nextOverrides,
+        };
+        setVbConfig(nextConfig);
+        saveLocalVisualConfig(nextConfig);
+        const res = await adminFetch('/api/admin/visual-builder', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextConfig),
+        });
+        if (!res.ok) {
+          throw new Error(`Erro HTTP ${res.status} ao salvar HTML.`);
+        }
+        await onPublicDataChanged();
+        setHtmlModalTarget(null);
+        showVisualToast('success', 'Código HTML salvo e aplicado na página!');
+      } catch (e) {
+        showVisualToast(
+          'error',
+          e instanceof Error
+            ? `${e.message} (Salvo localmente no navegador.)`
+            : 'Erro ao salvar HTML no servidor.'
+        );
+      } finally {
+        setSavingHtmlModal(false);
+      }
+    },
+    [isAdminLoggedIn, vbConfig, onPublicDataChanged, showVisualToast]
+  );
+
+  const handleResetHtmlOverride = useCallback(
+    async (key: string) => {
+      if (!isAdminLoggedIn) return;
+      setSavingHtmlModal(true);
+      try {
+        const nextOverrides = { ...(vbConfig.htmlOverrides || {}) };
+        delete nextOverrides[key];
+        const nextConfig: VisualBuilderConfig = {
+          ...vbConfig,
+          sectionsVersion: CURRENT_SECTIONS_VERSION,
+          htmlOverrides: nextOverrides,
+        };
+        setVbConfig(nextConfig);
+        saveLocalVisualConfig(nextConfig);
+        const res = await adminFetch('/api/admin/visual-builder', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(nextConfig),
+        });
+        if (!res.ok) {
+          throw new Error(`Erro HTTP ${res.status} ao restaurar HTML padrão.`);
+        }
+        await onPublicDataChanged();
+        setHtmlModalTarget(null);
+        showVisualToast('success', 'Bloco restaurado para o conteúdo padrão original.');
+      } catch (e) {
+        showVisualToast(
+          'error',
+          e instanceof Error ? e.message : 'Erro ao restaurar bloco.'
+        );
+      } finally {
+        setSavingHtmlModal(false);
+      }
+    },
+    [isAdminLoggedIn, vbConfig, onPublicDataChanged, showVisualToast]
   );
 
   const handleRestoreDefault = async () => {
@@ -784,7 +972,8 @@ export function PublicPage({
   const renderNoticeParagraph = useCallback(
     (textKey: 'notice_line_1' | 'notice_line_2') => {
       const { defaultText, entry } = getLocalizedContent(textKey);
-      if (isEditMode) {
+      const hasHtmlOverride = Boolean(vbConfig.htmlOverrides?.[textKey]?.trim());
+      if (isEditMode || activeHtmlEditMode || hasHtmlOverride) {
         return (
           <EditableText
             as="p"
@@ -802,16 +991,14 @@ export function PublicPage({
       if (match) {
         return (
           <p className="block">
-            <strong className="font-bold text-neutral-900 dark:text-white">
-              {match[1]}
-            </strong>{' '}
+            <strong className="font-bold text-ink">{match[1]}</strong>{' '}
             {match[2]}
           </p>
         );
       }
       return <p className="block">{fullText}</p>;
     },
-    [getLocalizedContent, handleCommitText, isEditMode]
+    [getLocalizedContent, handleCommitText, isEditMode, activeHtmlEditMode, vbConfig.htmlOverrides]
   );
 
   const orderedModels = useMemo(() => {
@@ -838,7 +1025,8 @@ export function PublicPage({
           model.id,
           selectedRevision,
           data.revision_parts || [],
-          partsMap
+          partsMap,
+          model.labor_price
         );
         return {
           model: { ...model, image_url: effectiveImage },
@@ -892,7 +1080,10 @@ export function PublicPage({
     }
   }, []);
 
+  const railRafRef = useRef<number | null>(null);
+
   const updateRailScrollState = useCallback(() => {
+    railRafRef.current = null;
     const el = railRef.current;
     if (!el) {
       setCanScrollLeft(false);
@@ -903,21 +1094,36 @@ export function PublicPage({
     setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 8);
   }, []);
 
-  const scrollRailBy = useCallback((direction: -1 | 1) => {
-    const el = railRef.current;
-    if (!el) return;
-    const step = Math.max(320, Math.round(el.clientWidth * 0.72));
-    el.scrollBy({ left: direction * step, behavior: 'smooth' });
-  }, []);
+  const scheduleRailScrollUpdate = useCallback(() => {
+    if (railRafRef.current !== null) return;
+    railRafRef.current = window.requestAnimationFrame(updateRailScrollState);
+  }, [updateRailScrollState]);
+
+  const scrollRailBy = useCallback(
+    (direction: -1 | 1) => {
+      if (direction === 1 && !showAllModels) {
+        setShowAllModels(true);
+      }
+      const el = railRef.current;
+      if (!el) return;
+      const step = Math.max(320, Math.round(el.clientWidth * 0.72));
+      el.scrollBy({ left: direction * step, behavior: 'smooth' });
+    },
+    [showAllModels]
+  );
 
   useEffect(() => {
-    const raf = requestAnimationFrame(updateRailScrollState);
-    window.addEventListener('resize', updateRailScrollState, { passive: true });
+    const raf = window.requestAnimationFrame(updateRailScrollState);
+    window.addEventListener('resize', scheduleRailScrollUpdate, { passive: true });
     return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener('resize', updateRailScrollState);
+      window.cancelAnimationFrame(raf);
+      if (railRafRef.current !== null) {
+        window.cancelAnimationFrame(railRafRef.current);
+        railRafRef.current = null;
+      }
+      window.removeEventListener('resize', scheduleRailScrollUpdate);
     };
-  }, [updateRailScrollState, computedModels.length, viewMode, heroTab]);
+  }, [updateRailScrollState, scheduleRailScrollUpdate, computedModels.length, viewMode, heroTab]);
 
   const handleQuickSelectModel = useCallback(
     (modelIdStr: string) => {
@@ -940,23 +1146,27 @@ export function PublicPage({
       setSelectedSegment('all');
       setShowAllModels(true);
       setHighlightedModelId(id);
-      setTimeout(() => {
-        const card = document.getElementById(`model-card-${id}`);
-        if (card) {
-          card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-          const rect = card.getBoundingClientRect();
-          if (rect.top < 120 || rect.bottom > window.innerHeight) {
-            const topTarget = Math.max(0, window.scrollY + rect.top - 165);
-            window.scrollTo({ top: topTarget, behavior: 'smooth' });
+      window.setTimeout(() => {
+        window.requestAnimationFrame(() => {
+          const card = document.getElementById(`model-card-${id}`);
+          if (card) {
+            card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+            window.requestAnimationFrame(() => {
+              const rect = card.getBoundingClientRect();
+              if (rect.top < 120 || rect.bottom > window.innerHeight) {
+                const topTarget = Math.max(0, window.scrollY + rect.top - 165);
+                window.scrollTo({ top: topTarget, behavior: 'smooth' });
+              }
+            });
           }
-        }
-        updateRailScrollState();
+          scheduleRailScrollUpdate();
+        });
       }, 90);
-      setTimeout(() => {
+      window.setTimeout(() => {
         setHighlightedModelId((curr) => (curr === id ? null : curr));
       }, 2400);
     },
-    [orderedModels, data.seo, data.tracking_config, segmentNameMap, updateRailScrollState]
+    [orderedModels, data.seo, data.tracking_config, segmentNameMap, scheduleRailScrollUpdate]
   );
 
   const handleNavClick = (target: 'revisoes' | 'faq' | 'unidades') => {
@@ -983,7 +1193,7 @@ export function PublicPage({
         return (
           <section
             id="hero-tabs"
-            className="border-b border-neutral-200/70 bg-white py-10 dark:border-neutral-800 dark:bg-neutral-950 sm:py-12"
+            className="border-b border-border bg-card py-10 sm:py-12"
           >
             <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
               <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
@@ -995,7 +1205,7 @@ export function PublicPage({
                     entry={heroEyebrow.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]"
+                    className="text-xs font-bold uppercase tracking-widest text-brand-text"
                   />
                   <EditableText
                     as="h1"
@@ -1004,7 +1214,7 @@ export function PublicPage({
                     entry={heroTitle.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="mt-2 block text-balance font-display text-3xl font-extrabold tracking-tight text-neutral-900 dark:text-white sm:text-4xl lg:text-[42px] lg:leading-[1.12]"
+                    className="mt-2 block text-balance font-display text-3xl font-extrabold tracking-tight text-ink sm:text-4xl lg:text-[42px] lg:leading-[1.12]"
                   />
                   <EditableText
                     as="p"
@@ -1013,12 +1223,12 @@ export function PublicPage({
                     entry={heroSubtitle.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="mt-3 block text-base text-neutral-600 dark:text-neutral-400"
+                    className="mt-3 block text-base text-ink-muted"
                   />
                 </div>
 
                 {/* Seletor em pílula com duas abas */}
-                <div className="inline-flex self-start rounded-full border border-neutral-200 bg-neutral-100 p-1 dark:border-neutral-800 dark:bg-neutral-900 lg:self-end">
+                <div className="inline-flex self-start rounded-full border border-border bg-surface p-1 lg:self-end">
                   <button
                     type="button"
                     onClick={() => {
@@ -1027,8 +1237,8 @@ export function PublicPage({
                     }}
                     className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
                       heroTab === 'tabela'
-                        ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-white'
-                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                        ? 'bg-brand-soft text-brand-text shadow-xs'
+                        : 'text-ink-muted hover:text-ink'
                     }`}
                   >
                     <EditableText
@@ -1047,8 +1257,8 @@ export function PublicPage({
                     }}
                     className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
                       heroTab === 'faq'
-                        ? 'bg-white text-neutral-900 shadow-sm dark:bg-neutral-800 dark:text-white'
-                        : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-400 dark:hover:text-white'
+                        ? 'bg-brand-soft text-brand-text shadow-xs'
+                        : 'text-ink-muted hover:text-ink'
                     }`}
                   >
                     <EditableText
@@ -1078,7 +1288,7 @@ export function PublicPage({
               entry={promptAbove.entry}
               isEditMode={isEditMode}
               onCommit={handleCommitText}
-              className="mb-3 block text-sm font-semibold text-neutral-700 dark:text-neutral-300"
+              className="mb-3 block text-sm font-semibold text-ink"
             />
             <div className="no-scrollbar flex flex-nowrap items-stretch gap-2 overflow-x-auto scroll-smooth py-1 lg:gap-1.5 lg:overflow-visible xl:gap-2">
               {data.revision_tabs.map((tab) => {
@@ -1121,8 +1331,8 @@ export function PublicPage({
                     }}
                     className={`inline-flex w-fit shrink-0 cursor-pointer flex-col items-start rounded-2xl border px-3 py-2 text-left transition-all duration-150 ease-out lg:min-w-0 lg:flex-1 lg:px-2 lg:py-2 xl:px-3 xl:py-2.5 ${
                       isSelected
-                        ? 'border-[#D00027] bg-[#D00027] text-white shadow-sm'
-                        : 'border-neutral-200 bg-white text-neutral-900 hover:-translate-y-0.5 hover:border-[#D00027]/75 hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900 dark:text-white dark:hover:border-[#E4002B]/80'
+                        ? 'border-brand bg-brand text-on-brand shadow-sm'
+                        : 'border-border bg-card text-ink hover:-translate-y-0.5 hover:border-brand/70 hover:shadow-sm'
                     }`}
                   >
                     <EditableText
@@ -1140,7 +1350,7 @@ export function PublicPage({
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
                       className={`mt-0.5 max-w-full truncate whitespace-nowrap text-[11px] lg:text-[10px] xl:text-[11.5px] ${
-                        isSelected ? 'text-white' : 'text-neutral-600 dark:text-neutral-300'
+                        isSelected ? 'text-on-brand/90' : 'text-ink-muted'
                       }`}
                     />
                   </button>
@@ -1151,34 +1361,77 @@ export function PublicPage({
         );
       }
 
-      case 'notice_box':
+      case 'notice_box': {
         if (heroTab !== 'tabela' && !isEditMode) return null;
+        const noticeSectionHtml = vbConfig.htmlOverrides?.['section_html_notice_box']?.trim();
         return (
           <div className="mx-auto max-w-[1180px] px-4 pt-6 pb-1 sm:px-6 sm:pt-8 sm:pb-2">
-            <div className="flex items-start gap-3.5 rounded-2xl border border-neutral-200 bg-neutral-100/80 p-4 sm:p-5 dark:border-neutral-800 dark:bg-neutral-900">
-              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#E4002B]" />
-              <div className="space-y-1.5 text-xs leading-relaxed text-neutral-700 sm:text-sm dark:text-neutral-300">
-                {renderNoticeParagraph('notice_line_1')}
-                {renderNoticeParagraph('notice_line_2')}
+            <div
+              onClick={
+                activeHtmlEditMode
+                  ? () =>
+                      openHtmlModalForKey(
+                        'section_html_notice_box',
+                        noticeSectionHtml || buildNoticeBoxDefaultHtml(vbConfig)
+                      )
+                  : undefined
+              }
+              className={`relative flex items-start gap-3.5 rounded-2xl border border-border bg-card/85 p-4 sm:p-5 ${
+                activeHtmlEditMode
+                  ? 'cursor-pointer border-dashed border-brand/60 hover:border-brand hover:bg-brand-soft/25'
+                  : ''
+              }`}
+            >
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-brand-text" />
+              <div className="min-w-0 flex-1 space-y-1.5 text-xs leading-relaxed text-ink-muted sm:text-sm">
+                {noticeSectionHtml ? (
+                  <SafeHtml
+                    html={noticeSectionHtml}
+                    className="space-y-1.5 [&_a]:text-brand-text [&_a]:underline [&_strong]:font-bold [&_strong]:text-ink"
+                  />
+                ) : (
+                  <>
+                    {renderNoticeParagraph('notice_line_1')}
+                    {renderNoticeParagraph('notice_line_2')}
+                  </>
+                )}
               </div>
+              {activeHtmlEditMode && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    openHtmlModalForKey(
+                      'section_html_notice_box',
+                      noticeSectionHtml || buildNoticeBoxDefaultHtml(vbConfig)
+                    );
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-2.5 py-1 text-[10px] font-bold text-on-brand shadow-xs hover:bg-brand-hover"
+                >
+                  <Code2 className="h-3 w-3" />
+                  HTML do Aviso
+                </button>
+              )}
             </div>
           </div>
         );
+      }
 
       case 'filters_catalog': {
         if (heroTab !== 'tabela' && !isEditMode) return null;
+        const collapseLimit = viewMode === 'grid' ? 6 : 9;
         const canCollapseModels =
-          viewMode === 'list' &&
           !isEditMode &&
           !searchQuery.trim() &&
-          computedModels.length > 9;
+          selectedSegment === 'all' &&
+          computedModels.length > collapseLimit;
         const visibleModels =
-          viewMode === 'grid'
-            ? computedModels
-            : canCollapseModels && !showAllModels
-              ? computedModels.slice(0, 9)
-              : computedModels;
-        const isFreeLabor = selectedRevision <= 2;
+          canCollapseModels && !showAllModels
+            ? computedModels.slice(0, collapseLimit)
+            : computedModels;
+        const isFreeLabor = isFreeLaborRevision(selectedRevision);
+        const laborBadgeText = getLaborBadgeText(selectedRevision, language);
+        const laborTexts = LABOR_POLICY_TEXTS[language] || LABOR_POLICY_TEXTS.pt;
 
         const filterAllContent = getLocalizedContent('filter_all_label');
         const promptBelow = getLocalizedContent('revisions_prompt_below');
@@ -1191,29 +1444,29 @@ export function PublicPage({
               entry={promptBelow.entry}
               isEditMode={isEditMode}
               onCommit={handleCommitText}
-              className="mb-3 block text-sm font-semibold text-neutral-700 dark:text-neutral-300"
+              className="mb-3 block text-sm font-semibold text-ink"
             />
             {/* Barra horizontal compacta de busca, seleção rápida e filtros */}
             <div
-              className="relative -mx-1 rounded-2xl border border-neutral-200/90 bg-white/95 p-2.5 shadow-sm backdrop-blur dark:border-neutral-800 dark:bg-neutral-900/95 sm:mx-0 sm:p-3"
+              className="relative -mx-1 rounded-2xl border border-border bg-card/95 p-2.5 shadow-sm backdrop-blur sm:mx-0 sm:p-3"
             >
               {/* Linha 1 horizontal: Busca + Ir direto para a moto + Atalhos */}
               <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
                 <div className="relative min-w-[210px] flex-1">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-600 dark:text-neutral-300" />
+                  <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
                   <input
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder={dict.searchPlaceholder}
-                    className="w-full rounded-xl border border-neutral-200 bg-neutral-50/70 py-2 pl-9 pr-8 text-xs text-neutral-900 placeholder:text-neutral-500 focus:border-[#D00027] focus:bg-white focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-white dark:placeholder:text-neutral-400 sm:text-sm"
+                    className="w-full rounded-xl border border-border bg-surface py-2 pl-9 pr-8 text-xs text-ink placeholder:text-ink-muted focus:border-brand focus:bg-card focus:outline-none sm:text-sm"
                   />
                   {searchQuery && (
                     <button
                       type="button"
                       onClick={() => setSearchQuery('')}
                       aria-label={dict.clearSearch}
-                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 rounded-md p-1 text-ink-muted hover:text-ink"
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -1224,7 +1477,7 @@ export function PublicPage({
                   aria-label={dict.quickSelectPlaceholder}
                   value=""
                   onChange={(e) => handleQuickSelectModel(e.target.value)}
-                  className="w-full shrink-0 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 focus:border-[#E4002B] focus:outline-none dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-200 sm:w-auto sm:min-w-[190px]"
+                  className="w-full shrink-0 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink focus:border-brand focus:outline-none sm:w-auto sm:min-w-[190px]"
                 >
                   <option value="">{dict.quickSelectPlaceholder}</option>
                   {quickJumpModels.map((m) => (
@@ -1237,32 +1490,32 @@ export function PublicPage({
                 <button
                   type="button"
                   onClick={() => scrollToSection('perguntas-frequentes')}
-                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300"
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink transition-colors hover:border-brand hover:text-brand-text"
                 >
-                  <HelpCircle className="h-3.5 w-3.5 text-[#E4002B]" />
+                  <HelpCircle className="h-3.5 w-3.5 text-brand-text" />
                   {dict.shortcutFaq}
                 </button>
 
                 <button
                   type="button"
                   onClick={() => scrollToSection('unidades')}
-                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300"
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink transition-colors hover:border-brand hover:text-brand-text"
                 >
-                  <MapPin className="h-3.5 w-3.5 text-[#E4002B]" />
+                  <MapPin className="h-3.5 w-3.5 text-brand-text" />
                   {dict.shortcutUnits}
                 </button>
               </div>
 
               {/* Linha 2 horizontal: Pílulas de segmento + contador + setas do carrossel + alternador grade/lista */}
-              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-2 dark:border-neutral-800">
+              <div className="mt-2 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
                 <div className="no-scrollbar flex max-w-full items-center gap-1.5 overflow-x-auto">
                   <button
                     type="button"
                     onClick={() => setSelectedSegment('all')}
                     className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                       selectedSegment === 'all'
-                        ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                        : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800'
+                        ? 'border border-ink bg-ink text-on-ink'
+                        : 'border border-border bg-card text-ink hover:bg-surface'
                     }`}
                   >
                     <EditableText
@@ -1290,8 +1543,8 @@ export function PublicPage({
                       }}
                       className={`shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
                         selectedSegment === seg.slug
-                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                          : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-950 dark:text-neutral-300 dark:hover:bg-neutral-800'
+                          ? 'border border-ink bg-ink text-on-ink'
+                          : 'border border-border bg-card text-ink hover:bg-surface'
                       }`}
                     >
                       <EditableText
@@ -1306,19 +1559,19 @@ export function PublicPage({
                 </div>
 
                 <div className="flex shrink-0 items-center gap-2.5">
-                  <span className="whitespace-nowrap text-xs font-medium text-neutral-600 tabular-nums dark:text-neutral-300">
+                  <span className="whitespace-nowrap text-xs font-medium text-ink-muted tabular-nums">
                     {dict.showingModels(visibleModels.length, computedModels.length)}
                   </span>
 
                   {viewMode === 'grid' && computedModels.length > 0 && (
-                    <div className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white p-0.5 dark:border-neutral-800 dark:bg-neutral-950">
+                    <div className="inline-flex items-center gap-1 rounded-xl border border-border bg-card p-0.5">
                       <button
                         type="button"
                         onClick={() => scrollRailBy(-1)}
                         disabled={!canScrollLeft}
                         aria-label={dict.prevModel}
                         title={dict.scrollModelsLeft}
-                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#C80024] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        className="rounded-lg p-1.5 text-ink transition-colors hover:bg-surface hover:text-brand-text disabled:opacity-30"
                       >
                         <ArrowLeft className="h-3.5 w-3.5" />
                       </button>
@@ -1328,7 +1581,7 @@ export function PublicPage({
                         disabled={!canScrollRight}
                         aria-label={dict.nextModel}
                         title={dict.scrollModelsRight}
-                        className="rounded-lg p-1.5 text-neutral-700 transition-colors hover:bg-neutral-100 hover:text-[#C80024] disabled:opacity-30 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                        className="rounded-lg p-1.5 text-ink transition-colors hover:bg-surface hover:text-brand-text disabled:opacity-30"
                       >
                         <ArrowRight className="h-3.5 w-3.5" />
                       </button>
@@ -1336,15 +1589,15 @@ export function PublicPage({
                   )}
 
                   {/* Grid/List switcher */}
-                  <div className="inline-flex rounded-xl border border-neutral-200 bg-white p-0.5 dark:border-neutral-800 dark:bg-neutral-950">
+                  <div className="inline-flex rounded-xl border border-border bg-card p-0.5">
                     <button
                       type="button"
                       onClick={() => setViewMode('grid')}
                       aria-label={dict.gridViewAria}
                       className={`rounded-lg p-1.5 transition-colors ${
                         viewMode === 'grid'
-                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                          : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                          ? 'bg-ink text-on-ink'
+                          : 'text-ink-muted hover:text-ink'
                       }`}
                     >
                       <LayoutGrid className="h-4 w-4" />
@@ -1355,8 +1608,8 @@ export function PublicPage({
                       aria-label={dict.listViewAria}
                       className={`rounded-lg p-1.5 transition-colors ${
                         viewMode === 'list'
-                          ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                          : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                          ? 'bg-ink text-on-ink'
+                          : 'text-ink-muted hover:text-ink'
                       }`}
                     >
                       <List className="h-4 w-4" />
@@ -1368,20 +1621,16 @@ export function PublicPage({
 
             {/* Trilho horizontal rolável / Lista de cards de motos */}
             {computedModels.length === 0 ? (
-              <div className="mt-6 rounded-2xl border border-neutral-200 bg-white p-10 text-center dark:border-neutral-800 dark:bg-neutral-900">
-                <p className="text-base font-semibold text-neutral-900 dark:text-white">
-                  {dict.noModelsTitle}
-                </p>
-                <p className="mt-1 text-sm text-neutral-600 dark:text-neutral-300">
-                  {dict.noModelsDesc}
-                </p>
+              <div className="mt-6 rounded-2xl border border-border bg-card p-10 text-center">
+                <p className="text-base font-semibold text-ink">{dict.noModelsTitle}</p>
+                <p className="mt-1 text-sm text-ink-muted">{dict.noModelsDesc}</p>
                 <button
                   type="button"
                   onClick={() => {
                     setSearchQuery('');
                     setSelectedSegment('all');
                   }}
-                  className="mt-4 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-semibold text-white dark:bg-white dark:text-neutral-900"
+                  className="mt-4 rounded-xl bg-ink px-4 py-2 text-xs font-semibold text-on-ink"
                 >
                   {dict.clearFilters}
                 </button>
@@ -1393,14 +1642,14 @@ export function PublicPage({
                   onClick={() => scrollRailBy(-1)}
                   disabled={!canScrollLeft}
                   aria-label={dict.scrollModelsLeft}
-                  className="hidden sm:flex absolute -left-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-neutral-800 shadow-md backdrop-blur transition-all hover:border-[#D00027] hover:text-[#C80024] disabled:pointer-events-none disabled:opacity-0 dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-white"
+                  className="hidden sm:flex absolute -left-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card/95 text-ink shadow-md backdrop-blur transition-all hover:border-brand hover:text-brand-text disabled:pointer-events-none disabled:opacity-0"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
 
                 <div
                   ref={railRef}
-                  onScroll={updateRailScrollState}
+                  onScroll={scheduleRailScrollUpdate}
                   className="flex flex-row items-stretch gap-4 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-3 pt-1"
                 >
                   {visibleModels.map(({ model, summary, isVisuallyHidden }, modelIdx) => {
@@ -1409,6 +1658,7 @@ export function PublicPage({
                     const includeOptionals = true;
                     const activeTotal = summary.totalWithOptionals;
                     const isHighlighted = highlightedModelId === model.id;
+                    const imgSources = getOptimizedMotoImageSources(model.image_url);
 
                     return (
                       <article
@@ -1434,18 +1684,18 @@ export function PublicPage({
                           setDragModelId(null);
                           setDragOverModelId(null);
                         }}
-                        className={`relative flex w-[285px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border bg-white shadow-[0_1px_3px_rgba(0,0,0,0.03)] transition-all duration-200 dark:bg-neutral-900 sm:w-[318px] md:w-[336px] ${
+                        className={`relative flex w-[285px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border bg-card shadow-[0_1px_3px_rgba(17,24,39,0.04)] transition-all duration-200 sm:w-[318px] md:w-[336px] ${
                           isEditMode && dragOverModelId === model.id
-                            ? 'border-[#E4002B] ring-2 ring-[#E4002B]'
+                            ? 'border-brand ring-2 ring-brand'
                             : isHighlighted
-                              ? 'border-[#E4002B] ring-2 ring-[#E4002B]/50 shadow-lg'
-                              : 'border-neutral-200 hover:-translate-y-0.5 hover:shadow-md dark:border-neutral-800'
+                              ? 'border-brand ring-2 ring-brand/50 shadow-lg'
+                              : 'border-border hover:-translate-y-0.5 hover:shadow-md'
                         } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                       >
                         {isEditMode && (
-                          <div className="flex items-center justify-between gap-1 border-b border-indigo-100 bg-indigo-50/90 px-3 py-1.5 text-[11px] text-indigo-950">
+                          <div className="flex items-center justify-between gap-1 border-b border-border bg-brand-soft px-3 py-1.5 text-[11px] text-ink">
                             <span className="inline-flex cursor-grab items-center gap-1 font-bold active:cursor-grabbing">
-                              <GripVertical className="h-3.5 w-3.5 text-indigo-500" />
+                              <GripVertical className="h-3.5 w-3.5 text-brand-text" />
                               Arrastar card
                             </span>
                             <div className="flex items-center gap-1">
@@ -1453,7 +1703,7 @@ export function PublicPage({
                                 type="button"
                                 onClick={() => moveModelCard(model.id, -1)}
                                 title="Mover para esquerda"
-                                className="rounded bg-white p-1 hover:bg-indigo-100"
+                                className="rounded bg-card p-1 hover:bg-surface"
                               >
                                 <ArrowLeft className="h-3 w-3" />
                               </button>
@@ -1461,7 +1711,7 @@ export function PublicPage({
                                 type="button"
                                 onClick={() => moveModelCard(model.id, 1)}
                                 title="Mover para direita"
-                                className="rounded bg-white p-1 hover:bg-indigo-100"
+                                className="rounded bg-card p-1 hover:bg-surface"
                               >
                                 <ArrowRight className="h-3 w-3" />
                               </button>
@@ -1469,10 +1719,10 @@ export function PublicPage({
                                 type="button"
                                 onClick={() => toggleModelCardHidden(model.id)}
                                 title={isVisuallyHidden ? 'Exibir card' : 'Ocultar card'}
-                                className="rounded bg-white p-1 hover:bg-indigo-100"
+                                className="rounded bg-card p-1 hover:bg-surface"
                               >
                                 {isVisuallyHidden ? (
-                                  <EyeOff className="h-3 w-3 text-[#E4002B]" />
+                                  <EyeOff className="h-3 w-3 text-brand-text" />
                                 ) : (
                                   <Eye className="h-3 w-3" />
                                 )}
@@ -1482,21 +1732,25 @@ export function PublicPage({
                         )}
 
                         {/* Foto compacta da moto (fundo branco, centralizada) */}
-                        <div className="group/img relative flex h-40 w-full items-center justify-center overflow-hidden border-b border-neutral-100 bg-white p-3.5 dark:border-neutral-800 sm:h-44">
-                          {model.image_url ? (
-                            <img
-                              src={model.image_url}
-                              alt={`Honda ${model.name}`}
-                              width={640}
-                              height={478}
-                              loading={modelIdx < 3 ? 'eager' : 'lazy'}
-                              decoding="async"
-                              fetchPriority={modelIdx === 0 ? 'high' : undefined}
-                              referrerPolicy="no-referrer"
-                              className="h-full w-full object-contain"
-                            />
+                        <div className="group/img relative flex h-40 w-full items-center justify-center overflow-hidden border-b border-border bg-white p-3.5 sm:h-44">
+                          {imgSources.fallbackSrc ? (
+                            <picture className="flex h-full w-full items-center justify-center">
+                              {imgSources.webpSrc && (
+                                <source srcSet={imgSources.webpSrc} type="image/webp" />
+                              )}
+                              <img
+                                src={imgSources.fallbackSrc}
+                                alt={`Honda ${model.name}`}
+                                width={440}
+                                height={330}
+                                loading={modelIdx === 0 ? 'eager' : 'lazy'}
+                                decoding="async"
+                                referrerPolicy="no-referrer"
+                                className="h-full w-full object-contain"
+                              />
+                            </picture>
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-neutral-50 text-xs font-semibold text-neutral-600 dark:bg-neutral-800 dark:text-neutral-300">
+                            <div className="flex h-full w-full items-center justify-center rounded-xl bg-surface-neutral text-xs font-semibold text-ink-muted">
                               Honda {model.name}
                             </div>
                           )}
@@ -1511,7 +1765,7 @@ export function PublicPage({
                                   currentUrl: model.image_url,
                                 })
                               }
-                              className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-neutral-950/85 px-3.5 py-1.5 text-xs font-bold text-white opacity-95 shadow-lg backdrop-blur transition-all hover:bg-[#D00027] group-hover/img:opacity-100"
+                              className="absolute inset-x-0 bottom-2 mx-auto inline-flex w-fit items-center gap-1.5 rounded-full bg-ink/85 px-3.5 py-1.5 text-xs font-bold text-on-ink opacity-95 shadow-lg backdrop-blur transition-all hover:bg-brand hover:text-on-brand group-hover/img:opacity-100"
                             >
                               <ImageIcon className="h-3.5 w-3.5" />
                               Trocar Imagem
@@ -1529,7 +1783,7 @@ export function PublicPage({
                               entry={vbConfig.siteContent[`model_name_${model.id}`]}
                               isEditMode={isEditMode}
                               onCommit={handleCommitText}
-                              className="truncate font-display text-base font-bold tracking-tight text-neutral-900 dark:text-white sm:text-lg"
+                              className="truncate font-display text-base font-bold tracking-tight text-ink sm:text-lg"
                             />
                             <EditableText
                               as="p"
@@ -1538,10 +1792,10 @@ export function PublicPage({
                               entry={vbConfig.siteContent[`model_cat_${model.id}`]}
                               isEditMode={isEditMode}
                               onCommit={handleCommitText}
-                              className="block text-xs font-medium text-neutral-600 dark:text-neutral-300"
+                              className="block text-xs font-medium text-ink-muted"
                             />
                           </div>
-                          <span className="shrink-0 text-xs font-semibold text-neutral-600 tabular-nums dark:text-neutral-300">
+                          <span className="shrink-0 text-xs font-semibold text-ink-muted tabular-nums">
                             {summary.items.length}{' '}
                             {summary.items.length === 1 ? dict.itemSingular : dict.itemPlural}
                           </span>
@@ -1549,85 +1803,142 @@ export function PublicPage({
 
                         {/* Badges informativos transparentes (Atendimento, Mão de obra e Opcionais) */}
                         <div className="mt-2 flex flex-wrap items-center gap-1 px-4">
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold ${
-                              isFreeLabor
-                                ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                : 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
-                            }`}
-                          >
+                          <span className="inline-flex items-center gap-1 rounded-md bg-surface-neutral px-2 py-0.5 text-[10px] font-semibold text-ink-muted">
                             <Clock className="h-3 w-3 shrink-0" />
                             {isFreeLabor ? dict.walkInBadge : dict.appointmentBadge}
                           </span>
 
-                          <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-[10px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                            <Wrench className="h-3 w-3 shrink-0 text-[#C80024] dark:text-[#ff4d6d]" />
-                            {isFreeLabor ? dict.freeLaborBadge : dict.consultLaborBadge}
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-semibold leading-tight ${
+                              isFreeLabor
+                                ? 'bg-brand-soft text-brand-text'
+                                : 'bg-surface-neutral text-ink-muted'
+                            }`}
+                          >
+                            <Wrench className="h-3 w-3 shrink-0 text-brand-text" />
+                            <span>{laborBadgeText}</span>
                           </span>
                         </div>
 
+                        {(vbConfig.htmlOverrides?.[`model_html_${model.id}`]?.trim() ||
+                          activeHtmlEditMode) && (
+                          <div className="mt-2 px-4">
+                            {vbConfig.htmlOverrides?.[`model_html_${model.id}`]?.trim() && (
+                              <SafeHtml
+                                html={vbConfig.htmlOverrides[`model_html_${model.id}`]}
+                                onClick={
+                                  activeHtmlEditMode
+                                    ? (e) => {
+                                        e.stopPropagation();
+                                        openHtmlModalForKey(
+                                          `model_html_${model.id}`,
+                                          buildModelDefaultHtml(model)
+                                        );
+                                      }
+                                    : undefined
+                                }
+                                className={`text-[11px] leading-snug text-ink [&_a]:text-brand-text [&_a]:underline ${
+                                  activeHtmlEditMode
+                                    ? 'cursor-pointer rounded-lg outline-2 outline-dashed outline-brand/50 hover:outline-brand'
+                                    : ''
+                                }`}
+                              />
+                            )}
+                            {activeHtmlEditMode && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  openHtmlModalForKey(
+                                    `model_html_${model.id}`,
+                                    buildModelDefaultHtml(model)
+                                  );
+                                }}
+                                className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-brand/40 bg-brand-soft px-2.5 py-1 text-[10px] font-bold text-brand-text hover:bg-brand hover:text-on-brand"
+                              >
+                                <Code2 className="h-3 w-3" />
+                                Editar HTML ({model.name})
+                              </button>
+                            )}
+                          </div>
+                        )}
+
                         {/* Lista compacta de peças da revisão (altura alinhada no carrossel) */}
-                        <div className="mt-2.5 h-[196px] flex-1 overflow-y-auto divide-y divide-neutral-100 px-4 dark:divide-neutral-800">
-                          {summary.items.length === 0 ? (
-                            <p className="py-6 text-center text-xs text-neutral-600 dark:text-neutral-300">
+                        <div className="mt-2.5 h-[196px] flex-1 overflow-y-auto divide-y divide-border px-4">
+                          {summary.items.length === 0 && (isFreeLabor || summary.laborCost <= 0) ? (
+                            <p className="py-6 text-center text-xs text-ink-muted">
                               {dict.noPartsLinked}
                             </p>
                           ) : (
-                            summary.items.map(({ revisionPart, part, lineTotal }) => {
-                              const dimmedOptional = part.is_optional && !includeOptionals;
-                              const translatedDesc = translatePartDescription(
-                                part.description,
-                                language
-                              );
-                              return (
-                                <div
-                                  key={`${revisionPart.id}-${part.code}`}
-                                  className={`flex items-start justify-between gap-2.5 py-2 transition-opacity ${
-                                    dimmedOptional ? 'opacity-45' : ''
-                                  }`}
-                                >
-                                  <div className="min-w-0">
-                                    <p
-                                      className={`text-xs font-medium leading-snug text-neutral-800 dark:text-neutral-200 ${
+                            <>
+                              {summary.items.map(({ revisionPart, part, lineTotal }) => {
+                                const dimmedOptional = part.is_optional && !includeOptionals;
+                                const translatedDesc = translatePartDescription(
+                                  part.description,
+                                  language
+                                );
+                                return (
+                                  <div
+                                    key={`${revisionPart.id}-${part.code}`}
+                                    className={`flex items-start justify-between gap-2.5 py-2 transition-opacity ${
+                                      dimmedOptional ? 'opacity-45' : ''
+                                    }`}
+                                  >
+                                    <div className="min-w-0">
+                                      <p
+                                        className={`text-xs font-medium leading-snug text-ink ${
+                                          dimmedOptional ? 'line-through' : ''
+                                        }`}
+                                      >
+                                        {translatedDesc}
+                                        {part.is_optional &&
+                                        !translatedDesc.includes('[Opcional]') &&
+                                        !translatedDesc.includes('[Optional]') ? (
+                                          <span className="ml-1 text-ink-muted">
+                                            {dict.optionalTag}
+                                          </span>
+                                        ) : null}
+                                      </p>
+                                      <p className="mt-0.5 font-mono text-[10px] text-ink-muted">
+                                        {dict.codePrefix} {part.code}
+                                        {(part.unit === 'ML' || revisionPart.quantity > 1) &&
+                                          ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
+                                      </p>
+                                    </div>
+                                    <span
+                                      className={`shrink-0 text-xs font-bold text-ink tabular-nums ${
                                         dimmedOptional ? 'line-through' : ''
                                       }`}
                                     >
-                                      {translatedDesc}
-                                      {part.is_optional &&
-                                      !translatedDesc.includes('[Opcional]') &&
-                                      !translatedDesc.includes('[Optional]') ? (
-                                        <span className="ml-1 text-neutral-600 dark:text-neutral-300">
-                                          {dict.optionalTag}
-                                        </span>
-                                      ) : null}
-                                    </p>
-                                    <p className="mt-0.5 font-mono text-[10px] text-neutral-600 dark:text-neutral-300">
-                                      {dict.codePrefix} {part.code}
-                                      {(part.unit === 'ML' || revisionPart.quantity > 1) &&
-                                        ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
+                                      {formatBRL(lineTotal)}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                              {!isFreeLabor && summary.laborCost > 0 && (
+                                <div className="flex items-center justify-between gap-2.5 py-2">
+                                  <div className="min-w-0">
+                                    <p className="text-xs font-semibold leading-snug text-ink">
+                                      {laborTexts.laborShortLabel}
                                     </p>
                                   </div>
-                                  <span
-                                    className={`shrink-0 text-xs font-bold text-neutral-900 tabular-nums dark:text-white ${
-                                      dimmedOptional ? 'line-through' : ''
-                                    }`}
-                                  >
-                                    {formatBRL(lineTotal)}
+                                  <span className="shrink-0 text-xs font-bold text-ink tabular-nums">
+                                    {formatBRL(summary.laborCost)}
                                   </span>
                                 </div>
-                              );
-                            })
+                              )}
+                            </>
                           )}
                         </div>
 
                         {/* Rodapé vermelho de destaque */}
-                        <div className="mt-2.5 bg-[#D00027] px-4 py-3 text-white">
+                        <div className="mt-2.5 bg-gradient-to-r from-brand to-brand-hover px-4 py-3 text-on-brand">
                           <div className="flex items-center justify-between gap-2">
                             <div>
-                              <p className="text-[10px] font-bold uppercase tracking-wider text-white">
+                              <p className="text-[10px] font-bold uppercase tracking-wider text-on-brand">
                                 {revTitleUpper}
                               </p>
-                              <p className="text-[10px] text-white tabular-nums">
+                              <p className="text-[10px] text-on-brand/90 tabular-nums">
                                 {dict.withoutOptionals}: {formatBRL(summary.totalWithoutOptionals)}
                               </p>
                             </div>
@@ -1656,9 +1967,9 @@ export function PublicPage({
                               includeOptionals,
                             });
                           }}
-                          className="flex items-center justify-center gap-2 bg-neutral-50 px-4 py-2.5 text-xs font-bold text-neutral-800 transition-colors hover:bg-emerald-50 hover:text-emerald-800 dark:bg-neutral-950/60 dark:text-neutral-200 dark:hover:bg-emerald-950/30 dark:hover:text-emerald-300"
+                          className="flex items-center justify-center gap-2 border-t border-border bg-card px-4 py-2.5 text-xs font-bold text-ink transition-colors hover:bg-surface"
                         >
-                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[#25D366] text-white">
+                          <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-whatsapp text-on-brand">
                             <WhatsAppIcon className="h-3 w-3" />
                           </span>
                           {language === 'pt' ? (
@@ -1683,7 +1994,7 @@ export function PublicPage({
                   onClick={() => scrollRailBy(1)}
                   disabled={!canScrollRight}
                   aria-label={dict.scrollModelsRight}
-                  className="hidden sm:flex absolute -right-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-neutral-200 bg-white/95 text-neutral-800 shadow-md backdrop-blur transition-all hover:border-[#E4002B] hover:text-[#E4002B] disabled:pointer-events-none disabled:opacity-0 dark:border-neutral-700 dark:bg-neutral-900/95 dark:text-white"
+                  className="hidden sm:flex absolute -right-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card/95 text-ink shadow-md backdrop-blur transition-all hover:border-brand hover:text-brand-text disabled:pointer-events-none disabled:opacity-0"
                 >
                   <ChevronRight className="h-5 w-5" />
                 </button>
@@ -1696,29 +2007,40 @@ export function PublicPage({
                   const includeOptionals = true;
                   const activeTotal = summary.totalWithOptionals;
                   const isHighlighted = highlightedModelId === model.id;
+                  const imgSources = getOptimizedMotoImageSources(model.image_url);
 
                   return (
                     <article
                       id={`model-card-${model.id}`}
                       key={model.id}
-                      className={`flex flex-col overflow-hidden rounded-2xl border bg-white dark:bg-neutral-900 md:flex-row ${
+                      className={`flex flex-col overflow-hidden rounded-2xl border bg-card md:flex-row ${
                         isHighlighted
-                          ? 'border-[#D00027] ring-2 ring-[#D00027]/50 shadow-lg'
-                          : 'border-neutral-200 dark:border-neutral-800'
+                          ? 'border-brand ring-2 ring-brand/50 shadow-lg'
+                          : 'border-border'
                       } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                     >
-                      <div className="relative flex w-full shrink-0 items-center justify-center bg-white p-5 md:w-60 md:border-r md:border-neutral-100 dark:md:border-neutral-800">
-                        <img
-                          src={model.image_url}
-                          alt={`Honda ${model.name}`}
-                          width={640}
-                          height={478}
-                          loading={modelIdx < 2 ? 'eager' : 'lazy'}
-                          decoding="async"
-                          fetchPriority={modelIdx === 0 ? 'high' : undefined}
-                          referrerPolicy="no-referrer"
-                          className="h-40 w-full object-contain"
-                        />
+                      <div className="relative flex w-full shrink-0 items-center justify-center bg-white p-5 md:w-60 md:border-r md:border-border">
+                        {imgSources.fallbackSrc ? (
+                          <picture className="flex h-40 w-full items-center justify-center">
+                            {imgSources.webpSrc && (
+                              <source srcSet={imgSources.webpSrc} type="image/webp" />
+                            )}
+                            <img
+                              src={imgSources.fallbackSrc}
+                              alt={`Honda ${model.name}`}
+                              width={440}
+                              height={330}
+                              loading={modelIdx === 0 ? 'eager' : 'lazy'}
+                              decoding="async"
+                              referrerPolicy="no-referrer"
+                              className="h-40 w-full object-contain"
+                            />
+                          </picture>
+                        ) : (
+                          <div className="flex h-40 w-full items-center justify-center rounded-xl bg-surface-neutral text-xs font-semibold text-ink-muted">
+                            Honda {model.name}
+                          </div>
+                        )}
                         {isEditMode && (
                           <button
                             type="button"
@@ -1730,7 +2052,7 @@ export function PublicPage({
                                 currentUrl: model.image_url,
                               })
                             }
-                            className="absolute bottom-2 inline-flex items-center gap-1 rounded-full bg-neutral-950/85 px-3 py-1 text-[11px] font-bold text-white shadow hover:bg-[#D00027]"
+                            className="absolute bottom-2 inline-flex items-center gap-1 rounded-full bg-ink/85 px-3 py-1 text-[11px] font-bold text-on-ink shadow hover:bg-brand hover:text-on-brand"
                           >
                             <ImageIcon className="h-3 w-3" />
                             Trocar Imagem
@@ -1741,35 +2063,78 @@ export function PublicPage({
                         <div>
                           <div className="flex flex-wrap items-baseline justify-between gap-2">
                             <div className="flex items-baseline gap-3">
-                              <h2 className="font-display text-lg font-bold text-neutral-900 dark:text-white">
+                              <h2 className="font-display text-lg font-bold text-ink">
                                 {model.name}
                               </h2>
-                              <span className="text-xs font-medium text-neutral-600 dark:text-neutral-300">
+                              <span className="text-xs font-medium text-ink-muted">
                                 {categoryLabel}
                               </span>
                             </div>
-                            <span className="text-xs font-semibold text-neutral-600 tabular-nums dark:text-neutral-300">
+                            <span className="text-xs font-semibold text-ink-muted tabular-nums">
                               {summary.items.length}{' '}
                               {summary.items.length === 1 ? dict.itemSingular : dict.itemPlural}
                             </span>
                           </div>
 
                           <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                            <span className="inline-flex items-center gap-1 rounded-md bg-surface-neutral px-2 py-0.5 text-[11px] font-semibold text-ink-muted">
+                              <Clock className="h-3 w-3 shrink-0" />
+                              {isFreeLabor ? dict.walkInBadge : dict.appointmentBadge}
+                            </span>
                             <span
                               className={`inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold ${
                                 isFreeLabor
-                                  ? 'bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
-                                  : 'bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-300'
+                                  ? 'bg-brand-soft text-brand-text'
+                                  : 'bg-surface-neutral text-ink-muted'
                               }`}
                             >
-                              <Clock className="h-3 w-3" />
-                              {isFreeLabor ? dict.walkInBadge : dict.appointmentBadge}
-                            </span>
-                            <span className="inline-flex items-center gap-1 rounded-md bg-neutral-100 px-2 py-0.5 text-[11px] font-semibold text-neutral-700 dark:bg-neutral-800 dark:text-neutral-300">
-                              <Wrench className="h-3 w-3 text-[#C80024] dark:text-[#ff4d6d]" />
-                              {isFreeLabor ? dict.freeLaborBadge : dict.consultLaborBadge}
+                              <Wrench className="h-3 w-3 shrink-0 text-brand-text" />
+                              <span>{laborBadgeText}</span>
                             </span>
                           </div>
+
+                          {(vbConfig.htmlOverrides?.[`model_html_${model.id}`]?.trim() ||
+                            activeHtmlEditMode) && (
+                            <div className="mt-2.5">
+                              {vbConfig.htmlOverrides?.[`model_html_${model.id}`]?.trim() && (
+                                <SafeHtml
+                                  html={vbConfig.htmlOverrides[`model_html_${model.id}`]}
+                                  onClick={
+                                    activeHtmlEditMode
+                                      ? (e) => {
+                                          e.stopPropagation();
+                                          openHtmlModalForKey(
+                                            `model_html_${model.id}`,
+                                            buildModelDefaultHtml(model)
+                                          );
+                                        }
+                                      : undefined
+                                  }
+                                  className={`text-xs leading-snug text-ink [&_a]:text-brand-text [&_a]:underline ${
+                                    activeHtmlEditMode
+                                      ? 'cursor-pointer rounded-lg outline-2 outline-dashed outline-brand/50 hover:outline-brand'
+                                      : ''
+                                  }`}
+                                />
+                              )}
+                              {activeHtmlEditMode && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openHtmlModalForKey(
+                                      `model_html_${model.id}`,
+                                      buildModelDefaultHtml(model)
+                                    );
+                                  }}
+                                  className="mt-1.5 inline-flex items-center gap-1 rounded-lg border border-brand/40 bg-brand-soft px-2.5 py-1 text-[10px] font-bold text-brand-text hover:bg-brand hover:text-on-brand"
+                                >
+                                  <Code2 className="h-3 w-3" />
+                                  Editar HTML ({model.name})
+                                </button>
+                              )}
+                            </div>
+                          )}
 
                           <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
                             {summary.items.map(({ revisionPart, part, lineTotal }) => {
@@ -1781,36 +2146,46 @@ export function PublicPage({
                               return (
                                 <div
                                   key={`${revisionPart.id}-${part.code}`}
-                                  className={`flex items-center justify-between border-b border-neutral-100 py-1.5 text-xs dark:border-neutral-800 ${
+                                  className={`flex items-center justify-between border-b border-border py-1.5 text-xs ${
                                     dimmedOptional ? 'opacity-45 line-through' : ''
                                   }`}
                                 >
-                                  <span className="truncate pr-2 text-neutral-700 dark:text-neutral-300">
+                                  <span className="truncate pr-2 text-ink">
                                     {translatedDesc}
                                     {part.is_optional &&
                                     !translatedDesc.includes('[Opcional]') &&
                                     !translatedDesc.includes('[Optional]')
                                       ? ` ${dict.optionalTag}`
                                       : ''}
-                                    <span className="ml-1.5 font-mono text-[10px] text-neutral-600 dark:text-neutral-300">
+                                    <span className="ml-1.5 font-mono text-[10px] text-ink-muted">
                                       ({part.code})
                                     </span>
                                   </span>
-                                  <span className="shrink-0 font-semibold text-neutral-900 tabular-nums dark:text-white">
+                                  <span className="shrink-0 font-semibold text-ink tabular-nums">
                                     {formatBRL(lineTotal)}
                                   </span>
                                 </div>
                               );
                             })}
+                            {!isFreeLabor && summary.laborCost > 0 && (
+                              <div className="flex items-center justify-between border-b border-border py-1.5 text-xs">
+                                <span className="truncate pr-2 font-semibold text-ink">
+                                  {laborTexts.laborShortLabel}
+                                </span>
+                                <span className="shrink-0 font-semibold text-ink tabular-nums">
+                                  {formatBRL(summary.laborCost)}
+                                </span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
-                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[#D00027] px-4 py-3 text-white">
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gradient-to-r from-brand to-brand-hover px-4 py-3 text-on-brand">
                           <div>
                             <span className="text-xs font-bold uppercase tracking-wider">
                               {dict.totalOfPrefix} {revisionLabel.toUpperCase()}
                             </span>
-                            <span className="ml-3 text-xs text-white tabular-nums">
+                            <span className="ml-3 text-xs text-on-brand/90 tabular-nums">
                               {dict.withoutOptionals}: {formatBRL(summary.totalWithoutOptionals)}
                             </span>
                           </div>
@@ -1836,9 +2211,9 @@ export function PublicPage({
                                   includeOptionals,
                                 });
                               }}
-                              className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-1.5 text-xs font-bold text-neutral-900 transition-colors hover:bg-emerald-50 hover:text-emerald-800"
+                              className="inline-flex items-center gap-1.5 rounded-lg bg-card px-3 py-1.5 text-xs font-bold text-ink transition-colors hover:bg-surface"
                             >
-                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-[#25D366] text-white">
+                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-whatsapp text-on-brand">
                                 <WhatsAppIcon className="h-2.5 w-2.5" />
                               </span>
                               {dict.bookWhatsAppShort}
@@ -1858,16 +2233,16 @@ export function PublicPage({
                 <button
                   type="button"
                   onClick={() => setShowAllModels((prev) => !prev)}
-                  className="inline-flex items-center gap-2 rounded-full border border-neutral-300 bg-white px-6 py-3 text-sm font-bold text-neutral-900 shadow-sm transition-all hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-900 dark:text-white"
+                  className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-6 py-3 text-sm font-bold text-ink shadow-sm transition-all hover:border-brand hover:text-brand-text"
                 >
                   {showAllModels ? (
                     <>
-                      <ChevronUp className="h-4 w-4 text-[#E4002B]" />
+                      <ChevronUp className="h-4 w-4 text-brand-text" />
                       {dict.collapseModels}
                     </>
                   ) : (
                     <>
-                      <ChevronDown className="h-4 w-4 text-[#E4002B]" />
+                      <ChevronDown className="h-4 w-4 text-brand-text" />
                       {dict.viewAllModels(computedModels.length)}
                     </>
                   )}
@@ -1895,7 +2270,7 @@ export function PublicPage({
                   entry={faqTitleContent.entry}
                   isEditMode={isEditMode}
                   onCommit={handleCommitText}
-                  className="font-display text-2xl font-bold text-neutral-900 dark:text-white"
+                  className="font-display text-2xl font-bold text-ink"
                 />
                 <EditableText
                   as="p"
@@ -1904,7 +2279,7 @@ export function PublicPage({
                   entry={faqSubtitleContent.entry}
                   isEditMode={isEditMode}
                   onCommit={handleCommitText}
-                  className="mt-1 block text-sm text-neutral-600 dark:text-neutral-400"
+                  className="mt-1 block text-sm text-ink-muted"
                 />
               </div>
             </div>
@@ -1930,7 +2305,7 @@ export function PublicPage({
                 return (
                   <div
                     key={faq.id}
-                    className="overflow-hidden rounded-2xl border border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-900"
+                    className="overflow-hidden rounded-2xl border border-border bg-card"
                   >
                     <button
                       type="button"
@@ -1943,16 +2318,16 @@ export function PublicPage({
                         entry={qEntry}
                         isEditMode={isEditMode}
                         onCommit={handleCommitText}
-                        className="text-sm font-bold text-neutral-900 dark:text-white sm:text-base"
+                        className="text-sm font-bold text-ink sm:text-base"
                       />
                       <ChevronDown
-                        className={`h-5 w-5 shrink-0 text-neutral-600 transition-transform dark:text-neutral-300 ${
-                          isOpen ? 'rotate-180 text-[#C80024] dark:text-[#ff4d6d]' : ''
+                        className={`h-5 w-5 shrink-0 text-ink-muted transition-transform ${
+                          isOpen ? 'rotate-180 text-brand-text' : ''
                         }`}
                       />
                     </button>
                     {isOpen && (
-                      <div className="border-t border-neutral-100 px-5 py-4 text-sm leading-relaxed text-neutral-600 dark:border-neutral-800 dark:text-neutral-300">
+                      <div className="border-t border-border px-5 py-4 text-sm leading-relaxed text-ink-muted">
                         <EditableText
                           as="p"
                           textKey={`faq_a_${faq.id}`}
@@ -1982,7 +2357,7 @@ export function PublicPage({
                 fallback={
                   <section
                     id="unidades"
-                    className="min-h-[540px] border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
+                    className="min-h-[540px] border-t border-border bg-card py-16"
                   />
                 }
               >
@@ -1999,7 +2374,7 @@ export function PublicPage({
                       entry={unitsEyebrow.entry}
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
-                      className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]"
+                      className="text-xs font-bold uppercase tracking-widest text-brand-text"
                     />
                   )}
                   renderTitle={() => (
@@ -2010,7 +2385,7 @@ export function PublicPage({
                       entry={unitsTitle.entry}
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
-                      className="mt-1 block text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl"
+                      className="mt-1 block text-2xl font-bold tracking-tight text-ink sm:text-3xl"
                     />
                   )}
                   renderSubtitle={() => (
@@ -2021,7 +2396,7 @@ export function PublicPage({
                       entry={unitsSubtitle.entry}
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
-                      className="mt-1.5 block text-sm text-neutral-600 dark:text-neutral-300"
+                      className="mt-1.5 block text-sm text-ink-muted"
                     />
                   )}
                 />
@@ -2029,16 +2404,16 @@ export function PublicPage({
             ) : (
               <section
                 id="unidades"
-                className="min-h-[540px] border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
+                className="min-h-[540px] border-t border-border bg-card py-16"
               >
                 <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
-                  <p className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]">
+                  <p className="text-xs font-bold uppercase tracking-widest text-brand-text">
                     {unitsEyebrow.entry?.text || unitsEyebrow.defaultText}
                   </p>
-                  <h2 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl">
+                  <h2 className="mt-1 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
                     {unitsTitle.entry?.text || unitsTitle.defaultText}
                   </h2>
-                  <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                  <p className="mt-1.5 text-sm text-ink-muted">
                     {unitsSubtitle.entry?.text || unitsSubtitle.defaultText}
                   </p>
                 </div>
@@ -2058,7 +2433,7 @@ export function PublicPage({
         const footerSlogan = getLocalizedContent('footer_slogan');
         const footerCredits = getLocalizedContent('footer_credits');
         return (
-          <footer className="border-t border-neutral-200 bg-neutral-50 text-neutral-700 dark:border-neutral-800 dark:bg-neutral-900 dark:text-neutral-300">
+          <footer className="border-t border-border bg-surface text-ink-muted">
             <div className="mx-auto max-w-[1180px] px-4 py-12 sm:px-6">
               <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
                 {/* Coluna 1: Logo + Redes + Tema escuro */}
@@ -2082,7 +2457,7 @@ export function PublicPage({
                         entry={vbConfig.siteContent.footer_brand_text}
                         isEditMode={isEditMode}
                         onCommit={handleCommitText}
-                        className="font-display text-2xl font-extrabold tracking-tight text-[#C80024] dark:text-[#ff4d6d]"
+                        className="font-display text-2xl font-extrabold tracking-tight text-brand-text"
                       />
                     )}
                     {isEditMode && (
@@ -2095,7 +2470,7 @@ export function PublicPage({
                             currentUrl: effectiveLogoUrl,
                           })
                         }
-                        className="inline-flex items-center gap-1 rounded-lg bg-neutral-900 px-2.5 py-1 text-[11px] font-bold text-white hover:bg-[#E4002B]"
+                        className="inline-flex items-center gap-1 rounded-lg bg-ink px-2.5 py-1 text-[11px] font-bold text-on-ink hover:bg-brand hover:text-on-brand"
                       >
                         <ImageIcon className="h-3 w-3" />
                         Trocar Imagem
@@ -2109,7 +2484,7 @@ export function PublicPage({
                     entry={footerSocial.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="mt-3 block text-sm text-neutral-600 dark:text-neutral-400"
+                    className="mt-3 block text-sm text-ink-muted"
                   />
                   <div className="mt-2.5 flex items-center gap-3">
                     <a
@@ -2117,7 +2492,7 @@ export function PublicPage({
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label="Instagram Rodaleve"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-ink transition-colors hover:border-brand hover:text-brand-text"
                     >
                       <Instagram className="h-4 w-4" />
                     </a>
@@ -2126,7 +2501,7 @@ export function PublicPage({
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label="YouTube Rodaleve"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-ink transition-colors hover:border-brand hover:text-brand-text"
                     >
                       <Youtube className="h-4 w-4" />
                     </a>
@@ -2138,7 +2513,7 @@ export function PublicPage({
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label="Facebook Rodaleve"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-neutral-200 bg-white text-neutral-700 transition-colors hover:border-[#E4002B] hover:text-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-ink transition-colors hover:border-brand hover:text-brand-text"
                     >
                       <Facebook className="h-4 w-4" />
                     </a>
@@ -2146,7 +2521,7 @@ export function PublicPage({
                   <button
                     type="button"
                     onClick={onToggleDarkMode}
-                    className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-neutral-600 underline-offset-4 hover:text-neutral-900 hover:underline dark:text-neutral-400 dark:hover:text-white"
+                    className="mt-4 inline-flex items-center gap-2 text-xs font-semibold text-ink-muted underline-offset-4 hover:text-ink hover:underline"
                   >
                     {darkMode ? (
                       <>
@@ -2171,9 +2546,9 @@ export function PublicPage({
                     entry={footerHoursTitle.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="text-sm font-bold text-neutral-900 dark:text-white"
+                    className="text-sm font-bold text-ink"
                   />
-                  <ul className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-400">
+                  <ul className="mt-3 space-y-1.5 text-sm text-ink-muted">
                     <li>
                       <EditableText
                         textKey="footer_hours_weekdays"
@@ -2192,7 +2567,7 @@ export function PublicPage({
                         onCommit={handleCommitText}
                       />
                     </li>
-                    <li className="pt-1 font-semibold text-neutral-800 dark:text-neutral-200">
+                    <li className="pt-1 font-semibold text-ink">
                       WhatsApp:{' '}
                       <a
                         href={buildWhatsAppUrl(primaryWhatsAppNumber)}
@@ -2207,7 +2582,7 @@ export function PublicPage({
                             data.tracking_config
                           )
                         }
-                        className="tabular-nums text-[#C80024] hover:underline dark:text-[#ff4d6d]"
+                        className="tabular-nums text-brand-text hover:underline"
                       >
                         {primaryWhatsAppNumber}
                       </a>
@@ -2224,20 +2599,20 @@ export function PublicPage({
                     entry={footerPoliciesTitle.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="text-sm font-bold text-neutral-900 dark:text-white"
+                    className="text-sm font-bold text-ink"
                   />
                   <div className="mt-3 flex flex-wrap gap-4 text-sm">
                     <button
                       type="button"
                       onClick={() => setLegalModal('privacy')}
-                      className="text-neutral-700 underline-offset-4 hover:text-[#C80024] hover:underline dark:text-neutral-300"
+                      className="text-ink-muted underline-offset-4 hover:text-brand-text hover:underline"
                     >
                       {dict.privacyPolicy}
                     </button>
                     <button
                       type="button"
                       onClick={() => setLegalModal('terms')}
-                      className="text-neutral-700 underline-offset-4 hover:text-[#C80024] hover:underline dark:text-neutral-300"
+                      className="text-ink-muted underline-offset-4 hover:text-brand-text hover:underline"
                     >
                       {dict.termsOfUse}
                     </button>
@@ -2249,13 +2624,13 @@ export function PublicPage({
                     entry={footerDisclaimer.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="mt-3 block text-xs leading-relaxed text-neutral-600 dark:text-neutral-300"
+                    className="mt-3 block text-xs leading-relaxed text-ink-muted"
                   />
                 </div>
               </div>
 
               {/* Faixa inferior */}
-              <div className="mt-10 grid grid-cols-1 items-center gap-3 border-t border-neutral-200 pt-6 text-center text-xs text-neutral-600 dark:border-neutral-800 dark:text-neutral-300 sm:grid-cols-3">
+              <div className="mt-10 grid grid-cols-1 items-center gap-3 border-t border-border pt-6 text-center text-xs text-ink-muted sm:grid-cols-3">
                 <div className="sm:text-left">
                   <EditableText
                     as="p"
@@ -2264,7 +2639,7 @@ export function PublicPage({
                     entry={footerSlogan.entry}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="font-bold tracking-wide text-neutral-800 dark:text-neutral-200"
+                    className="font-bold tracking-wide text-ink"
                   />
                 </div>
                 <div className="flex justify-center">
@@ -2294,21 +2669,25 @@ export function PublicPage({
                     href="https://api.whatsapp.com/send?phone=5577981677591&text=Ola%20tudo%20bem%20Vi%20o%20site%20da%20Rodaleve%20e%20achei%20muito%20bem%20estruturado%20Tenho%20um%20negocio%20e%20gostaria%20de%20solicitar%20um%20orcamento%20para%20criar%20um%20site%20completo%20para%20a%20minha%20empresa%20Podemos%20conversar%20sobre%20possibilidades%20prazos%20e%20valores"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-semibold text-neutral-700 underline-offset-4 transition-colors hover:text-[#E4002B] hover:underline dark:text-neutral-300"
+                    className="font-semibold text-ink-muted underline-offset-4 transition-colors hover:text-brand-text hover:underline"
                   >
                     Zarvic Marketing
                   </a>
-                  {' · '}
-                  <a
-                    href="/gestor"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      onNavigate('/gestor');
-                    }}
-                    className="font-semibold text-neutral-700 underline-offset-4 hover:text-[#E4002B] hover:underline dark:text-neutral-300"
-                  >
-                    {dict.gestorLink}
-                  </a>
+                  {isAdminLoggedIn && (
+                    <>
+                      {' · '}
+                      <a
+                        href="/gestor"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          onNavigate('/gestor');
+                        }}
+                        className="font-semibold text-ink-muted underline-offset-4 hover:text-brand-text hover:underline"
+                      >
+                        {dict.gestorLink}
+                      </a>
+                    </>
+                  )}
                 </p>
               </div>
             </div>
@@ -2321,18 +2700,27 @@ export function PublicPage({
         if (!custom) return null;
         const isRed = custom.theme === 'red';
         const isGray = custom.theme === 'gray';
+        const customSectionHtml = vbConfig.htmlOverrides?.[`section_html_${block.id}`]?.trim();
         return (
           <section className="mx-auto max-w-[1180px] px-4 py-6 sm:px-6">
             <div
               className={`overflow-hidden rounded-2xl border p-6 sm:p-8 ${
                 isRed
-                  ? 'border-[#D00027] bg-[#D00027] text-white'
+                  ? 'border-brand bg-brand text-on-brand'
                   : isGray
-                    ? 'border-neutral-200 bg-neutral-100 text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white'
-                    : 'border-neutral-200 bg-white text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900 dark:text-white'
+                    ? 'border-border bg-surface-neutral text-ink'
+                    : 'border-border bg-card text-ink'
               }`}
             >
               <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
+                {customSectionHtml ? (
+                  <SafeHtml
+                    html={customSectionHtml}
+                    className={`min-w-0 flex-1 space-y-2 text-sm leading-relaxed [&_a]:underline ${
+                      isRed ? 'text-on-brand' : 'text-ink [&_a]:text-brand-text'
+                    }`}
+                  />
+                ) : (
                 <div className="flex-1 space-y-2">
                   {custom.badge !== undefined && (
                     <EditableText
@@ -2343,7 +2731,7 @@ export function PublicPage({
                       isEditMode={isEditMode}
                       onCommit={handleCommitText}
                       className={`text-xs font-bold uppercase tracking-widest ${
-                        isRed ? 'text-white' : 'text-[#C80024] dark:text-[#ff4d6d]'
+                        isRed ? 'text-on-brand' : 'text-brand-text'
                       }`}
                     />
                   )}
@@ -2364,7 +2752,7 @@ export function PublicPage({
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
                     className={`block text-sm leading-relaxed ${
-                      isRed ? 'text-white' : 'text-neutral-600 dark:text-neutral-300'
+                      isRed ? 'text-on-brand' : 'text-ink-muted'
                     }`}
                   />
                   {custom.cta_label && (
@@ -2378,8 +2766,8 @@ export function PublicPage({
                         }}
                         className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-xs font-bold transition-colors ${
                           isRed
-                            ? 'bg-white text-[#C80024] hover:bg-neutral-100'
-                            : 'bg-[#D00027] text-white hover:bg-[#B80022]'
+                            ? 'bg-card text-brand-text hover:bg-surface'
+                            : 'bg-brand text-on-brand hover:bg-brand-hover'
                         }`}
                       >
                         <EditableText
@@ -2393,6 +2781,7 @@ export function PublicPage({
                     </div>
                   )}
                 </div>
+                )}
 
                 {(custom.image_url || isEditMode) && (
                   <div className="relative flex w-full shrink-0 flex-col items-center justify-center md:w-64">
@@ -2425,7 +2814,7 @@ export function PublicPage({
                             currentUrl: custom.image_url || '',
                           })
                         }
-                        className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-neutral-950 px-3 py-1 text-[11px] font-bold text-white shadow hover:bg-neutral-800"
+                        className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-ink px-3 py-1 text-[11px] font-bold text-on-ink shadow hover:bg-brand hover:text-on-brand"
                       >
                         <ImageIcon className="h-3 w-3" />
                         Trocar Imagem
@@ -2445,59 +2834,105 @@ export function PublicPage({
   };
 
   return (
-    <div
-      className={`min-h-screen transition-colors ${
-        isEditMode
-          ? 'bg-neutral-200/80 pt-[54px] dark:bg-neutral-900'
-          : 'bg-[#FAFAFA] text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100'
-      }`}
+    <HtmlEditorProvider
+      value={{
+        isHtmlEditMode: activeHtmlEditMode,
+        htmlOverrides: vbConfig.htmlOverrides || {},
+        onOpenHtmlEditor: (key, text) => openHtmlModalForKey(key, text),
+      }}
     >
-      {/* Visual Editor Fixed Top Toolbar */}
-      {isEditMode && (
-        <Suspense fallback={null}>
-          <VisualEditorToolbar
-            canUndo={undoStack.length > 0}
-            canRedo={redoStack.length > 0}
-            viewport={viewport}
-            saving={savingVisual}
-            hasUnsavedChanges={hasUnsavedChanges}
-            autoSaveEnabled={autoSaveEnabled}
-            autoSaveStatus={autoSaveStatus}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
-            onChangeViewport={setViewport}
-            onOpenAddBlock={() => {
-              setAddBlockAfterIndex(null);
-              setIsAddBlockOpen(true);
-            }}
-            onEditFavicon={() =>
-              setImageModal({
-                kind: 'favicon',
-                title: 'Favicon do Site (ícone da aba)',
-                currentUrl: effectiveFaviconUrl,
-              })
-            }
-            onRestoreDefaultOrder={handleRestoreDefaultOrder}
-            onRestoreDefault={handleRestoreDefault}
-            onBackToGestor={onExitEditModeToGestor}
-            onSaveAndPublish={handleSaveAndPublish}
-          />
-        </Suspense>
-      )}
+      <div
+        className={`min-h-screen transition-colors ${
+          isEditMode || activeHtmlEditMode
+            ? 'bg-surface-neutral pt-[54px]'
+            : 'bg-surface text-ink'
+        }`}
+      >
+        {/* Visual Editor Fixed Top Toolbar */}
+        {isEditMode && (
+          <Suspense fallback={null}>
+            <VisualEditorToolbar
+              canUndo={undoStack.length > 0}
+              canRedo={redoStack.length > 0}
+              viewport={viewport}
+              saving={savingVisual}
+              hasUnsavedChanges={hasUnsavedChanges}
+              autoSaveEnabled={autoSaveEnabled}
+              autoSaveStatus={autoSaveStatus}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              onChangeViewport={setViewport}
+              onOpenAddBlock={() => {
+                setAddBlockAfterIndex(null);
+                setIsAddBlockOpen(true);
+              }}
+              onEditFavicon={() =>
+                setImageModal({
+                  kind: 'favicon',
+                  title: 'Favicon do Site (ícone da aba)',
+                  currentUrl: effectiveFaviconUrl,
+                })
+              }
+              onRestoreDefaultOrder={handleRestoreDefaultOrder}
+              onRestoreDefault={handleRestoreDefault}
+              onBackToGestor={onExitEditModeToGestor}
+              onSaveAndPublish={handleSaveAndPublish}
+            />
+          </Suspense>
+        )}
+
+        {/* In-Page HTML Editor Fixed Top Toolbar (Admin Only) */}
+        {activeHtmlEditMode && (
+          <div className="fixed inset-x-0 top-0 z-50 border-b border-border/30 bg-[#111827]/95 text-white shadow-xl backdrop-blur">
+            <div className="mx-auto flex max-w-[1380px] flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-5">
+              <div className="flex flex-wrap items-center gap-2.5">
+                <div className="inline-flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/20 px-2.5 py-1.5 text-xs font-bold text-white">
+                  <Code2 className="h-3.5 w-3.5 text-brand" />
+                  <span>Modo Edição HTML na Página</span>
+                </div>
+                <span className="hidden text-xs text-white/75 md:inline">
+                  Clique em qualquer texto, aviso, seção ou modelo do site para editar o HTML e salvar na hora.
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onExitHtmlEditModeToGestor
+                      ? onExitHtmlEditModeToGestor()
+                      : onNavigate('/gestor?tab=editor_html')
+                  }
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  Editor HTML no Gestor
+                </button>
+                <button
+                  type="button"
+                  onClick={() => (onExitHtmlEditMode ? onExitHtmlEditMode() : onNavigate('/'))}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3.5 py-1.5 text-xs font-bold text-on-brand shadow-sm transition-colors hover:bg-brand-hover"
+                >
+                  <X className="h-3.5 w-3.5" />
+                  Sair do Modo HTML
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
       {/* Main Preview Canvas (switches width smoothly between Desktop and Mobile in edit mode) */}
       <div
         className={
           isEditMode && viewport === 'mobile'
-            ? 'mx-auto my-6 max-w-[390px] overflow-x-hidden rounded-[28px] border-4 border-neutral-800 bg-[#FAFAFA] text-neutral-900 shadow-2xl dark:bg-neutral-950 dark:text-neutral-100'
-            : 'min-h-screen bg-[#FAFAFA] text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100'
+            ? 'mx-auto my-6 max-w-[390px] overflow-x-hidden rounded-[28px] border-4 border-ink bg-surface text-ink shadow-2xl'
+            : 'min-h-screen bg-surface text-ink'
         }
       >
         {/* 1. Cabeçalho fixo no topo com Glassmorphism */}
         <header
           className={`${
             isEditMode ? 'relative' : 'sticky top-0'
-          } z-50 w-full border-b border-gray-200/70 bg-white/75 backdrop-blur-md transition-shadow duration-200 dark:border-white/10 dark:bg-gray-900/75 ${
+          } z-50 w-full border-b border-border bg-card/85 backdrop-blur-md transition-shadow duration-200 ${
             isScrolled && !isEditMode ? 'shadow-sm' : ''
           }`}
         >
@@ -2530,7 +2965,7 @@ export function PublicPage({
                     entry={vbConfig.siteContent.header_brand_text}
                     isEditMode={isEditMode}
                     onCommit={handleCommitText}
-                    className="font-display text-xl font-extrabold tracking-tight text-[#C80024] dark:text-[#ff4d6d]"
+                    className="font-display text-xl font-extrabold tracking-tight text-brand-text"
                   />
                 )}
               </a>
@@ -2544,7 +2979,7 @@ export function PublicPage({
                       currentUrl: effectiveLogoUrl,
                     })
                   }
-                  className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-100 px-2 py-1 text-[10px] font-bold text-neutral-800 hover:bg-[#E4002B] hover:text-white"
+                  className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-neutral px-2 py-1 text-[10px] font-bold text-ink hover:bg-brand hover:text-on-brand"
                 >
                   <ImageIcon className="h-3 w-3" />
                   Trocar Imagem
@@ -2564,8 +2999,8 @@ export function PublicPage({
                       onClick={() => handleNavClick('revisoes')}
                       className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
                         activeNav === 'revisoes' && heroTab === 'tabela'
-                          ? 'border-[#dc2626] text-neutral-900 dark:text-white'
-                          : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+                          ? 'border-brand text-ink'
+                          : 'border-transparent text-ink-muted hover:text-ink'
                       }`}
                     >
                       <EditableText
@@ -2581,8 +3016,8 @@ export function PublicPage({
                       onClick={() => handleNavClick('faq')}
                       className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
                         activeNav === 'faq' || heroTab === 'faq'
-                          ? 'border-[#dc2626] text-neutral-900 dark:text-white'
-                          : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+                          ? 'border-brand text-ink'
+                          : 'border-transparent text-ink-muted hover:text-ink'
                       }`}
                     >
                       <EditableText
@@ -2598,8 +3033,8 @@ export function PublicPage({
                       onClick={() => handleNavClick('unidades')}
                       className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
                         activeNav === 'unidades'
-                          ? 'border-[#dc2626] text-neutral-900 dark:text-white'
-                          : 'border-transparent text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+                          ? 'border-brand text-ink'
+                          : 'border-transparent text-ink-muted hover:text-ink'
                       }`}
                     >
                       <EditableText
@@ -2634,8 +3069,9 @@ export function PublicPage({
                     data.tracking_config
                   );
                 }}
-                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-[#D00027] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#B80022] sm:px-5 sm:py-2.5 sm:text-sm"
+                className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-full bg-gradient-to-r from-brand to-brand-hover px-3.5 py-2 text-xs font-bold text-on-brand shadow-sm transition-all hover:from-brand-hover hover:to-brand-hover sm:px-5 sm:py-2.5 sm:text-sm"
               >
+                <WhatsAppIcon className="h-4 w-4 shrink-0" />
                 {(() => {
                   const headerCta = getLocalizedContent('header_cta');
                   return (
@@ -2653,14 +3089,14 @@ export function PublicPage({
           </div>
 
           {/* Navegação mobile compacta dentro do header glass */}
-          <nav className="flex items-center justify-around border-t border-gray-200/50 px-3 dark:border-white/10 md:hidden">
+          <nav className="flex items-center justify-around border-t border-border px-3 md:hidden">
             <button
               type="button"
               onClick={() => handleNavClick('revisoes')}
               className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
                 activeNav === 'revisoes' && heroTab === 'tabela'
-                  ? 'border-[#dc2626] text-neutral-900 dark:text-white'
-                  : 'border-transparent text-neutral-600 dark:text-neutral-300'
+                  ? 'border-brand text-ink'
+                  : 'border-transparent text-ink-muted'
               }`}
             >
               {getLocalizedContent('nav_revisions').entry?.text ||
@@ -2671,8 +3107,8 @@ export function PublicPage({
               onClick={() => handleNavClick('faq')}
               className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
                 activeNav === 'faq' || heroTab === 'faq'
-                  ? 'border-[#dc2626] text-neutral-900 dark:text-white'
-                  : 'border-transparent text-neutral-600 dark:text-neutral-300'
+                  ? 'border-brand text-ink'
+                  : 'border-transparent text-ink-muted'
               }`}
             >
               {getLocalizedContent('nav_faq').entry?.text ||
@@ -2683,8 +3119,8 @@ export function PublicPage({
               onClick={() => handleNavClick('unidades')}
               className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
                 activeNav === 'unidades'
-                  ? 'border-[#dc2626] text-neutral-900 dark:text-white'
-                  : 'border-transparent text-neutral-600 dark:text-neutral-300'
+                  ? 'border-brand text-ink'
+                  : 'border-transparent text-ink-muted'
               }`}
             >
               {getLocalizedContent('nav_units').entry?.text ||
@@ -2699,6 +3135,10 @@ export function PublicPage({
           if (!content && !isEditMode) return null;
           const isDropTarget =
             dragOverSectionTarget && dragOverSectionTarget.index === index;
+          const sectionCustomHtml =
+            block.type !== 'custom' && block.id !== 'notice_box'
+              ? vbConfig.htmlOverrides?.[`section_html_${block.id}`]?.trim()
+              : undefined;
           return (
             <SectionEditorWrapper
               key={block.id}
@@ -2737,6 +3177,44 @@ export function PublicPage({
               }}
               onDelete={deleteSection}
             >
+              {activeHtmlEditMode && (
+                <div className="mx-auto flex max-w-[1180px] justify-end px-4 pt-2 sm:px-6">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      openHtmlModalForKey(
+                        `section_html_${block.id}`,
+                        buildSectionDefaultHtml(block, vbConfig)
+                      )
+                    }
+                    className="inline-flex items-center gap-1 rounded-full border border-brand/40 bg-brand-soft px-3 py-1 text-[11px] font-bold text-brand-text shadow-xs transition-colors hover:bg-brand hover:text-on-brand"
+                  >
+                    <Code2 className="h-3 w-3" />
+                    Editar HTML da Seção: {block.label}
+                  </button>
+                </div>
+              )}
+              {sectionCustomHtml && (
+                <div className="mx-auto max-w-[1180px] px-4 pt-4 sm:px-6">
+                  <SafeHtml
+                    html={sectionCustomHtml}
+                    onClick={
+                      activeHtmlEditMode
+                        ? () =>
+                            openHtmlModalForKey(
+                              `section_html_${block.id}`,
+                              buildSectionDefaultHtml(block, vbConfig)
+                            )
+                        : undefined
+                    }
+                    className={`text-sm leading-relaxed text-ink [&_a]:text-brand-text [&_a]:underline ${
+                      activeHtmlEditMode
+                        ? 'cursor-pointer rounded-xl outline-2 outline-dashed outline-brand/50 hover:outline-brand'
+                        : ''
+                    }`}
+                  />
+                </div>
+              )}
               {content}
             </SectionEditorWrapper>
           );
@@ -2787,20 +3265,30 @@ export function PublicPage({
         </Suspense>
       )}
 
-      {/* Botão flutuante discreto para o administrador autenticado */}
-      {isAdminLoggedIn && !isEditMode && (
-        <div className="fixed bottom-5 right-5 z-40 flex items-center gap-2">
+      {/* Botão flutuante discreto visível EXCLUSIVAMENTE para o administrador autenticado */}
+      {isAdminLoggedIn && !isEditMode && !activeHtmlEditMode && (
+        <div className="fixed bottom-5 right-5 z-40 flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
             onClick={() => onNavigate('/gestor')}
-            className="rounded-full border border-neutral-200 bg-white/95 px-3.5 py-2 text-xs font-semibold text-neutral-700 shadow-md backdrop-blur transition-colors hover:bg-neutral-50"
+            className="rounded-full border border-border bg-card/95 px-3.5 py-2 text-xs font-semibold text-ink shadow-md backdrop-blur transition-colors hover:bg-surface"
           >
             Gestor
           </button>
           <button
             type="button"
+            onClick={() =>
+              onEnterHtmlEditMode ? onEnterHtmlEditMode() : onNavigate('/?html_editor=1')
+            }
+            className="inline-flex items-center gap-1.5 rounded-full border border-brand/40 bg-brand-soft px-3.5 py-2 text-xs font-bold text-brand-text shadow-md backdrop-blur transition-colors hover:bg-brand hover:text-on-brand"
+          >
+            <Code2 className="h-3.5 w-3.5" />
+            Editar HTML na Página
+          </button>
+          <button
+            type="button"
             onClick={onEnterEditMode}
-            className="inline-flex items-center gap-1.5 rounded-full bg-neutral-950/90 px-4 py-2 text-xs font-bold text-white shadow-lg backdrop-blur transition-all hover:bg-[#D00027]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-ink px-4 py-2 text-xs font-bold text-on-ink shadow-lg backdrop-blur transition-all hover:bg-brand hover:text-on-brand"
           >
             <Paintbrush className="h-3.5 w-3.5" />
             Editar Site Visualmente
@@ -2808,13 +3296,26 @@ export function PublicPage({
         </div>
       )}
 
+      {/* Modal do Editor HTML na Página (apenas admin autenticado) */}
+      {isAdminLoggedIn && htmlModalTarget && (
+        <Suspense fallback={null}>
+          <HtmlEditorModal
+            target={htmlModalTarget}
+            saving={savingHtmlModal}
+            onClose={() => !savingHtmlModal && setHtmlModalTarget(null)}
+            onSave={handleSaveHtmlOverride}
+            onReset={handleResetHtmlOverride}
+          />
+        </Suspense>
+      )}
+
       {/* Visual Editor Toast */}
       {visualToast && (
         <div
           className={`fixed right-5 top-16 z-50 rounded-xl border px-4 py-2.5 text-xs font-bold shadow-xl ${
             visualToast.type === 'success'
-              ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
-              : 'border-red-300 bg-red-50 text-[#C80024]'
+              ? 'border-border bg-card text-ink'
+              : 'border-brand bg-brand-soft text-brand-text'
           }`}
         >
           {visualToast.msg}
@@ -2873,21 +3374,21 @@ export function PublicPage({
 
       {/* Modal Políticas e Termos */}
       {legalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl bg-white p-6 shadow-xl dark:bg-neutral-900">
-            <div className="flex items-center justify-between border-b border-neutral-100 pb-3 dark:border-neutral-800">
-              <h4 className="font-display text-lg font-bold text-neutral-900 dark:text-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 p-4 backdrop-blur-[2px]">
+          <div className="max-h-[85vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card p-6 shadow-xl">
+            <div className="flex items-center justify-between border-b border-border pb-3">
+              <h4 className="font-display text-lg font-bold text-ink">
                 {legalModal === 'privacy' ? dict.privacyPolicy : dict.termsOfUse}
               </h4>
               <button
                 type="button"
                 onClick={() => setLegalModal(null)}
-                className="rounded-lg p-1 text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className="rounded-lg p-1 text-ink-muted hover:bg-surface"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
-            <div className="mt-4 space-y-3 text-sm leading-relaxed text-neutral-600 dark:text-neutral-300">
+            <div className="mt-4 space-y-3 text-sm leading-relaxed text-ink-muted">
               {legalModal === 'privacy' ? (
                 <>
                   <p>{dict.privacyParagraph1}</p>
@@ -2904,5 +3405,6 @@ export function PublicPage({
         </div>
       )}
     </div>
+    </HtmlEditorProvider>
   );
 }

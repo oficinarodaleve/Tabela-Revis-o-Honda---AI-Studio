@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import {
   AlignCenter,
   AlignLeft,
@@ -13,14 +13,40 @@ import {
   TextWeightOption,
 } from '../../types';
 
+import { SafeHtml } from '../SafeHtml';
+
+export interface HtmlEditorContextValue {
+  isHtmlEditMode: boolean;
+  htmlOverrides: Record<string, string>;
+  onOpenHtmlEditor?: (textKey: string, currentText: string) => void;
+}
+
+const HtmlEditorContext = createContext<HtmlEditorContextValue>({
+  isHtmlEditMode: false,
+  htmlOverrides: {},
+});
+
+export function HtmlEditorProvider({
+  value,
+  children,
+}: {
+  value: HtmlEditorContextValue;
+  children: React.ReactNode;
+}) {
+  return <HtmlEditorContext.Provider value={value}>{children}</HtmlEditorContext.Provider>;
+}
+
 interface EditableTextProps {
   textKey: string;
   defaultText: string;
   entry?: EditableTextEntry;
+  htmlOverride?: string;
   isEditMode: boolean;
+  isHtmlEditMode?: boolean;
   as?: 'span' | 'p' | 'h1' | 'h2' | 'h3' | 'div' | 'strong';
   className?: string;
   onCommit: (key: string, next: EditableTextEntry) => void;
+  onOpenHtmlEditor?: (textKey: string, currentText: string) => void;
 }
 
 const SIZE_CLASS_MAP: Record<TextSizeOption, string> = {
@@ -48,9 +74,9 @@ const ALIGN_CLASS_MAP: Record<TextAlignOption, string> = {
 
 const QUICK_COLORS = [
   { label: 'Padrão', value: '' },
-  { label: 'Vermelho Honda', value: '#E4002B' },
-  { label: 'Preto', value: '#171717' },
-  { label: 'Cinza', value: '#525252' },
+  { label: 'Vermelho Honda', value: '#C8102E' },
+  { label: 'Escuro', value: '#111827' },
+  { label: 'Cinza', value: '#6B7280' },
   { label: 'Branco', value: '#FFFFFF' },
 ];
 
@@ -58,11 +84,19 @@ export function EditableText({
   textKey,
   defaultText,
   entry,
+  htmlOverride,
   isEditMode,
+  isHtmlEditMode,
   as: Tag = 'span',
   className = '',
   onCommit,
+  onOpenHtmlEditor,
 }: EditableTextProps) {
+  const htmlCtx = useContext(HtmlEditorContext);
+  const effectiveHtmlEditMode = isHtmlEditMode ?? htmlCtx.isHtmlEditMode;
+  const effectiveHtmlOverride = htmlOverride ?? htmlCtx.htmlOverrides?.[textKey];
+  const effectiveOpenHtml = onOpenHtmlEditor ?? htmlCtx.onOpenHtmlEditor;
+
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<EditableTextEntry>({
     text: entry?.text ?? defaultText,
@@ -76,6 +110,8 @@ export function EditableText({
   const popoverRef = useRef<HTMLDivElement | null>(null);
 
   const resolvedText = entry?.text ?? defaultText;
+  const hasHtmlOverride =
+    typeof effectiveHtmlOverride === 'string' && effectiveHtmlOverride.trim().length > 0;
   const resolvedColor = editing ? draft.color : entry?.color;
   const resolvedSize = editing ? draft.size : entry?.size;
   const resolvedWeight = editing ? draft.weight : entry?.weight;
@@ -128,11 +164,13 @@ export function EditableText({
     resolvedSize && resolvedSize !== 'default' ? SIZE_CLASS_MAP[resolvedSize] : '',
     resolvedWeight ? WEIGHT_CLASS_MAP[resolvedWeight] : '',
     resolvedAlign ? ALIGN_CLASS_MAP[resolvedAlign] : '',
-    isEditMode
-      ? editing
-        ? 'outline-2 outline-dashed outline-[#E4002B] rounded px-1 -mx-1 bg-white/10 cursor-text'
-        : 'hover:outline-2 hover:outline-dashed hover:outline-indigo-500/70 rounded cursor-pointer transition-all'
-      : '',
+    effectiveHtmlEditMode
+      ? 'cursor-pointer rounded outline-2 outline-dashed outline-brand/45 hover:outline-brand hover:bg-brand-soft/35 transition-all'
+      : isEditMode
+        ? editing
+          ? 'outline-2 outline-dashed outline-brand rounded px-1 -mx-1 bg-card/10 cursor-text'
+          : 'hover:outline-2 hover:outline-dashed hover:outline-brand/70 rounded cursor-pointer transition-all'
+        : '',
   ]
     .filter(Boolean)
     .join(' ');
@@ -141,7 +179,51 @@ export function EditableText({
     ? { color: resolvedColor }
     : undefined;
 
+  if (effectiveHtmlEditMode) {
+    const handleOpenHtml = (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      effectiveOpenHtml?.(
+        textKey,
+        hasHtmlOverride && effectiveHtmlOverride ? effectiveHtmlOverride : resolvedText
+      );
+    };
+
+    if (hasHtmlOverride && effectiveHtmlOverride) {
+      return (
+        <SafeHtml
+          as={Tag}
+          html={effectiveHtmlOverride}
+          className={computedStyleClass}
+          style={inlineStyle}
+          onClick={handleOpenHtml}
+          title={`Clique para editar HTML (${textKey})`}
+        />
+      );
+    }
+    return (
+      <Tag
+        className={computedStyleClass}
+        style={inlineStyle}
+        onClick={handleOpenHtml}
+        title={`Clique para editar HTML (${textKey})`}
+      >
+        {resolvedText}
+      </Tag>
+    );
+  }
+
   if (!isEditMode) {
+    if (hasHtmlOverride && effectiveHtmlOverride) {
+      return (
+        <SafeHtml
+          as={Tag}
+          html={effectiveHtmlOverride}
+          className={computedStyleClass}
+          style={inlineStyle}
+        />
+      );
+    }
     return (
       <Tag className={computedStyleClass} style={inlineStyle}>
         {resolvedText}
@@ -190,7 +272,7 @@ export function EditableText({
             e.preventDefault();
             e.stopPropagation();
           }}
-          className="fixed bottom-4 left-1/2 z-50 flex w-[94vw] max-w-[560px] -translate-x-1/2 flex-wrap items-center justify-between gap-2 rounded-2xl border border-neutral-800 bg-neutral-950/95 p-3 text-xs text-white shadow-2xl backdrop-blur"
+          className="fixed bottom-4 left-1/2 z-50 flex w-[94vw] max-w-[560px] -translate-x-1/2 flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/15 bg-[#111827]/95 p-3 text-xs text-white shadow-2xl backdrop-blur"
         >
           <div className="flex w-full items-center gap-2">
             <input
@@ -204,12 +286,12 @@ export function EditableText({
                 }
               }}
               placeholder="Texto..."
-              className="flex-1 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs text-white focus:border-[#E4002B] focus:outline-none"
+              className="flex-1 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs text-white focus:border-brand focus:outline-none"
             />
             <button
               type="button"
               onClick={() => commitNow()}
-              className="inline-flex items-center gap-1 rounded-lg bg-[#E4002B] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#C80024]"
+              className="inline-flex items-center gap-1 rounded-lg bg-brand px-3 py-1.5 text-xs font-bold text-on-brand hover:bg-brand-hover"
             >
               <Check className="h-3.5 w-3.5" />
               Aplicar
@@ -218,8 +300,8 @@ export function EditableText({
 
           <div className="flex flex-wrap items-center gap-2.5 pt-1">
             {/* Colors */}
-            <div className="flex items-center gap-1 rounded-lg border border-neutral-800 bg-neutral-900 px-2 py-1">
-              <Palette className="mr-1 h-3.5 w-3.5 text-neutral-400" />
+            <div className="flex items-center gap-1 rounded-lg border border-white/15 bg-white/5 px-2 py-1">
+              <Palette className="mr-1 h-3.5 w-3.5 text-white/60" />
               {QUICK_COLORS.map((c) => (
                 <button
                   key={c.label}
@@ -229,17 +311,17 @@ export function EditableText({
                   className={`h-4 w-4 rounded-full border ${
                     (draft.color || '') === c.value
                       ? 'scale-110 border-white ring-1 ring-white'
-                      : 'border-neutral-600'
+                      : 'border-white/30'
                   }`}
                   style={{
                     background:
-                      c.value || 'linear-gradient(135deg, #d4d4d4 50%, #525252 50%)',
+                      c.value || 'linear-gradient(135deg, #E5E7EB 50%, #6B7280 50%)',
                   }}
                 />
               ))}
               <input
                 type="color"
-                value={draft.color || '#171717'}
+                value={draft.color || '#111827'}
                 onChange={(e) => setDraft((prev) => ({ ...prev, color: e.target.value }))}
                 title="Cor personalizada"
                 className="ml-1 h-4 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
@@ -255,7 +337,7 @@ export function EditableText({
                   size: e.target.value as TextSizeOption,
                 }))
               }
-              className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] font-semibold text-neutral-200"
+              className="rounded-lg border border-white/15 bg-[#171A21] px-2 py-1 text-[11px] font-semibold text-white"
             >
               <option value="default">Tamanho padrão</option>
               <option value="xs">Extra pequeno</option>
@@ -276,7 +358,7 @@ export function EditableText({
                   weight: (e.target.value || undefined) as TextWeightOption | undefined,
                 }))
               }
-              className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-[11px] font-semibold text-neutral-200"
+              className="rounded-lg border border-white/15 bg-[#171A21] px-2 py-1 text-[11px] font-semibold text-white"
             >
               <option value="">Peso padrão</option>
               <option value="normal">Normal</option>
@@ -285,7 +367,7 @@ export function EditableText({
             </select>
 
             {/* Align */}
-            <div className="inline-flex items-center rounded-lg border border-neutral-700 bg-neutral-900 p-0.5">
+            <div className="inline-flex items-center rounded-lg border border-white/15 bg-white/5 p-0.5">
               {(
                 [
                   { id: 'left', icon: AlignLeft, label: 'Esquerda' },
@@ -305,8 +387,8 @@ export function EditableText({
                   }
                   className={`rounded p-1 ${
                     draft.align === id
-                      ? 'bg-white text-neutral-950'
-                      : 'text-neutral-300 hover:bg-neutral-800'
+                      ? 'bg-white text-[#111827]'
+                      : 'text-white/80 hover:bg-white/10'
                   }`}
                 >
                   <Icon className="h-3.5 w-3.5" />

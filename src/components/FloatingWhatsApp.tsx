@@ -181,7 +181,7 @@ export function FloatingWhatsApp({
         width: `${BUTTON_SIZE}px`,
         height: `${BUTTON_SIZE}px`,
       }}
-      className="fixed z-40 inline-flex touch-none select-none items-center justify-center rounded-full bg-[#25D366] text-white shadow-[0_6px_20px_rgba(37,211,102,0.42)] ring-2 ring-white/90 transition-transform hover:scale-105 hover:bg-[#20BD5A] active:scale-95"
+      className="fixed z-40 inline-flex touch-none select-none items-center justify-center rounded-full bg-whatsapp text-on-brand shadow-[0_6px_20px_rgba(37,211,102,0.42)] ring-2 ring-card/90 transition-transform hover:scale-105 hover:bg-whatsapp-hover active:scale-95"
     >
       <span className="pointer-events-none flex items-center justify-center">
         <WhatsAppIcon className="h-7 w-7" />

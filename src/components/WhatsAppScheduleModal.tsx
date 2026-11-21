@@ -2,7 +2,14 @@ import React, { useMemo, useState } from 'react';
 import { Check, MapPin, Phone, X } from 'lucide-react';
 import { MotoModel, UnitLocation } from '../types';
 import { SiteLanguage, UI_TRANSLATIONS, translatePartDescription } from '../utils/i18n';
-import { ComputedRevisionSummary, formatBRL, formatPartQuantity } from '../utils/pricing';
+import {
+  ComputedRevisionSummary,
+  LABOR_POLICY_TEXTS,
+  formatBRL,
+  formatPartQuantity,
+  getLaborBadgeText,
+  isFreeLaborRevision,
+} from '../utils/pricing';
 import { WhatsAppIcon, buildWhatsAppHref, getUnitWhatsAppNumber } from './WhatsAppIcon';
 
 interface WhatsAppScheduleModalProps {
@@ -54,7 +61,9 @@ export function WhatsAppScheduleModal({
     ? summary.totalWithOptionals
     : summary.totalWithoutOptionals;
 
-  const isFreeLabor = revisionNumber <= 2;
+  const isFreeLabor = isFreeLaborRevision(revisionNumber);
+  const laborTexts = LABOR_POLICY_TEXTS[language] || LABOR_POLICY_TEXTS.pt;
+  const laborBadgeText = getLaborBadgeText(revisionNumber, language);
 
   const whatsappUrl = useMemo(() => {
     const unitCity = selectedUnit?.city || selectedUnit?.name || 'Vitória da Conquista';
@@ -81,6 +90,13 @@ export function WhatsAppScheduleModal({
       lines.push('');
     }
 
+    if (!isFreeLabor && summary.laborCost > 0) {
+      lines.push(
+        `• Mão de obra (a partir da 3.ª revisão): ${formatBRL(summary.laborCost)}`
+      );
+      lines.push('');
+    }
+
     if (hasOptionals) {
       lines.push(
         includeOptionals
@@ -92,8 +108,8 @@ export function WhatsAppScheduleModal({
     lines.push(`*Valor total estimado:* ${formatBRL(estimatedTotal)}`);
     lines.push(
       isFreeLabor
-        ? '_Mão de obra gratuita (1ª e 2ª revisão conforme manual). Atendimento por ordem de chegada._'
-        : '_Solicito confirmação de horário e mão de obra para agendamento prévio._'
+        ? '_Mão de obra gratuita: 1.ª e 2.ª revisão (conforme manual). Atendimento por ordem de chegada._'
+        : '_Mão de obra cobrada conforme tabela / manual. Solicito confirmação de horário para agendamento prévio._'
     );
 
     return buildWhatsAppHref(unitPhone, lines.join('\n'));
@@ -103,6 +119,7 @@ export function WhatsAppScheduleModal({
     revisionSubtitle,
     model.name,
     activeItems,
+    summary.laborCost,
     hasOptionals,
     includeOptionals,
     estimatedTotal,
@@ -111,23 +128,23 @@ export function WhatsAppScheduleModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 p-4 backdrop-blur-xs"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-neutral-200 bg-white shadow-2xl dark:border-neutral-800 dark:bg-neutral-900">
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card shadow-2xl">
         {/* Header */}
-        <div className="flex items-start justify-between gap-3 border-b border-neutral-100 px-5 py-4 dark:border-neutral-800">
+        <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
-            <p className="text-[11px] font-bold uppercase tracking-wider text-[#E4002B]">
+            <p className="text-[11px] font-bold uppercase tracking-wider text-brand-text">
               {dict.modalEyebrow}
             </p>
-            <h3 className="mt-0.5 font-display text-lg font-extrabold text-neutral-900 dark:text-white">
+            <h3 className="mt-0.5 font-display text-lg font-extrabold text-ink">
               Honda {model.name} · {revisionLabel}
             </h3>
             {revisionSubtitle && (
-              <p className="text-xs text-neutral-500 dark:text-neutral-400">
+              <p className="text-xs text-ink-muted">
                 {revisionSubtitle} ·{' '}
                 {isFreeLabor ? dict.modalSubtitleFree : dict.modalSubtitlePaid}
               </p>
@@ -137,7 +154,7 @@ export function WhatsAppScheduleModal({
             type="button"
             onClick={onClose}
             aria-label={dict.modalCloseAria}
-            className="rounded-lg p-1.5 text-neutral-500 transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+            className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-surface"
           >
             <X className="h-5 w-5" />
           </button>
@@ -146,7 +163,7 @@ export function WhatsAppScheduleModal({
         <div className="space-y-5 p-5">
           {/* Escolha da Unidade */}
           <div>
-            <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+            <p className="mb-2.5 text-xs font-bold uppercase tracking-wider text-ink">
               {dict.modalStep1}
             </p>
             <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
@@ -163,32 +180,32 @@ export function WhatsAppScheduleModal({
                     onClick={() => setSelectedUnitId(unit.id)}
                     className={`flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all ${
                       isSelected
-                        ? 'border-[#E4002B] bg-red-50/60 ring-1 ring-[#E4002B] dark:bg-red-950/20'
-                        : 'border-neutral-200 bg-white hover:border-neutral-300 dark:border-neutral-800 dark:bg-neutral-950 dark:hover:border-neutral-700'
+                        ? 'border-brand bg-brand-soft/60 ring-1 ring-brand'
+                        : 'border-border bg-card hover:border-ink-muted/40'
                     }`}
                   >
                     <div>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm font-bold text-neutral-900 dark:text-white">
+                        <span className="text-sm font-bold text-ink">
                           {unit.city || unit.name}
                         </span>
                         <span
                           className={`inline-flex h-5 w-5 items-center justify-center rounded-full border ${
                             isSelected
-                              ? 'border-[#E4002B] bg-[#E4002B] text-white'
-                              : 'border-neutral-300 dark:border-neutral-700'
+                              ? 'border-brand bg-brand text-on-brand'
+                              : 'border-border'
                           }`}
                         >
                           {isSelected && <Check className="h-3 w-3" />}
                         </span>
                       </div>
-                      <p className="mt-1 flex items-start gap-1 text-[11px] leading-snug text-neutral-600 dark:text-neutral-400">
-                        <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-[#E4002B]" />
+                      <p className="mt-1 flex items-start gap-1 text-[11px] leading-snug text-ink-muted">
+                        <MapPin className="mt-0.5 h-3 w-3 shrink-0 text-brand-text" />
                         <span>{fullAddress}</span>
                       </p>
                     </div>
-                    <p className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700 tabular-nums dark:text-emerald-400">
-                      <Phone className="h-3 w-3" />
+                    <p className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-ink-muted tabular-nums">
+                      <Phone className="h-3 w-3 text-whatsapp" />
                       WhatsApp: {unitWa}
                     </p>
                   </button>
@@ -198,19 +215,19 @@ export function WhatsAppScheduleModal({
           </div>
 
           {/* Resumo das Peças + Checkbox Opcionais */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/80 p-4 dark:border-neutral-800 dark:bg-neutral-950">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-xs font-bold uppercase tracking-wider text-neutral-700 dark:text-neutral-300">
+              <p className="text-xs font-bold uppercase tracking-wider text-ink">
                 {dict.modalStep2(activeItems.length)}
               </p>
 
               {hasOptionals && (
-                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-xs font-semibold text-neutral-800 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-200">
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1 text-xs font-semibold text-ink">
                   <input
                     type="checkbox"
                     checked={includeOptionals}
                     onChange={(e) => setIncludeOptionals(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded accent-[#E4002B]"
+                    className="h-3.5 w-3.5 rounded accent-brand"
                   />
                   {dict.modalIncludeOptionals}
                 </label>
@@ -218,7 +235,7 @@ export function WhatsAppScheduleModal({
             </div>
 
             {activeItems.length === 0 ? (
-              <p className="mt-3 text-xs text-neutral-500">{dict.modalNoParts}</p>
+              <p className="mt-3 text-xs text-ink-muted">{dict.modalNoParts}</p>
             ) : (
               <ul className="mt-3 max-h-40 space-y-1.5 overflow-y-auto pr-1 text-xs">
                 {activeItems.map(({ revisionPart, part, lineTotal }) => {
@@ -226,7 +243,7 @@ export function WhatsAppScheduleModal({
                   return (
                     <li
                       key={`${revisionPart.id}-${part.code}`}
-                      className="flex items-center justify-between gap-3 text-neutral-700 dark:text-neutral-300"
+                      className="flex items-center justify-between gap-3 text-ink-muted"
                     >
                       <span className="truncate">
                         {translatedDesc}
@@ -236,7 +253,7 @@ export function WhatsAppScheduleModal({
                           ? ` ${dict.optionalTag}`
                           : ''}
                       </span>
-                      <span className="shrink-0 font-semibold text-neutral-900 tabular-nums dark:text-white">
+                      <span className="shrink-0 font-semibold text-ink tabular-nums">
                         {formatBRL(lineTotal)}
                       </span>
                     </li>
@@ -245,16 +262,24 @@ export function WhatsAppScheduleModal({
               </ul>
             )}
 
-            <div className="mt-3 flex items-center justify-between border-t border-neutral-200 pt-3 dark:border-neutral-800">
+            <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
               <div>
-                <p className="text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+                {!isFreeLabor && summary.laborCost > 0 && (
+                  <p className="mb-1 text-xs font-semibold text-ink tabular-nums">
+                    {laborTexts.laborItemLabel}:{' '}
+                    <span className="font-bold text-ink">
+                      {formatBRL(summary.laborCost)}
+                    </span>
+                  </p>
+                )}
+                <p className="text-[11px] font-bold uppercase tracking-wider text-ink-muted">
                   {dict.modalEstimatedTotal}
                 </p>
-                <p className="text-[11px] text-neutral-500">
-                  {isFreeLabor ? dict.modalFreeLaborNote : dict.modalPaidLaborNote}
+                <p className="text-[11px] text-ink-muted">
+                  {laborBadgeText}
                 </p>
               </div>
-              <p className="font-display text-2xl font-extrabold text-[#E4002B] tabular-nums">
+              <p className="font-display text-2xl font-extrabold text-brand-text tabular-nums">
                 {formatBRL(estimatedTotal)}
               </p>
             </div>
@@ -265,7 +290,7 @@ export function WhatsAppScheduleModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-neutral-200 px-4 py-2.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+              className="rounded-xl border border-border px-4 py-2.5 text-xs font-semibold text-ink hover:bg-surface"
             >
               {dict.modalCancel}
             </button>
@@ -277,7 +302,7 @@ export function WhatsAppScheduleModal({
                 onTrackLead?.(selectedUnit?.city || selectedUnit?.name || 'Rodaleve');
                 setTimeout(onClose, 150);
               }}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#25D366] px-5 py-2.5 text-sm font-bold text-white shadow-sm transition-colors hover:bg-[#1FB858]"
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-whatsapp px-5 py-2.5 text-sm font-bold text-on-whatsapp shadow-sm transition-colors hover:bg-whatsapp-hover"
             >
               <WhatsAppIcon className="h-4 w-4" />
               {dict.modalSendWhatsApp(selectedUnit?.city || 'Rodaleve')}

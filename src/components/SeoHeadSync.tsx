@@ -2,9 +2,20 @@ import { useEffect } from 'react';
 import { FaqItem, SeoSettings } from '../types';
 
 function resolveAbsoluteMediaUrl(rawUrl: string | undefined, canonicalBase?: string): string {
-  if (!rawUrl) return '';
+  const fallbackOrigin = 'https://oficinarodaleve.ai.studio';
+  const origin =
+    canonicalBase && /^https?:\/\//i.test(canonicalBase.trim())
+      ? new URL(canonicalBase.trim()).origin
+      : typeof window !== 'undefined' &&
+          window.location?.origin &&
+          !/^https?:\/\/(?:localhost|127\.0\.0\.1)/i.test(window.location.origin)
+        ? window.location.origin
+        : fallbackOrigin;
+
+  if (!rawUrl || !rawUrl.trim()) {
+    return `${origin}/og-image.jpg`;
+  }
   const trimmed = rawUrl.trim();
-  if (!trimmed) return '';
   if (
     trimmed.startsWith('http://') ||
     trimmed.startsWith('https://') ||
@@ -13,11 +24,10 @@ function resolveAbsoluteMediaUrl(rawUrl: string | undefined, canonicalBase?: str
     return trimmed;
   }
   const normalizedPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
-  const origin =
-    typeof window !== 'undefined' && window.location?.origin
-      ? window.location.origin
-      : (canonicalBase || '').replace(/\/+$/, '');
-  return origin ? `${origin}${normalizedPath}` : normalizedPath;
+  if (normalizedPath.includes('rodaleve_og_banner')) {
+    return `${origin}/og-image.jpg`;
+  }
+  return `${origin}${normalizedPath}`;
 }
 
 export function buildJsonLd(seo: SeoSettings, faqs: FaqItem[] = []) {
@@ -119,16 +129,22 @@ export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?
       upsertMeta('name', 'author', seo.author_brand || seo.company_name || 'Rodaleve Honda');
       upsertMeta('name', 'robots', seo.robots_policy || 'index, follow');
 
+      const canonicalUrl =
+        seo.canonical_url?.trim() || `${window.location.origin}${window.location.pathname}`;
       const ogTitle = seo.og_same_title ? seo.meta_title : seo.og_title || seo.meta_title;
       const ogDesc = seo.og_same_description ? seo.meta_description : seo.og_description || seo.meta_description;
       const resolvedOgImage = resolveAbsoluteMediaUrl(seo.og_image, seo.canonical_url);
 
       upsertMeta('property', 'og:type', seo.og_type || 'website');
+      upsertMeta('property', 'og:url', canonicalUrl);
       upsertMeta('property', 'og:title', ogTitle || '');
       upsertMeta('property', 'og:description', ogDesc || '');
       upsertMeta('property', 'og:site_name', seo.company_name || seo.short_name || 'Rodaleve Honda');
       if (resolvedOgImage) {
         upsertMeta('property', 'og:image', resolvedOgImage);
+        upsertMeta('property', 'og:image:secure_url', resolvedOgImage);
+        upsertMeta('property', 'og:image:width', '1200');
+        upsertMeta('property', 'og:image:height', '670');
       } else {
         removeMeta('property', 'og:image');
       }
@@ -143,7 +159,6 @@ export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?
       }
 
       // Canonical
-      const canonicalUrl = seo.canonical_url || `${window.location.origin}${window.location.pathname}`;
       let canonicalLink = document.head.querySelector('link[rel="canonical"]') as HTMLLinkElement | null;
       if (!canonicalLink) {
         canonicalLink = document.createElement('link');

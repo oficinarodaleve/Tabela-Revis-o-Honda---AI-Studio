@@ -65,6 +65,12 @@ function buildDirectMapsUrl(unit: UnitLocation): string {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }
 
+function resolveCssToken(name: string, fallback: string): string {
+  if (typeof window === 'undefined' || !document?.documentElement) return fallback;
+  const val = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return val || fallback;
+}
+
 function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteOverlayProps) {
   const map = useMap();
   const routesLib = useMapsLibrary('routes');
@@ -119,7 +125,7 @@ function RouteOverlay({ origin, destination, travelMode, onRouteResult }: RouteO
         const newPolylines: google.maps.Polyline[] = primaryRoute.createPolylines();
         newPolylines.forEach((polyline) => {
           polyline.setOptions({
-            strokeColor: '#E4002B',
+            strokeColor: resolveCssToken('--brand', '#C8102E'),
             strokeWeight: 5,
             strokeOpacity: 0.9,
           });
@@ -502,24 +508,29 @@ function UnitMarker({
 }) {
   const [marker, setMarker] = useState<google.maps.marker.AdvancedMarkerElement | null>(null);
 
+  const pinBackground = isSelected
+    ? resolveCssToken('--brand', '#C8102E')
+    : resolveCssToken('--ink', '#111827');
+  const pinBorderAndGlyph = resolveCssToken('--on-brand', '#FFFFFF');
+
   return (
     <>
       <SafePinMarker
         position={position}
         title={unit.name}
-        background={isSelected ? '#E4002B' : '#18181B'}
-        borderColor="#FFFFFF"
-        glyphColor="#FFFFFF"
+        background={pinBackground}
+        borderColor={pinBorderAndGlyph}
+        glyphColor={pinBorderAndGlyph}
         scale={isSelected ? 1.25 : 1.05}
         onClick={onSelect}
         onMarkerChange={setMarker}
       />
       {isInfoOpen && marker && (
         <SafeInfoWindow anchor={marker} onCloseClick={onCloseInfo}>
-          <div className="min-w-[220px] p-1 text-neutral-900">
-            <p className="text-sm font-bold text-neutral-900">{unit.name}</p>
-            <p className="mt-1 text-xs text-neutral-600">{formatUnitAddress(unit)}</p>
-            <div className="mt-2 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2">
+          <div className="min-w-[220px] p-1 text-ink">
+            <p className="text-sm font-bold text-ink">{unit.name}</p>
+            <p className="mt-1 text-xs text-ink-muted">{formatUnitAddress(unit)}</p>
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-border pt-2">
               <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
                 <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />
                 {Number(unit.rating ?? 4.8).toFixed(1)}
@@ -528,7 +539,7 @@ function UnitMarker({
                 href={unit.gmb_url || buildDirectMapsUrl(unit)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs font-semibold text-[#C80024] hover:underline"
+                className="text-xs font-semibold text-brand-text hover:underline"
               >
                 {openInMapsLabel}
               </a>
@@ -745,7 +756,7 @@ function OriginAutocompleteInput({
   return (
     <div ref={containerRef} className="relative">
       <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-600 dark:text-neutral-300" />
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
         <input
           type="text"
           value={value}
@@ -758,10 +769,10 @@ function OriginAutocompleteInput({
           placeholder={placeholder}
           aria-autocomplete="list"
           aria-expanded={isOpen}
-          className="w-full rounded-xl border border-neutral-200 bg-white py-2.5 pl-9 pr-9 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-[#D00027] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-neutral-400"
+          className="w-full rounded-xl border border-border bg-card py-2.5 pl-9 pr-9 text-sm text-ink placeholder:text-ink-muted focus:border-brand focus:outline-none"
         />
         {isLoading ? (
-          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-neutral-600 dark:text-neutral-300" />
+          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-ink-muted" />
         ) : value ? (
           <button
             type="button"
@@ -771,7 +782,7 @@ function OriginAutocompleteInput({
               onClear();
             }}
             aria-label={clearAddressLabel}
-            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-neutral-600 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-ink-muted hover:text-ink"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -781,7 +792,7 @@ function OriginAutocompleteInput({
       {isOpen && suggestions.length > 0 && (
         <ul
           role="listbox"
-          className="absolute left-0 right-0 top-full z-40 mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-neutral-200 bg-white py-1 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+          className="absolute left-0 right-0 top-full z-40 mt-1.5 max-h-64 overflow-y-auto rounded-xl border border-border bg-card py-1 shadow-xl"
         >
           {suggestions.map((item, idx) => (
             <li key={item.id} role="option" aria-selected={idx === activeIndex}>
@@ -792,20 +803,14 @@ function OriginAutocompleteInput({
                   void handleSelectItem(item);
                 }}
                 className={`flex w-full items-start gap-2.5 px-3 py-2 text-left transition-colors ${
-                  idx === activeIndex
-                    ? 'bg-neutral-100 dark:bg-neutral-800'
-                    : 'hover:bg-neutral-50 dark:hover:bg-neutral-800/70'
+                  idx === activeIndex ? 'bg-brand-soft' : 'hover:bg-surface'
                 }`}
               >
-                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#D00027]" />
+                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-text" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-xs font-semibold text-neutral-900 dark:text-white">
-                    {item.mainText}
-                  </p>
+                  <p className="truncate text-xs font-semibold text-ink">{item.mainText}</p>
                   {item.secondaryText && (
-                    <p className="truncate text-[11px] text-neutral-600 dark:text-neutral-300">
-                      {item.secondaryText}
-                    </p>
+                    <p className="truncate text-[11px] text-ink-muted">{item.secondaryText}</p>
                   )}
                 </div>
               </button>
@@ -1034,20 +1039,20 @@ export function UnitsMapSection({
           {/* Route Card */}
           <form
             onSubmit={handleTraceRoute}
-            className="rounded-2xl border border-neutral-200 bg-[#FAFAFA] p-5 dark:border-neutral-800 dark:bg-neutral-900"
+            className="rounded-2xl border border-border bg-surface p-5"
           >
             <div className="flex items-center justify-between gap-3">
-              <h3 className="text-sm font-bold text-neutral-900 dark:text-white">
+              <h3 className="text-sm font-bold text-ink">
                 {dict.unitsRouteTitle(activeUnit?.city || activeUnit?.name || '')}
               </h3>
-              <div className="inline-flex rounded-lg border border-neutral-200 bg-white p-0.5 dark:border-neutral-700 dark:bg-neutral-800">
+              <div className="inline-flex rounded-lg border border-border bg-card p-0.5">
                 <button
                   type="button"
                   onClick={() => setTravelMode('moto')}
                   className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     travelMode === 'moto'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                      ? 'bg-ink text-on-ink'
+                      : 'text-ink-muted hover:text-ink'
                   }`}
                 >
                   <Bike className="h-3.5 w-3.5" />
@@ -1058,8 +1063,8 @@ export function UnitsMapSection({
                   onClick={() => setTravelMode('carro')}
                   className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
                     travelMode === 'carro'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'text-neutral-600 hover:text-neutral-900 dark:text-neutral-300'
+                      ? 'bg-ink text-on-ink'
+                      : 'text-ink-muted hover:text-ink'
                   }`}
                 >
                   <Car className="h-3.5 w-3.5" />
@@ -1098,7 +1103,7 @@ export function UnitsMapSection({
                     setOriginInput(e.target.value);
                   }}
                   placeholder={dict.originPlaceholderFallback}
-                  className="w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5 text-sm text-neutral-900 placeholder:text-neutral-500 focus:border-[#D00027] focus:outline-none dark:border-neutral-700 dark:bg-neutral-950 dark:text-white dark:placeholder:text-neutral-400"
+                  className="w-full rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm text-ink placeholder:text-ink-muted focus:border-brand focus:outline-none"
                 />
               )}
 
@@ -1107,15 +1112,15 @@ export function UnitsMapSection({
                   type="button"
                   onClick={handleUseMyLocation}
                   disabled={locating}
-                  className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-100 disabled:opacity-60 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink transition-colors hover:bg-surface-neutral disabled:opacity-60"
                 >
-                  <Crosshair className="h-3.5 w-3.5 text-[#C80024] dark:text-[#ff4d6d]" />
+                  <Crosshair className="h-3.5 w-3.5 text-brand-text" />
                   {locating ? dict.locating : dict.useMyLocation}
                 </button>
 
                 <button
                   type="submit"
-                  className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-900 transition-colors hover:bg-neutral-300 dark:bg-neutral-700 dark:text-white dark:hover:bg-neutral-600"
+                  className="inline-flex flex-1 items-center justify-center gap-1.5 whitespace-nowrap rounded-xl bg-surface-neutral px-3.5 py-2 text-xs font-semibold text-ink transition-colors hover:bg-border"
                 >
                   <Navigation className="h-3.5 w-3.5" />
                   {dict.traceRouteBtn}
@@ -1124,7 +1129,7 @@ export function UnitsMapSection({
             </div>
 
             {routeSummary && (
-              <div className="mt-3 flex items-center justify-between rounded-xl border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-xs text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-200">
+              <div className="mt-3 flex items-center justify-between rounded-xl border border-border bg-card px-3.5 py-2.5 text-xs text-ink">
                 <span className="font-medium">{dict.routeCalculated(travelMode)}</span>
                 <span className="font-mono font-semibold tabular-nums">
                   {routeSummary.distanceKm} km · ~{routeSummary.durationMin} min
@@ -1133,7 +1138,7 @@ export function UnitsMapSection({
             )}
 
             {routeError && (
-              <p className="mt-2.5 text-xs font-medium text-[#C80024] dark:text-[#ff4d6d]">{routeError}</p>
+              <p className="mt-2.5 text-xs font-medium text-brand-text">{routeError}</p>
             )}
           </form>
 
@@ -1142,30 +1147,22 @@ export function UnitsMapSection({
             {visibleUnits.map((unit) => (
               <div
                 key={unit.id}
-                className="rounded-2xl border border-neutral-200 bg-white p-5 transition-shadow hover:shadow-sm dark:border-neutral-800 dark:bg-neutral-900"
+                className="rounded-2xl border border-border bg-card p-5 transition-shadow hover:shadow-sm"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <h4 className="text-base font-bold text-neutral-900 dark:text-white">
-                      {unit.name}
-                    </h4>
-                    <p className="mt-0.5 font-mono text-xs text-neutral-600 dark:text-neutral-300">
-                      CNPJ {unit.cnpj}
-                    </p>
+                    <h4 className="text-base font-bold text-ink">{unit.name}</h4>
+                    <p className="mt-0.5 font-mono text-xs text-ink-muted">CNPJ {unit.cnpj}</p>
                   </div>
-                  <span className="inline-flex items-center gap-1 text-sm font-bold text-neutral-900 tabular-nums dark:text-white">
-                    {Number(unit.rating ?? 4.8).toFixed(1)}
-                    <Star className="h-4 w-4 fill-amber-400 text-amber-400" />
-                  </span>
                 </div>
 
-                <div className="mt-3 space-y-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+                <div className="mt-3 space-y-1.5 text-sm text-ink-muted">
                   <p className="flex items-start gap-2">
-                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#D00027]" />
+                    <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-brand-text" />
                     <span>{formatUnitAddress(unit)}</span>
                   </p>
                   <p className="flex items-center gap-2">
-                    <Phone className="h-4 w-4 shrink-0 text-neutral-600 dark:text-neutral-300" />
+                    <Phone className="h-4 w-4 shrink-0 text-ink-muted" />
                     <a
                       href={`tel:${(unit.phone || '').replace(/\D/g, '')}`}
                       className="tabular-nums hover:underline"
@@ -1179,16 +1176,16 @@ export function UnitsMapSection({
                   <button
                     type="button"
                     onClick={() => handleFocusOnMap(unit.id)}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200 dark:hover:bg-neutral-700"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink transition-colors hover:bg-surface"
                   >
-                    <MapPin className="h-3.5 w-3.5 text-[#C80024] dark:text-[#ff4d6d]" />
+                    <MapPin className="h-3.5 w-3.5 text-brand-text" />
                     {dict.focusOnMap}
                   </button>
                   <a
                     href={unit.gmb_url || buildDirectMapsUrl(unit)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-neutral-800 dark:bg-white dark:text-neutral-900 dark:hover:bg-neutral-200"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-3 py-2 text-xs font-semibold text-on-ink transition-opacity hover:opacity-90"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                     {dict.openInMaps}
@@ -1200,7 +1197,7 @@ export function UnitsMapSection({
                     )}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-[#15803D] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#166534]"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-whatsapp px-3 py-2 text-xs font-bold text-on-whatsapp transition-colors hover:bg-whatsapp-hover"
                   >
                     <WhatsAppIcon className="h-3.5 w-3.5" />
                     WhatsApp
@@ -1212,18 +1209,18 @@ export function UnitsMapSection({
         </div>
 
         {/* Right Column: Interactive Google Map */}
-        <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-neutral-200 bg-neutral-100 dark:border-neutral-800 dark:bg-neutral-900 lg:col-span-7">
+        <div className="relative flex min-h-[420px] flex-col overflow-hidden rounded-2xl border border-border bg-surface-neutral lg:col-span-7">
           {mapMode === 'ready' ? (
             <>
               {/* Map/Satellite switcher */}
-              <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-neutral-200 bg-white/95 p-1 shadow-sm backdrop-blur dark:border-neutral-700 dark:bg-neutral-900/95">
+              <div className="absolute left-3 top-3 z-10 inline-flex rounded-xl border border-border bg-card/95 p-1 shadow-sm backdrop-blur">
                 <button
                   type="button"
                   onClick={() => setMapTypeId('roadmap')}
                   className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                     mapTypeId === 'roadmap'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                      ? 'bg-ink text-on-ink'
+                      : 'text-ink-muted hover:text-ink'
                   }`}
                 >
                   {dict.mapView}
@@ -1233,8 +1230,8 @@ export function UnitsMapSection({
                   onClick={() => setMapTypeId('satellite')}
                   className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                     mapTypeId === 'satellite'
-                      ? 'bg-neutral-900 text-white dark:bg-white dark:text-neutral-900'
-                      : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300'
+                      ? 'bg-ink text-on-ink'
+                      : 'text-ink-muted hover:text-ink'
                   }`}
                 >
                   {dict.satelliteView}
@@ -1265,9 +1262,9 @@ export function UnitsMapSection({
                       <SafePinMarker
                         position={originMarkerCoords}
                         title={dict.yourStartPoint}
-                        background="#16A34A"
-                        borderColor="#FFFFFF"
-                        glyphColor="#FFFFFF"
+                        background={resolveCssToken('--ink-muted', '#6B7280')}
+                        borderColor={resolveCssToken('--on-brand', '#FFFFFF')}
+                        glyphColor={resolveCssToken('--on-brand', '#FFFFFF')}
                         scale={1.0}
                       />
                     )}
@@ -1302,15 +1299,15 @@ export function UnitsMapSection({
             </>
           ) : mapMode === 'loading' ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
-              <Loader2 className="h-8 w-8 animate-spin text-[#D00027]" />
-              <p className="mt-3 text-sm font-semibold text-neutral-800 dark:text-neutral-200">
+              <Loader2 className="h-8 w-8 animate-spin text-brand" />
+              <p className="mt-3 text-sm font-semibold text-ink">
                 Carregando mapa interativo...
               </p>
               <a
                 href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-ink transition-colors hover:bg-surface"
               >
                 <ExternalLink className="h-3.5 w-3.5" />
                 {dict.openCityInMaps(activeUnit.city)}
@@ -1318,18 +1315,16 @@ export function UnitsMapSection({
             </div>
           ) : mapMode === 'deferred' ? (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
-              <MapPin className="h-10 w-10 text-[#D00027]" />
-              <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
-                {activeUnit.name}
-              </h4>
-              <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-300">
+              <MapPin className="h-10 w-10 text-brand" />
+              <h4 className="mt-3 text-base font-bold text-ink">{activeUnit.name}</h4>
+              <p className="mt-1 max-w-sm text-sm text-ink-muted">
                 {formatUnitAddress(activeUnit)}
               </p>
               <div className="mt-4 flex flex-wrap items-center justify-center gap-2.5">
                 <button
                   type="button"
                   onClick={() => setShouldLoadMaps(true)}
-                  className="inline-flex items-center gap-2 rounded-xl bg-[#D00027] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#B80022]"
+                  className="inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-on-brand transition-colors hover:bg-brand-hover"
                 >
                   <MapPin className="h-4 w-4" />
                   Carregar mapa interativo
@@ -1338,7 +1333,7 @@ export function UnitsMapSection({
                   href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-xl border border-neutral-200 bg-white px-4 py-2.5 text-sm font-semibold text-neutral-800 transition-colors hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-800 dark:text-neutral-200"
+                  className="inline-flex items-center gap-2 rounded-xl border border-border bg-card px-4 py-2.5 text-sm font-semibold text-ink transition-colors hover:bg-surface"
                 >
                   <ExternalLink className="h-4 w-4" />
                   {dict.openCityInMaps(activeUnit.city)}
@@ -1347,18 +1342,16 @@ export function UnitsMapSection({
             </div>
           ) : (
             <div className="flex h-full min-h-[420px] flex-col items-center justify-center p-8 text-center">
-              <MapPin className="h-10 w-10 text-[#D00027]" />
-              <h4 className="mt-3 text-base font-bold text-neutral-900 dark:text-white">
-                {dict.directMapsTitle}
-              </h4>
-              <p className="mt-1 max-w-sm text-sm text-neutral-600 dark:text-neutral-300">
+              <MapPin className="h-10 w-10 text-brand" />
+              <h4 className="mt-3 text-base font-bold text-ink">{dict.directMapsTitle}</h4>
+              <p className="mt-1 max-w-sm text-sm text-ink-muted">
                 {dict.directMapsDesc(activeUnit.name, formatUnitAddress(activeUnit))}
               </p>
               <a
                 href={activeUnit.gmb_url || buildDirectMapsUrl(activeUnit)}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#D00027] px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[#B80022]"
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-brand px-5 py-2.5 text-sm font-semibold text-on-brand transition-colors hover:bg-brand-hover"
               >
                 <ExternalLink className="h-4 w-4" />
                 {dict.openCityInMaps(activeUnit.city)}
@@ -1374,7 +1367,7 @@ export function UnitsMapSection({
     <section
       id="unidades"
       ref={sectionRef}
-      className="border-t border-neutral-200 bg-white py-16 dark:border-neutral-800 dark:bg-neutral-950"
+      className="border-t border-border bg-card py-16"
     >
       <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
@@ -1382,27 +1375,27 @@ export function UnitsMapSection({
             {renderEyebrow ? (
               renderEyebrow()
             ) : (
-              <p className="text-xs font-bold uppercase tracking-widest text-[#C80024] dark:text-[#ff4d6d]">
+              <p className="text-xs font-bold uppercase tracking-widest text-brand-text">
                 Onde estamos
               </p>
             )}
             {renderTitle ? (
               renderTitle()
             ) : (
-              <h2 className="mt-1 text-2xl font-bold tracking-tight text-neutral-900 dark:text-white sm:text-3xl">
+              <h2 className="mt-1 text-2xl font-bold tracking-tight text-ink sm:text-3xl">
                 Unidades e Como Chegar
               </h2>
             )}
             {renderSubtitle ? (
               renderSubtitle()
             ) : (
-              <p className="mt-1.5 text-sm text-neutral-600 dark:text-neutral-300">
+              <p className="mt-1.5 text-sm text-ink-muted">
                 Localize nossas concessionárias autorizadas em Vitória da Conquista e Guanambi.
               </p>
             )}
           </div>
 
-          <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl bg-neutral-100 p-1 dark:bg-neutral-900">
+          <div className="inline-flex flex-wrap items-center gap-1.5 rounded-xl bg-surface p-1">
             {safeUnits.map((u) => {
               const shortCity = u.city || u.name;
               const active = selectedTab === u.id;
@@ -1417,8 +1410,8 @@ export function UnitsMapSection({
                   }}
                   className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
                     active
-                      ? 'bg-[#D00027] text-white shadow-sm'
-                      : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+                      ? 'bg-brand text-on-brand shadow-sm'
+                      : 'text-ink-muted hover:text-ink'
                   }`}
                 >
                   {shortCity}
@@ -1433,8 +1426,8 @@ export function UnitsMapSection({
               }}
               className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-semibold transition-colors ${
                 selectedTab === 'both'
-                  ? 'bg-[#D00027] text-white shadow-sm'
-                  : 'text-neutral-700 hover:text-neutral-900 dark:text-neutral-300 dark:hover:text-white'
+                  ? 'bg-brand text-on-brand shadow-sm'
+                  : 'text-ink-muted hover:text-ink'
               }`}
             >
               {dict.viewBothUnits}

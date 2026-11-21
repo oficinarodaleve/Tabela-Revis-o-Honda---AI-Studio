@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { and, asc, eq, max, sql } from 'drizzle-orm';
+import compression from 'compression';
 import express, { type Response } from 'express';
 import JSZip from 'jszip';
 import multer from 'multer';
@@ -97,13 +98,31 @@ const upload = multer({
   },
 });
 
+app.use(
+  compression({
+    threshold: 1024,
+  })
+);
 app.use(express.json({ limit: '25mb' }));
 app.use('/uploads', (_req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
   next();
 });
-app.use('/uploads', express.static(UPLOADS_DIR, { maxAge: '1d' }));
+app.use(
+  '/uploads',
+  express.static(UPLOADS_DIR, {
+    maxAge: '30d',
+    etag: true,
+  })
+);
+
+function parseOptionalLaborPrice(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return Number(parsed.toFixed(2));
+}
 
 function formatModelRow(row: typeof models.$inferSelect) {
   return {
@@ -113,6 +132,10 @@ function formatModelRow(row: typeof models.$inferSelect) {
     image_url: row.imageUrl || '',
     hidden: Boolean(row.hidden),
     sort_order: row.sortOrder,
+    labor_price:
+      row.laborPrice !== null && row.laborPrice !== undefined
+        ? Number(row.laborPrice)
+        : null,
   };
 }
 
@@ -221,73 +244,79 @@ app.get('/api/auth/me', requireAuth, (req: AuthRequest, res: Response) => {
   res.json({ user: req.adminUser });
 });
 
+async function buildPublicBootstrapPayload() {
+  const [
+    modelRows,
+    segmentRows,
+    revisionTabRows,
+    partRows,
+    revisionPartRows,
+    faqRows,
+    seo,
+    lastPriceSync,
+    mapsRow,
+    customRow,
+    trackingConfig,
+    visualBuilder,
+  ] = await Promise.all([
+    listVisibleModelsOrdered(),
+    listSegmentsOrdered(true),
+    listRevisionTabsOrdered(true),
+    listPartsOrdered(false),
+    listRevisionPartsOrdered(),
+    listFaqsOrdered(),
+    getSeoSettings(),
+    getLastPriceSync(),
+    getIntegrationRow('google_maps'),
+    getIntegrationRow('custom_integrations'),
+    getPublicTrackingConfig(),
+    getVisualBuilderConfig(),
+  ]);
+
+  const mapsCfg = mapsRow ? JSON.parse(mapsRow.configJson) : { custom_api_key: '' };
+  const envMapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
+  const resolvedMapsKey = (mapsCfg.custom_api_key || '').trim() || envMapsKey;
+
+  const allCustom = customRow
+    ? (JSON.parse(customRow.configJson) as Array<{
+        id: string;
+        name: string;
+        value: string;
+        active: boolean;
+      }>)
+    : [];
+  const publicIntegrations = allCustom.filter(
+    (item) =>
+      item.active &&
+      !item.name.toLowerCase().includes('webhook') &&
+      !item.name.toLowerCase().includes('secret')
+  );
+
+  return {
+    models: modelRows.map(formatModelRow),
+    segments: segmentRows.map(formatSegmentRow),
+    revision_tabs: revisionTabRows.map(formatRevisionTabRow),
+    parts: partRows.map(formatPartRow),
+    revision_parts: revisionPartRows.map(formatRevisionPartRow),
+    faqs: faqRows.map(formatFaqRow),
+    seo,
+    last_price_sync: lastPriceSync,
+    maps_config: {
+      active: mapsRow ? Boolean(mapsRow.active) : true,
+      api_key: resolvedMapsKey,
+    },
+    public_integrations: publicIntegrations,
+    tracking_config: trackingConfig,
+    visual_builder: visualBuilder,
+  };
+}
+
 // Public Bootstrap
 app.get('/api/public/bootstrap', async (_req, res) => {
   try {
-    const [
-      modelRows,
-      segmentRows,
-      revisionTabRows,
-      partRows,
-      revisionPartRows,
-      faqRows,
-      seo,
-      lastPriceSync,
-      mapsRow,
-      customRow,
-      trackingConfig,
-      visualBuilder,
-    ] = await Promise.all([
-      listVisibleModelsOrdered(),
-      listSegmentsOrdered(true),
-      listRevisionTabsOrdered(true),
-      listPartsOrdered(false),
-      listRevisionPartsOrdered(),
-      listFaqsOrdered(),
-      getSeoSettings(),
-      getLastPriceSync(),
-      getIntegrationRow('google_maps'),
-      getIntegrationRow('custom_integrations'),
-      getPublicTrackingConfig(),
-      getVisualBuilderConfig(),
-    ]);
-
-    const mapsCfg = mapsRow ? JSON.parse(mapsRow.configJson) : { custom_api_key: '' };
-    const envMapsKey = process.env.VITE_GOOGLE_MAPS_API_KEY || process.env.GOOGLE_MAPS_API_KEY || '';
-    const resolvedMapsKey = (mapsCfg.custom_api_key || '').trim() || envMapsKey;
-
-    const allCustom = customRow
-      ? (JSON.parse(customRow.configJson) as Array<{
-          id: string;
-          name: string;
-          value: string;
-          active: boolean;
-        }>)
-      : [];
-    const publicIntegrations = allCustom.filter(
-      (item) =>
-        item.active &&
-        !item.name.toLowerCase().includes('webhook') &&
-        !item.name.toLowerCase().includes('secret')
-    );
-
-    res.json({
-      models: modelRows.map(formatModelRow),
-      segments: segmentRows.map(formatSegmentRow),
-      revision_tabs: revisionTabRows.map(formatRevisionTabRow),
-      parts: partRows.map(formatPartRow),
-      revision_parts: revisionPartRows.map(formatRevisionPartRow),
-      faqs: faqRows.map(formatFaqRow),
-      seo,
-      last_price_sync: lastPriceSync,
-      maps_config: {
-        active: mapsRow ? Boolean(mapsRow.active) : true,
-        api_key: resolvedMapsKey,
-      },
-      public_integrations: publicIntegrations,
-      tracking_config: trackingConfig,
-      visual_builder: visualBuilder,
-    });
+    const payload = await buildPublicBootstrapPayload();
+    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    res.json(payload);
   } catch (err) {
     console.error('Error in /api/public/bootstrap:', err);
     res.status(500).json({ error: 'Falha ao carregar os dados públicos da tabela.' });
@@ -652,11 +681,12 @@ app.post('/api/admin/prices/sync', requireAuth, async (_req: AuthRequest, res: R
 
 // Aba 3: Modelos e Fotos
 app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Response) => {
-  const { name, segment_slug, image_url, hidden } = req.body as {
+  const { name, segment_slug, image_url, hidden, labor_price } = req.body as {
     name?: string;
     segment_slug?: string;
     image_url?: string;
     hidden?: boolean;
+    labor_price?: number | null;
   };
   if (!name?.trim()) {
     res.status(400).json({ error: 'Nome do modelo é obrigatório.' });
@@ -677,6 +707,7 @@ app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Respons
         imageUrl: image_url || '',
         hidden: hidden ? 1 : 0,
         sortOrder: Number(maxSort ?? 0) + 1,
+        laborPrice: parseOptionalLaborPrice(labor_price),
       })
       .returning();
 
@@ -689,11 +720,12 @@ app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Respons
 
 app.put('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
-  const { name, segment_slug, image_url, hidden } = req.body as {
+  const { name, segment_slug, image_url, hidden, labor_price } = req.body as {
     name: string;
     segment_slug: string;
     image_url: string;
     hidden: boolean;
+    labor_price?: number | null;
   };
   if (!name?.trim()) {
     res.status(400).json({ error: 'Nome do modelo é obrigatório.' });
@@ -702,14 +734,19 @@ app.put('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Resp
 
   try {
     await ensureDatabaseSeeded();
+    const updatePayload: Partial<typeof models.$inferInsert> = {
+      name: name.trim(),
+      segmentSlug: segment_slug,
+      imageUrl: image_url || '',
+      hidden: hidden ? 1 : 0,
+    };
+    if (labor_price !== undefined) {
+      updatePayload.laborPrice = parseOptionalLaborPrice(labor_price);
+    }
+
     const [updated] = await db
       .update(models)
-      .set({
-        name: name.trim(),
-        segmentSlug: segment_slug,
-        imageUrl: image_url || '',
-        hidden: hidden ? 1 : 0,
-      })
+      .set(updatePayload)
       .where(eq(models.id, id))
       .returning();
 
@@ -722,6 +759,71 @@ app.put('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Resp
   } catch (err) {
     console.error('Error updating model:', err);
     res.status(500).json({ error: 'Falha ao atualizar modelo.' });
+  }
+});
+
+app.put('/api/admin/models/:id/labor', requireAuth, async (req: AuthRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: 'ID de modelo inválido.' });
+    return;
+  }
+  const { labor_price } = req.body as { labor_price?: number | string | null };
+  const parsedLabor =
+    labor_price === null || labor_price === undefined || labor_price === ''
+      ? null
+      : Number(labor_price);
+  if (parsedLabor !== null && (!Number.isFinite(parsedLabor) || parsedLabor < 0)) {
+    res.status(400).json({ error: 'Informe um valor válido de mão de obra (>= 0).' });
+    return;
+  }
+
+  try {
+    await ensureDatabaseSeeded();
+    const [updated] = await db
+      .update(models)
+      .set({
+        laborPrice: parsedLabor !== null ? Number(parsedLabor.toFixed(2)) : null,
+      })
+      .where(eq(models.id, id))
+      .returning();
+
+    if (!updated) {
+      res.status(404).json({ error: 'Modelo não encontrado.' });
+      return;
+    }
+
+    res.json({ model: formatModelRow(updated) });
+  } catch (err) {
+    console.error('Error updating model labor price:', err);
+    res.status(500).json({ error: 'Falha ao salvar valor de mão de obra.' });
+  }
+});
+
+app.delete('/api/admin/models/:id/labor', requireAuth, async (req: AuthRequest, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id) || id <= 0) {
+    res.status(400).json({ error: 'ID de modelo inválido.' });
+    return;
+  }
+
+  try {
+    await ensureDatabaseSeeded();
+    const [updated] = await db
+      .update(models)
+      .set({ laborPrice: null })
+      .where(eq(models.id, id))
+      .returning();
+
+    if (!updated) {
+      res.status(404).json({ error: 'Modelo não encontrado.' });
+      return;
+    }
+
+    res.json({ model: formatModelRow(updated) });
+  } catch (err) {
+    console.error('Error clearing model labor price:', err);
+    res.status(500).json({ error: 'Falha ao remover valor de mão de obra.' });
   }
 });
 
@@ -1064,6 +1166,7 @@ app.post('/api/admin/backup/restore', requireAuth, async (req: AuthRequest, res:
             imageUrl: normalizeRestoredMediaUrl(m.image_url),
             hidden: m.hidden ? 1 : 0,
             sortOrder: Number(m.sort_order ?? 0),
+            laborPrice: parseOptionalLaborPrice(m.labor_price),
           }));
         if (modelRows.length > 0) {
           await tx.insert(models).values(modelRows);
@@ -1480,10 +1583,27 @@ Pacote completo exportado com toda a estrutura do site (frontend React + Vite + 
 
 // Visual Builder config persistence
 app.put('/api/admin/visual-builder', requireAuth, async (req: AuthRequest, res: Response) => {
-  const payload = req.body;
-  if (!payload || typeof payload !== 'object') {
+  const payload = req.body as Record<string, unknown>;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
     res.status(400).json({ error: 'Configuração do editor visual inválida.' });
     return;
+  }
+  if (payload.htmlOverrides !== undefined) {
+    if (
+      !payload.htmlOverrides ||
+      typeof payload.htmlOverrides !== 'object' ||
+      Array.isArray(payload.htmlOverrides)
+    ) {
+      res.status(400).json({ error: 'Estrutura de htmlOverrides inválida.' });
+      return;
+    }
+    const sanitizedOverrides: Record<string, string> = {};
+    for (const [k, v] of Object.entries(payload.htmlOverrides as Record<string, unknown>)) {
+      if (typeof k === 'string' && typeof v === 'string' && v.trim().length > 0) {
+        sanitizedOverrides[k] = v;
+      }
+    }
+    payload.htmlOverrides = sanitizedOverrides;
   }
   try {
     await upsertSettingValue('visual_builder', JSON.stringify(payload));
@@ -1814,6 +1934,90 @@ app.post('/api/upload', requireAuth, (req: AuthRequest, res: Response) => {
   });
 });
 
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function upsertHtmlMeta(
+  html: string,
+  attr: 'name' | 'property',
+  key: string,
+  content: string
+): string {
+  const safeVal = escapeHtmlAttr(content);
+  const tag = `<meta ${attr}="${key}" content="${safeVal}" />`;
+  const regex = new RegExp(`<meta\\s+[^>]*${attr}=["']${key}["'][^>]*>`, 'i');
+  if (regex.test(html)) {
+    return html.replace(regex, tag);
+  }
+  return html.replace(/<\/head>/i, `    ${tag}\n  </head>`);
+}
+
+function resolvePublicOrigin(canonicalUrl: string | undefined, hostHeader: string | undefined): string {
+  if (canonicalUrl) {
+    try {
+      const parsed = new URL(canonicalUrl.trim());
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        return parsed.origin;
+      }
+    } catch {
+      // Fallback below
+    }
+  }
+  if (hostHeader && !/^localhost(?::|$)|^127\.0\.0\.1(?::|$)/i.test(hostHeader)) {
+    return `https://${hostHeader}`;
+  }
+  return 'https://oficinarodaleve.ai.studio';
+}
+
+function resolvePublicOgImageUrl(
+  rawOgImage: string | undefined,
+  publicOrigin: string,
+  distDir: string
+): { url: string; mime: string } {
+  const defaultUrl = `${publicOrigin}/og-image.jpg`;
+  const raw = (rawOgImage || '').trim();
+  if (!raw || raw.startsWith('data:')) {
+    return { url: defaultUrl, mime: 'image/jpeg' };
+  }
+  if (raw.startsWith('https://') || raw.startsWith('http://')) {
+    const ext = raw.split('?')[0].split('.').pop()?.toLowerCase() || 'jpg';
+    const mime =
+      ext === 'png'
+        ? 'image/png'
+        : ext === 'webp'
+          ? 'image/webp'
+          : 'image/jpeg';
+    return { url: raw, mime };
+  }
+  const normalized = raw.startsWith('/') ? raw : `/${raw}`;
+  if (normalized.startsWith('/uploads/')) {
+    const filename = path.basename(normalized);
+    if (!filename || !fs.existsSync(path.join(UPLOADS_DIR, filename))) {
+      return { url: defaultUrl, mime: 'image/jpeg' };
+    }
+    const ext = path.extname(filename).toLowerCase();
+    const mime =
+      ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    return { url: `${publicOrigin}/uploads/${filename}`, mime };
+  }
+  if (normalized.includes('rodaleve_og_banner')) {
+    return { url: defaultUrl, mime: 'image/jpeg' };
+  }
+  const diskCandidate = path.join(distDir, normalized.replace(/^\/+/, ''));
+  if (fs.existsSync(diskCandidate)) {
+    const ext = path.extname(diskCandidate).toLowerCase();
+    const mime =
+      ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+    return { url: `${publicOrigin}${normalized}`, mime };
+  }
+  return { url: defaultUrl, mime: 'image/jpeg' };
+}
+
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');
@@ -1824,30 +2028,96 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
-    app.use(express.static(distDir, { index: false }));
+    app.use(
+      '/assets',
+      express.static(path.join(distDir, 'assets'), {
+        maxAge: '365d',
+        immutable: true,
+      })
+    );
+    app.use(
+      '/src/assets',
+      express.static(path.join(distDir, 'src/assets'), {
+        maxAge: '30d',
+      })
+    );
+    app.use(
+      express.static(distDir, {
+        index: false,
+        maxAge: '30d',
+        setHeaders: (res, filePath) => {
+          if (filePath.endsWith('.html')) {
+            res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+          }
+        },
+      })
+    );
     app.get('*', async (req, res) => {
       const indexPath = path.join(distDir, 'index.html');
       try {
         let html = fs.readFileSync(indexPath, 'utf8');
         if (!req.path.startsWith('/gestor')) {
-          const tracking = await getPublicTrackingConfig().catch(() => null);
+          const payload = await buildPublicBootstrapPayload().catch(() => null);
+          const seo = payload?.seo || INITIAL_SEO_SETTINGS;
+          const tracking = payload?.tracking_config || null;
+          const publicOrigin = resolvePublicOrigin(seo.canonical_url, req.get('host'));
+          const pageTitle = seo.meta_title || 'Rodaleve Honda – Tabela de Manutenção e Revisões';
+          const pageDesc =
+            seo.meta_description ||
+            'Consulte peças genuínas e valores estimados por modelo de cada revisão programada Honda na concessionária autorizada Rodaleve.';
+          const ogTitle = seo.og_same_title ? pageTitle : seo.og_title || pageTitle;
+          const ogDesc = seo.og_same_description ? pageDesc : seo.og_description || pageDesc;
+          const ogUrl = seo.canonical_url?.trim() || `${publicOrigin}/`;
+          const { url: ogImageUrl, mime: ogImageMime } = resolvePublicOgImageUrl(
+            seo.og_image,
+            publicOrigin,
+            distDir
+          );
+
+          html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtmlAttr(pageTitle)}</title>`);
+          html = upsertHtmlMeta(html, 'name', 'description', pageDesc);
+          html = upsertHtmlMeta(html, 'property', 'og:type', seo.og_type || 'website');
+          html = upsertHtmlMeta(
+            html,
+            'property',
+            'og:site_name',
+            seo.company_name || seo.short_name || 'Rodaleve Honda'
+          );
+          html = upsertHtmlMeta(html, 'property', 'og:url', ogUrl);
+          html = upsertHtmlMeta(html, 'property', 'og:title', ogTitle);
+          html = upsertHtmlMeta(html, 'property', 'og:description', ogDesc);
+          html = upsertHtmlMeta(html, 'property', 'og:image', ogImageUrl);
+          html = upsertHtmlMeta(html, 'property', 'og:image:secure_url', ogImageUrl);
+          html = upsertHtmlMeta(html, 'property', 'og:image:type', ogImageMime);
+          html = upsertHtmlMeta(html, 'property', 'og:image:width', '1200');
+          html = upsertHtmlMeta(html, 'property', 'og:image:height', '670');
+          html = upsertHtmlMeta(html, 'name', 'twitter:card', seo.twitter_card || 'summary_large_image');
+          html = upsertHtmlMeta(html, 'name', 'twitter:title', ogTitle);
+          html = upsertHtmlMeta(html, 'name', 'twitter:description', ogDesc);
+          html = upsertHtmlMeta(html, 'name', 'twitter:image', ogImageUrl);
+
           const gscCode = extractGoogleSiteVerificationCode(
             tracking?.google_search_console?.verification_code
           );
           if (gscCode) {
-            const metaTag = `<meta name="google-site-verification" content="${gscCode}" />`;
-            if (/<meta\s+[^>]*name=["']google-site-verification["'][^>]*>/i.test(html)) {
-              html = html.replace(
-                /<meta\s+[^>]*name=["']google-site-verification["'][^>]*>/i,
-                metaTag
-              );
-            } else {
-              html = html.replace(/<head([^>]*)>/i, `<head$1>\n    ${metaTag}`);
-            }
+            html = upsertHtmlMeta(html, 'name', 'google-site-verification', gscCode);
+          }
+
+          const fbVerify = (tracking?.meta_pixel?.domain_verification || '').trim();
+          if (fbVerify) {
+            html = upsertHtmlMeta(html, 'name', 'facebook-domain-verification', fbVerify);
+          }
+
+          if (payload) {
+            const safeBootstrapJson = JSON.stringify(payload).replace(/</g, '\\u003c');
+            const bootstrapScript = `<script id="__RODALEVE_BOOTSTRAP__" type="application/json">${safeBootstrapJson}</script>`;
+            html = html.replace('</head>', `    ${bootstrapScript}\n  </head>`);
           }
         }
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
         res.type('html').send(html);
       } catch {
+        res.setHeader('Cache-Control', 'no-cache, must-revalidate');
         res.sendFile(indexPath);
       }
     });

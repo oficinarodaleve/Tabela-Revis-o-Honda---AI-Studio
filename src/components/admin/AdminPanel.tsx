@@ -52,7 +52,9 @@ import { ErrorBoundary } from '../ErrorBoundary';
 import { AdminLogin } from './AdminLogin';
 import { TabCategoriesTabs } from './TabCategoriesTabs';
 import { TabFaqs } from './TabFaqs';
+import { TabHtmlEditor } from './TabHtmlEditor';
 import { TabIntegrations } from './TabIntegrations';
+import { TabLabor } from './TabLabor';
 import { TabModelsPhotos } from './TabModelsPhotos';
 import { TabPricesParts } from './TabPricesParts';
 import { TabRevisions } from './TabRevisions';
@@ -60,12 +62,14 @@ import { TabSeoIdentity } from './TabSeoIdentity';
 
 type GestorTab =
   | 'revisoes'
+  | 'mao_de_obra'
   | 'precos'
   | 'modelos'
   | 'faqs'
   | 'categorias'
   | 'seo'
-  | 'integracoes';
+  | 'integracoes'
+  | 'editor_html';
 
 interface AdminBootstrap {
   models: MotoModel[];
@@ -83,6 +87,7 @@ interface AdminPanelProps {
   onNavigate: (path: string) => void;
   onPublicDataChanged: () => Promise<void>;
   onOpenVisualEditor: () => void;
+  onOpenHtmlEditor?: () => void;
   onAuthChange?: (loggedIn: boolean) => void;
 }
 
@@ -92,12 +97,14 @@ const DEFAULT_GESTOR_SUBTITLE = 'Tabela de manutenção e revisões';
 
 const TABS: Array<{ id: GestorTab; label: string }> = [
   { id: 'revisoes', label: 'Revisões' },
+  { id: 'mao_de_obra', label: 'Mão de Obra' },
   { id: 'precos', label: 'Preços e Peças' },
   { id: 'modelos', label: 'Modelos e fotos' },
   { id: 'faqs', label: 'Perguntas frequentes' },
   { id: 'categorias', label: 'Categorias e abas' },
   { id: 'seo', label: 'SEO & Identidade' },
   { id: 'integracoes', label: 'Integrações & APIs' },
+  { id: 'editor_html', label: 'Editor HTML' },
 ];
 
 interface ActionTooltipProps {
@@ -187,7 +194,7 @@ function ActionWithTooltip({ id, text, children }: ActionTooltipProps) {
         id={id}
         role="tooltip"
         aria-hidden={!open}
-        className={`pointer-events-none absolute top-full z-50 mt-2 w-64 max-w-[calc(100vw-24px)] rounded-xl border border-neutral-800/90 bg-neutral-900 px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-neutral-100 shadow-lg transition-all duration-150 ease-out ${alignClass} ${
+        className={`pointer-events-none absolute top-full z-50 mt-2 w-64 max-w-[calc(100vw-24px)] rounded-xl border border-border bg-ink px-3 py-2 text-left text-[11px] font-normal leading-relaxed text-on-ink shadow-lg transition-all duration-150 ease-out ${alignClass} ${
           open ? 'translate-y-0 opacity-100' : '-translate-y-1 opacity-0'
         }`}
       >
@@ -201,11 +208,18 @@ export function AdminPanel({
   onNavigate,
   onPublicDataChanged,
   onOpenVisualEditor,
+  onOpenHtmlEditor,
   onAuthChange,
 }: AdminPanelProps) {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [checkingAuth, setCheckingAuth] = useState(true);
-  const [activeTab, setActiveTab] = useState<GestorTab>('revisoes');
+  const [activeTab, setActiveTab] = useState<GestorTab>(() => {
+    if (typeof window !== 'undefined') {
+      const tabParam = new URLSearchParams(window.location.search).get('tab');
+      if (tabParam === 'editor_html') return 'editor_html';
+    }
+    return 'revisoes';
+  });
   const [adminData, setAdminData] = useState<AdminBootstrap | null>(null);
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -286,21 +300,41 @@ export function AdminPanel({
         await auth.authStateReady();
         if (!auth.currentUser) {
           clearAdminToken();
+          try {
+            window.localStorage?.removeItem('rodaleve_admin_hint');
+          } catch {
+            // Ignore storage errors
+          }
           onAuthChange?.(false);
           return;
         }
         const res = await adminFetch('/api/auth/me');
         if (res.ok) {
           const json = await res.json();
+          try {
+            window.localStorage?.setItem('rodaleve_admin_hint', '1');
+          } catch {
+            // Ignore storage errors
+          }
           setUser(json.user);
           onAuthChange?.(true);
           await loadAdminBootstrap();
         } else {
           clearAdminToken();
+          try {
+            window.localStorage?.removeItem('rodaleve_admin_hint');
+          } catch {
+            // Ignore storage errors
+          }
           onAuthChange?.(false);
         }
       } catch {
         clearAdminToken();
+        try {
+          window.localStorage?.removeItem('rodaleve_admin_hint');
+        } catch {
+          // Ignore storage errors
+        }
         onAuthChange?.(false);
       } finally {
         setCheckingAuth(false);
@@ -596,6 +630,11 @@ export function AdminPanel({
     }
     await signOut(auth).catch(() => undefined);
     clearAdminToken();
+    try {
+      window.localStorage?.removeItem('rodaleve_admin_hint');
+    } catch {
+      // Ignore storage errors
+    }
     setUser(null);
     setAdminData(null);
     onAuthChange?.(false);
@@ -603,7 +642,7 @@ export function AdminPanel({
 
   if (checkingAuth) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm text-neutral-500">
+      <div className="flex min-h-screen items-center justify-center bg-surface text-sm text-ink-muted">
         Verificando acesso...
       </div>
     );
@@ -623,9 +662,9 @@ export function AdminPanel({
   }
 
   return (
-    <div className="min-h-screen bg-[#FAFAFA] text-neutral-900">
+    <div className="min-h-screen bg-surface text-ink">
       {/* Cabeçalho branco */}
-      <header className="border-b border-neutral-200 bg-white">
+      <header className="border-b border-border bg-card">
         <div className="mx-auto flex max-w-[1150px] flex-wrap items-center justify-between gap-4 px-4 py-3.5 sm:px-6">
           {/* Bloco esquerdo: Logo + Título + Subtítulo */}
           <div className="flex flex-wrap items-center gap-3.5">
@@ -641,8 +680,8 @@ export function AdminPanel({
                     className="h-auto max-h-[46px] w-auto max-w-[190px] object-contain sm:max-h-[50px]"
                   />
                 ) : (
-                  <div className="flex h-[46px] items-center rounded-xl border border-neutral-200 bg-neutral-50 px-3">
-                    <span className="font-display text-sm font-extrabold tracking-tight text-[#E4002B]">
+                  <div className="flex h-[46px] items-center rounded-xl border border-border bg-surface-neutral px-3">
+                    <span className="font-display text-sm font-extrabold tracking-tight text-brand-text">
                       RODALEVE
                     </span>
                   </div>
@@ -652,7 +691,7 @@ export function AdminPanel({
                   type="button"
                   onClick={openBrandingModal}
                   title="Trocar logo ou editar título do cabeçalho do Gestor"
-                  className="absolute inset-0 flex items-center justify-center gap-1 rounded-lg bg-neutral-900/75 px-2 text-[11px] font-bold text-white opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100"
+                  className="absolute inset-0 flex items-center justify-center gap-1 rounded-lg bg-ink/80 px-2 text-[11px] font-bold text-on-ink opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-visible:opacity-100"
                 >
                   <Pencil className="h-3 w-3" />
                   Editar
@@ -660,11 +699,11 @@ export function AdminPanel({
               </div>
 
               {/* Título e Subtítulo alinhados verticalmente ao centro */}
-              <div className="border-l border-neutral-200 pl-3.5">
-                <h1 className="font-display text-base font-bold leading-tight tracking-tight text-neutral-900 sm:text-lg">
+              <div className="border-l border-border pl-3.5">
+                <h1 className="font-display text-base font-bold leading-tight tracking-tight text-ink sm:text-lg">
                   {activeGestorTitle}
                 </h1>
-                <p className="text-xs font-normal text-neutral-500">
+                <p className="text-xs font-normal text-ink-muted">
                   {activeGestorSubtitle}
                 </p>
               </div>
@@ -672,22 +711,22 @@ export function AdminPanel({
 
             {/* Indicador discreto do estado do Auto-save / alterações pendentes */}
             {autoSaveStatus === 'error' && autoSaveErrorMsg ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-red-200 bg-red-50 px-2.5 py-0.5 text-[11px] font-semibold text-[#E4002B]">
+              <span className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand-soft px-2.5 py-0.5 text-[11px] font-semibold text-brand-text">
                 <AlertTriangle className="h-3 w-3" />
                 {autoSaveErrorMsg}
               </span>
             ) : !autoSaveEnabled && tabDirty ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-[11px] font-bold text-amber-800">
+              <span className="inline-flex items-center gap-1 rounded-full border border-brand/30 bg-brand-soft px-2.5 py-0.5 text-[11px] font-bold text-brand-text">
                 <AlertTriangle className="h-3 w-3" />
                 Alterações não salvas
               </span>
             ) : autoSaveEnabled && (autoSaveStatus === 'saving' || tabDirty) ? (
-              <span className="inline-flex items-center rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[11px] font-semibold text-neutral-600">
+              <span className="inline-flex items-center rounded-full border border-border bg-surface-neutral px-2.5 py-0.5 text-[11px] font-semibold text-ink-muted">
                 Salvando...
               </span>
             ) : autoSaveEnabled && lastAutoSavedAt ? (
-              <span className="hidden items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-700 sm:inline-flex">
-                <CheckCircle2 className="h-3 w-3" />
+              <span className="hidden items-center gap-1 rounded-full border border-border bg-surface-neutral px-2.5 py-0.5 text-[11px] font-semibold text-ink sm:inline-flex">
+                <CheckCircle2 className="h-3 w-3 text-ink" />
                 Salvo automaticamente às {lastAutoSavedAt}
               </span>
             ) : null}
@@ -705,13 +744,13 @@ export function AdminPanel({
                 onClick={handleToggleAutoSave}
                 className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3.5 py-1.5 text-xs font-bold transition-colors ${
                   autoSaveEnabled
-                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
-                    : 'border-neutral-200 bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                    ? 'border-brand/25 bg-brand-soft text-brand-text hover:opacity-90'
+                    : 'border-border bg-surface-neutral text-ink-muted hover:text-ink'
                 }`}
               >
                 <span
                   className={`h-2 w-2 rounded-full ${
-                    autoSaveEnabled ? 'bg-emerald-500' : 'bg-neutral-400'
+                    autoSaveEnabled ? 'bg-brand' : 'bg-ink-muted'
                   }`}
                 />
                 Auto-save: {autoSaveEnabled ? 'Ligado' : 'Desligado'}
@@ -727,9 +766,9 @@ export function AdminPanel({
                 type="button"
                 disabled={!adminData || exportingZip}
                 onClick={handleExportZip}
-                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-neutral-800 transition-colors hover:border-neutral-300 hover:bg-neutral-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-neutral disabled:opacity-50"
               >
-                <Download className="h-3.5 w-3.5 text-[#E4002B]" />
+                <Download className="h-3.5 w-3.5 text-brand-text" />
                 {exportingZip ? 'Exportando site...' : 'Exportar Site ZIP'}
               </button>
             </ActionWithTooltip>
@@ -743,9 +782,9 @@ export function AdminPanel({
                 type="button"
                 disabled={!adminData || exportingConfig}
                 onClick={handleExportConfigJson}
-                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-neutral-800 transition-colors hover:border-neutral-300 hover:bg-neutral-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-neutral disabled:opacity-50"
               >
-                <FileDown className="h-3.5 w-3.5 text-[#E4002B]" />
+                <FileDown className="h-3.5 w-3.5 text-brand-text" />
                 {exportingConfig ? 'Exportando...' : 'Exportar Configurações'}
               </button>
             </ActionWithTooltip>
@@ -766,9 +805,9 @@ export function AdminPanel({
                 type="button"
                 disabled={importingBackup}
                 onClick={() => importInputRef.current?.click()}
-                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-neutral-800 transition-colors hover:border-neutral-300 hover:bg-neutral-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-neutral disabled:opacity-50"
               >
-                <Upload className="h-3.5 w-3.5 text-neutral-600" />
+                <Upload className="h-3.5 w-3.5 text-ink-muted" />
                 {importingBackup ? 'Restaurando...' : 'Importar'}
               </button>
             </ActionWithTooltip>
@@ -776,7 +815,7 @@ export function AdminPanel({
             <button
               type="button"
               onClick={onOpenVisualEditor}
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-[#E4002B] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#C80024]"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-brand px-3.5 py-1.5 text-xs font-bold text-on-brand shadow-sm transition-colors hover:bg-brand-hover"
             >
               <Paintbrush className="h-3.5 w-3.5" />
               Editar Site Visualmente
@@ -786,7 +825,7 @@ export function AdminPanel({
               href="/"
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-neutral-200 bg-white px-3.5 py-1.5 text-xs font-semibold text-neutral-800 transition-colors hover:border-neutral-300 hover:bg-neutral-50"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-neutral"
             >
               <ExternalLink className="h-3.5 w-3.5" />
               Ver site
@@ -795,7 +834,7 @@ export function AdminPanel({
             <button
               type="button"
               onClick={handleLogout}
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-neutral-900 px-3.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-neutral-800"
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full bg-ink px-3.5 py-1.5 text-xs font-bold text-on-ink transition-opacity hover:opacity-90"
             >
               <LogOut className="h-3.5 w-3.5" />
               Sair
@@ -815,8 +854,8 @@ export function AdminPanel({
                   onClick={() => handleSelectTab(t.id)}
                   className={`whitespace-nowrap rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                     active
-                      ? 'bg-[#E4002B] text-white'
-                      : 'text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900'
+                      ? 'bg-brand text-on-brand'
+                      : 'text-ink-muted hover:bg-surface-neutral hover:text-ink'
                   }`}
                 >
                   {t.label}
@@ -831,18 +870,18 @@ export function AdminPanel({
       <main className="mx-auto max-w-[1150px] px-4 py-8 sm:px-6">
         {!adminData ? (
           bootstrapError ? (
-            <div className="mx-auto max-w-md rounded-2xl border border-red-200 bg-white p-6 text-center shadow-sm">
-              <p className="text-sm font-semibold text-[#E4002B]">{bootstrapError}</p>
+            <div className="mx-auto max-w-md rounded-2xl border border-brand/30 bg-card p-6 text-center shadow-sm">
+              <p className="text-sm font-semibold text-brand-text">{bootstrapError}</p>
               <button
                 type="button"
                 onClick={loadAdminBootstrap}
-                className="mt-4 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024]"
+                className="mt-4 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand hover:bg-brand-hover"
               >
                 Tentar novamente
               </button>
             </div>
           ) : (
-            <div className="py-12 text-center text-sm text-neutral-500">
+            <div className="py-12 text-center text-sm text-ink-muted">
               Carregando dados do gestor...
             </div>
           )
@@ -859,6 +898,18 @@ export function AdminPanel({
                   revisionTabs={adminData.revision_tabs}
                   parts={adminData.parts}
                   revisionParts={adminData.revision_parts}
+                  onSaved={handleSavedAndRefresh}
+                  onToast={showToast}
+                  autoSaveEnabled={autoSaveEnabled}
+                  onDirtyChange={setTabDirty}
+                  onAutoSaveStart={handleAutoSaveStart}
+                  onAutoSaveComplete={handleAutoSaveComplete}
+                  onAutoSaveError={handleAutoSaveError}
+                />
+              )}
+              {activeTab === 'mao_de_obra' && (
+                <TabLabor
+                  models={adminData.models}
                   onSaved={handleSavedAndRefresh}
                   onToast={showToast}
                   autoSaveEnabled={autoSaveEnabled}
@@ -944,6 +995,26 @@ export function AdminPanel({
                   onAutoSaveError={handleAutoSaveError}
                 />
               )}
+              {activeTab === 'editor_html' && (
+                <TabHtmlEditor
+                  models={adminData.models}
+                  faqs={adminData.faqs}
+                  onSaved={handleSavedAndRefresh}
+                  onToast={showToast}
+                  onOpenOnPageHtmlEditor={() => {
+                    if (onOpenHtmlEditor) {
+                      onOpenHtmlEditor();
+                    } else {
+                      onNavigate('/?html_editor=1');
+                    }
+                  }}
+                  autoSaveEnabled={autoSaveEnabled}
+                  onDirtyChange={setTabDirty}
+                  onAutoSaveStart={handleAutoSaveStart}
+                  onAutoSaveComplete={handleAutoSaveComplete}
+                  onAutoSaveError={handleAutoSaveError}
+                />
+              )}
             </React.Fragment>
           </ErrorBoundary>
         )}
@@ -952,37 +1023,37 @@ export function AdminPanel({
       {/* Modal para editar Logo, Título e Subtítulo do cabeçalho do Gestor */}
       {brandingModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 dark:bg-surface/80 p-4 backdrop-blur-xs"
           onClick={() => !savingBranding && setBrandingModalOpen(false)}
         >
           <div
-            className="w-full max-w-lg rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xl"
+            className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+            <div className="flex items-center justify-between border-b border-border/70 pb-3">
               <div>
-                <h3 className="font-display text-base font-bold text-neutral-900">
+                <h3 className="font-display text-base font-bold text-ink">
                   Identificação do Cabeçalho do Gestor
                 </h3>
-                <p className="text-xs text-neutral-500">
+                <p className="text-xs text-ink-muted">
                   Troque a logo (PNG, SVG, WEBP ou JPG) ou ajuste o título e subtítulo do painel.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setBrandingModalOpen(false)}
-                className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                className="rounded-lg p-1 text-ink-muted hover:bg-surface-neutral hover:text-ink"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
             {/* Pré-visualização fiel */}
-            <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3.5">
-              <p className="mb-2 text-[11px] font-semibold text-neutral-500">
+            <div className="mt-4 rounded-xl border border-border bg-surface p-3.5">
+              <p className="mb-2 text-[11px] font-semibold text-ink-muted">
                 Pré-visualização no topo do Gestor
               </p>
-              <div className="flex items-center gap-3.5 rounded-xl border border-neutral-200 bg-white px-4 py-2.5">
+              <div className="flex items-center gap-3.5 rounded-xl border border-border bg-card px-4 py-2.5">
                 {brandingLogoUrl ? (
                   <img
                     src={brandingLogoUrl}
@@ -991,13 +1062,13 @@ export function AdminPanel({
                     className="h-auto max-h-[48px] w-auto max-w-[180px] object-contain"
                   />
                 ) : (
-                  <span className="font-display text-sm font-extrabold text-[#E4002B]">RODALEVE</span>
+                  <span className="font-display text-sm font-extrabold text-brand-text">RODALEVE</span>
                 )}
-                <div className="border-l border-neutral-200 pl-3.5">
-                  <p className="font-display text-base font-bold leading-tight text-neutral-900">
+                <div className="border-l border-border pl-3.5">
+                  <p className="font-display text-base font-bold leading-tight text-ink">
                     {brandingTitle || DEFAULT_GESTOR_TITLE}
                   </p>
-                  <p className="text-xs text-neutral-500">
+                  <p className="text-xs text-ink-muted">
                     {brandingSubtitle || DEFAULT_GESTOR_SUBTITLE}
                   </p>
                 </div>
@@ -1007,7 +1078,7 @@ export function AdminPanel({
             {/* Upload ou URL da logo */}
             <div className="mt-4 space-y-3">
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Imagem da Logo (URL ou upload do computador)
                 </label>
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
@@ -1016,7 +1087,7 @@ export function AdminPanel({
                     value={brandingLogoUrl}
                     onChange={(e) => setBrandingLogoUrl(e.target.value)}
                     placeholder="Cole a URL da imagem ou envie abaixo..."
-                    className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                    className="min-w-[200px] flex-1 rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                   <input
                     ref={brandingFileInputRef}
@@ -1033,20 +1104,20 @@ export function AdminPanel({
                     type="button"
                     disabled={uploadingBrandingLogo}
                     onClick={() => brandingFileInputRef.current?.click()}
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50 disabled:opacity-50"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
                   >
-                    <Upload className="h-3.5 w-3.5 text-[#E4002B]" />
+                    <Upload className="h-3.5 w-3.5 text-brand-text" />
                     {uploadingBrandingLogo ? 'Enviando...' : 'Enviar arquivo'}
                   </button>
                 </div>
-                <p className="mt-1 text-[11px] text-neutral-400">
+                <p className="mt-1 text-[11px] text-ink-muted">
                   Formatos aceitos: PNG, SVG, WEBP ou JPG (preferencialmente com fundo transparente).
                 </p>
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
+                  <label className="block text-xs font-semibold text-ink">
                     Título principal
                   </label>
                   <input
@@ -1054,11 +1125,11 @@ export function AdminPanel({
                     value={brandingTitle}
                     onChange={(e) => setBrandingTitle(e.target.value)}
                     placeholder="Gestor Rodaleve"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
+                  <label className="block text-xs font-semibold text-ink">
                     Subtítulo
                   </label>
                   <input
@@ -1066,13 +1137,13 @@ export function AdminPanel({
                     value={brandingSubtitle}
                     onChange={(e) => setBrandingSubtitle(e.target.value)}
                     placeholder="Tabela de manutenção e revisões"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
               </div>
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-4">
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-4">
               <button
                 type="button"
                 disabled={savingBranding}
@@ -1086,7 +1157,7 @@ export function AdminPanel({
                     subtitle: DEFAULT_GESTOR_SUBTITLE,
                   });
                 }}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 Restaurar padrão
@@ -1097,7 +1168,7 @@ export function AdminPanel({
                   type="button"
                   disabled={savingBranding}
                   onClick={() => setBrandingModalOpen(false)}
-                  className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+                  className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-ink hover:bg-surface-neutral"
                 >
                   Cancelar
                 </button>
@@ -1105,7 +1176,7 @@ export function AdminPanel({
                   type="button"
                   disabled={savingBranding || uploadingBrandingLogo}
                   onClick={() => void handleSaveBranding()}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024] disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand hover:bg-brand-hover disabled:opacity-60"
                 >
                   <Save className="h-3.5 w-3.5" />
                   {savingBranding ? 'Salvando...' : 'Salvar'}
@@ -1118,47 +1189,47 @@ export function AdminPanel({
 
       {/* Modal de confirmação antes de importar backup */}
       {pendingImport && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-lg rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 dark:bg-surface/80 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-text">
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <div className="min-w-0 flex-1">
-                <h3 className="font-display text-base font-bold text-neutral-900">
+                <h3 className="font-display text-base font-bold text-ink">
                   Confirmar restauração de configurações
                 </h3>
-                <p className="mt-1 text-xs leading-relaxed text-neutral-600">
+                <p className="mt-1 text-xs leading-relaxed text-ink-muted">
                   As configurações atuais do Gestor serão substituídas pelos dados do arquivo selecionado. Recomendamos baixar um backup rápido antes caso queira preservar a versão atual.
                 </p>
               </div>
             </div>
 
-            <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-200 pb-2">
-                <span className="truncate font-bold text-neutral-900">
+            <div className="mt-4 rounded-xl border border-border bg-surface p-3.5 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-2">
+                <span className="truncate font-bold text-ink">
                   {pendingImport.summary.fileName}
                 </span>
-                <span className="font-mono text-[11px] text-neutral-500">
+                <span className="font-mono text-[11px] text-ink-muted">
                   v{pendingImport.summary.backupVersion} · {pendingImport.summary.format.toUpperCase()}
                 </span>
               </div>
               {pendingImport.summary.exportedAt && (
-                <p className="mt-2 text-[11px] text-neutral-500">
+                <p className="mt-2 text-[11px] text-ink-muted">
                   Exportado em:{' '}
-                  <span className="font-medium text-neutral-700 tabular-nums">
+                  <span className="font-medium text-ink tabular-nums">
                     {new Date(pendingImport.summary.exportedAt).toLocaleString('pt-BR')}
                   </span>
                 </p>
               )}
               <div className="mt-2.5">
-                <p className="text-[11px] font-semibold text-neutral-600">
+                <p className="text-[11px] font-semibold text-ink-muted">
                   Seções identificadas para restauração:
                 </p>
                 <ul className="mt-1.5 grid grid-cols-1 gap-1 sm:grid-cols-2">
                   {pendingImport.summary.sections.map((sec) => (
-                    <li key={sec} className="flex items-center gap-1.5 text-[11px] text-neutral-800">
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+                    <li key={sec} className="flex items-center gap-1.5 text-[11px] text-ink">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-brand-text" />
                       <span>{sec}</span>
                     </li>
                   ))}
@@ -1167,19 +1238,19 @@ export function AdminPanel({
             </div>
 
             {importError && (
-              <div className="mt-3 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-medium text-[#E4002B]">
+              <div className="mt-3 rounded-xl border border-brand/30 bg-brand-soft px-3 py-2 text-xs font-medium text-brand-text">
                 {importError}
               </div>
             )}
 
-            <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-4">
+            <div className="mt-5 flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-4">
               <button
                 type="button"
                 disabled={creatingPreImportBackup || importingBackup || !adminData}
                 onClick={handleQuickBackupBeforeImport}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50 disabled:opacity-50"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-3 py-2 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
               >
-                <Download className="h-3.5 w-3.5 text-[#E4002B]" />
+                <Download className="h-3.5 w-3.5 text-brand-text" />
                 {creatingPreImportBackup ? 'Gerando backup...' : 'Baixar backup rápido antes'}
               </button>
 
@@ -1191,7 +1262,7 @@ export function AdminPanel({
                     setPendingImport(null);
                     setImportError(null);
                   }}
-                  className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-ink-muted hover:bg-surface-neutral hover:text-ink disabled:opacity-50"
                 >
                   Cancelar
                 </button>
@@ -1199,7 +1270,7 @@ export function AdminPanel({
                   type="button"
                   disabled={importingBackup}
                   onClick={handleConfirmImport}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024] disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand hover:bg-brand-hover disabled:opacity-60"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {importingBackup ? 'Restaurando...' : 'Confirmar e Restaurar'}
@@ -1212,17 +1283,17 @@ export function AdminPanel({
 
       {/* Modal de confirmação de alterações não salvas ao trocar de aba com auto-save desligado */}
       {pendingTabSwitch && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-6 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 dark:bg-surface/80 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-2xl">
             <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-amber-700">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand-soft text-brand-text">
                 <AlertTriangle className="h-5 w-5" />
               </div>
               <div>
-                <h3 className="font-display text-base font-bold text-neutral-900">
+                <h3 className="font-display text-base font-bold text-ink">
                   Alterações não salvas
                 </h3>
-                <p className="mt-1 text-xs leading-relaxed text-neutral-600">
+                <p className="mt-1 text-xs leading-relaxed text-ink-muted">
                   Você tem modificações pendentes nesta aba e o salvamento automático está desligado. Se trocar de aba agora, as alterações não salvas serão descartadas.
                 </p>
               </div>
@@ -1232,7 +1303,7 @@ export function AdminPanel({
               <button
                 type="button"
                 onClick={() => setPendingTabSwitch(null)}
-                className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-bold text-neutral-800 hover:bg-neutral-50"
+                className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-bold text-ink hover:bg-surface-neutral"
               >
                 Continuar editando
               </button>
@@ -1244,7 +1315,7 @@ export function AdminPanel({
                   setTabDirty(false);
                   setActiveTab(target);
                 }}
-                className="rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024]"
+                className="rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand hover:bg-brand-hover"
               >
                 Descartar e trocar de aba
               </button>
@@ -1258,14 +1329,14 @@ export function AdminPanel({
         <div
           className={`fixed bottom-5 right-5 z-50 flex items-center gap-2.5 rounded-xl border px-4 py-3 text-xs font-semibold shadow-lg ${
             toast.type === 'success'
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
-              : 'border-red-200 bg-red-50 text-[#E4002B]'
+              ? 'border-border bg-card text-ink'
+              : 'border-brand/30 bg-brand-soft text-brand-text'
           }`}
         >
           {toast.type === 'success' ? (
-            <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+            <CheckCircle2 className="h-4 w-4 text-ink" />
           ) : (
-            <XCircle className="h-4 w-4 text-[#E4002B]" />
+            <XCircle className="h-4 w-4 text-brand-text" />
           )}
           <span>{toast.msg}</span>
         </div>

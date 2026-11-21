@@ -51,12 +51,12 @@ export function VisualEditorToolbar({
   onSaveAndPublish,
 }: VisualEditorToolbarProps) {
   return (
-    <div className="fixed inset-x-0 top-0 z-50 border-b border-neutral-800 bg-neutral-950/95 text-white shadow-xl backdrop-blur">
+    <div className="fixed inset-x-0 top-0 z-50 border-b border-border/30 bg-[#111827]/95 text-white shadow-xl backdrop-blur">
       <div className="mx-auto flex max-w-[1380px] flex-wrap items-center justify-between gap-2 px-3 py-2 sm:px-5">
         {/* Left: Status + Auto-save badge + Undo/Redo + Viewport */}
         <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex items-center gap-2 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-2.5 py-1.5 text-xs font-bold text-emerald-300">
-            <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" />
+          <div className="inline-flex items-center gap-2 rounded-lg border border-brand/40 bg-brand/20 px-2.5 py-1.5 text-xs font-bold text-white">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-brand" />
             <span>Modo Edição Ativo</span>
           </div>
 
@@ -69,18 +69,18 @@ export function VisualEditorToolbar({
             className={`hidden items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold sm:inline-flex ${
               autoSaveEnabled
                 ? autoSaveStatus === 'error'
-                  ? 'border-red-500/40 bg-red-500/15 text-red-200'
-                  : 'border-emerald-500/25 bg-neutral-900 text-emerald-300'
-                : 'border-neutral-700 bg-neutral-900 text-neutral-400'
+                  ? 'border-brand/50 bg-brand/20 text-white'
+                  : 'border-white/15 bg-white/5 text-white/90'
+                : 'border-white/15 bg-white/5 text-white/60'
             }`}
           >
             <span
               className={`h-1.5 w-1.5 rounded-full ${
                 autoSaveEnabled
                   ? autoSaveStatus === 'error'
-                    ? 'bg-red-400'
-                    : 'bg-emerald-400'
-                  : 'bg-neutral-500'
+                    ? 'bg-brand'
+                    : 'bg-white'
+                  : 'bg-white/40'
               }`}
             />
             {autoSaveEnabled
@@ -94,13 +94,13 @@ export function VisualEditorToolbar({
               : 'Auto-save: Desligado'}
           </div>
 
-          <div className="inline-flex items-center rounded-lg border border-neutral-800 bg-neutral-900 p-0.5">
+          <div className="inline-flex items-center rounded-lg border border-white/15 bg-white/5 p-0.5">
             <button
               type="button"
               onClick={onUndo}
               disabled={!canUndo}
               title="Desfazer (Ctrl+Z)"
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-200 transition-colors hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-white/90 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Undo2 className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Desfazer</span>
@@ -110,21 +110,21 @@ export function VisualEditorToolbar({
               onClick={onRedo}
               disabled={!canRedo}
               title="Refazer (Ctrl+Y)"
-              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-neutral-200 transition-colors hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold text-white/90 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-40"
             >
               <Redo2 className="h-3.5 w-3.5" />
               <span className="hidden md:inline">Refazer</span>
             </button>
           </div>
 
-          <div className="inline-flex items-center rounded-lg border border-neutral-800 bg-neutral-900 p-0.5">
+          <div className="inline-flex items-center rounded-lg border border-white/15 bg-white/5 p-0.5">
             <button
               type="button"
               onClick={() => onChangeViewport('desktop')}
               className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
                 viewport === 'desktop'
-                  ? 'bg-white text-neutral-950'
-                  : 'text-neutral-300 hover:bg-neutral-800'
+                  ? 'bg-white text-[#111827]'
+                  : 'text-white/80 hover:bg-white/10'
               }`}
             >
               <Monitor className="h-3.5 w-3.5" />
@@ -135,8 +135,8 @@ export function VisualEditorToolbar({
               onClick={() => onChangeViewport('mobile')}
               className={`inline-flex items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold transition-colors ${
                 viewport === 'mobile'
-                  ? 'bg-white text-neutral-950'
-                  : 'text-neutral-300 hover:bg-neutral-800'
+                  ? 'bg-white text-[#111827]'
+                  : 'text-white/80 hover:bg-white/10'
               }`}
             >
               <Smartphone className="h-3.5 w-3.5" />
@@ -150,18 +150,18 @@ export function VisualEditorToolbar({
           <button
             type="button"
             onClick={onOpenAddBlock}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-100 transition-colors hover:bg-neutral-800"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/10"
           >
-            <Plus className="h-3.5 w-3.5 text-[#E4002B]" />
+            <Plus className="h-3.5 w-3.5 text-brand" />
             <span>Adicionar bloco</span>
           </button>
 
           <button
             type="button"
             onClick={onEditFavicon}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-100 transition-colors hover:bg-neutral-800"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/10"
           >
-            <ImageIcon className="h-3.5 w-3.5 text-neutral-300" />
+            <ImageIcon className="h-3.5 w-3.5 text-white/80" />
             <span className="hidden xl:inline">Favicon</span>
           </button>
 
@@ -169,9 +169,9 @@ export function VisualEditorToolbar({
             type="button"
             onClick={onRestoreDefaultOrder}
             title="Voltar os blocos da página para a organização padrão original mantendo textos e imagens"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-200 transition-colors hover:border-neutral-500 hover:bg-neutral-800 hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white/90 transition-colors hover:border-white/30 hover:bg-white/10 hover:text-white"
           >
-            <ArrowUpDown className="h-3.5 w-3.5 text-[#E4002B]" />
+            <ArrowUpDown className="h-3.5 w-3.5 text-brand" />
             <span>Restaurar ordem padrão</span>
           </button>
 
@@ -179,7 +179,7 @@ export function VisualEditorToolbar({
             type="button"
             onClick={onRestoreDefault}
             title="Restaurar ordem, textos e imagens para o padrão original"
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-900 px-2.5 py-1.5 text-xs font-semibold text-neutral-300 transition-colors hover:bg-neutral-800 hover:text-white"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-2.5 py-1.5 text-xs font-semibold text-white/80 transition-colors hover:bg-white/10 hover:text-white"
           >
             <RotateCcw className="h-3.5 w-3.5" />
             <span className="hidden xl:inline">Restaurar tudo</span>
@@ -188,7 +188,7 @@ export function VisualEditorToolbar({
           <button
             type="button"
             onClick={onBackToGestor}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-neutral-700"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-white/20"
           >
             <LayoutGrid className="h-3.5 w-3.5" />
             <span>Painel Gestor</span>
@@ -198,7 +198,7 @@ export function VisualEditorToolbar({
             type="button"
             disabled={saving}
             onClick={onSaveAndPublish}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#E4002B] px-3.5 py-1.5 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#C80024] disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3.5 py-1.5 text-xs font-bold text-on-brand shadow-sm transition-colors hover:bg-brand-hover disabled:opacity-60"
           >
             {saving ? (
               <span>Publicando...</span>

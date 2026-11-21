@@ -167,17 +167,20 @@ export function buildGestorBackupFiles(source: GestorExportSource): Record<strin
     model_id: m.id,
     model_name: m.name,
     segment_slug: m.segment_slug,
+    labor_price: m.labor_price ?? null,
     revisions: source.revision_tabs.map((tab) => {
       const calc = computeModelRevision(
         m.id,
         tab.revision_number,
         source.revision_parts,
-        partsMap
+        partsMap,
+        m.labor_price
       );
       return {
         revision_number: tab.revision_number,
         label: tab.label,
         subtitle: tab.subtitle,
+        labor_cost: calc.laborCost,
         total_without_optionals: calc.totalWithoutOptionals,
         total_with_optionals: calc.totalWithOptionals,
         items: calc.items.map((it) => ({
@@ -355,6 +358,25 @@ export function exportGestorConfigJson(source: GestorExportSource): string {
   return filename;
 }
 
+export function exportHtmlEditorBackupJson(visualBuilder: VisualBuilderConfig): string {
+  const dateSlug = new Date().toISOString().slice(0, 10);
+  const htmlOverrides = visualBuilder.htmlOverrides || {};
+  const payload = {
+    backup_version: '1.0',
+    backup_type: 'html_editor',
+    exported_at: new Date().toISOString(),
+    html_overrides_count: Object.keys(htmlOverrides).length,
+    html_overrides: htmlOverrides,
+    visual_builder: visualBuilder,
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json;charset=utf-8',
+  });
+  const filename = `rodaleve-editor-html-backup-${dateSlug}.json`;
+  triggerBlobDownload(blob, filename);
+  return filename;
+}
+
 export async function exportGestorBackupZip(source: GestorExportSource): Promise<string> {
   const { default: JSZip } = await import('jszip');
   const zip = new JSZip();
@@ -424,12 +446,28 @@ export interface ParsedBackupResult {
 }
 
 function validateAndSummarizePayload(
-  raw: BackupRestorePayload & { backup_version?: string; exported_at?: string },
+  raw: BackupRestorePayload & {
+    backup_version?: string;
+    exported_at?: string;
+    html_overrides?: Record<string, string>;
+  },
   fileName: string,
   format: 'json' | 'zip'
 ): ParsedBackupResult {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Estrutura de backup inválida: o arquivo não contém um objeto JSON válido.');
+  }
+
+  let mergedVisualBuilder =
+    raw.visual_builder && typeof raw.visual_builder === 'object' ? { ...raw.visual_builder } : undefined;
+  if (raw.html_overrides && typeof raw.html_overrides === 'object' && !Array.isArray(raw.html_overrides)) {
+    mergedVisualBuilder = {
+      ...(mergedVisualBuilder || {}),
+      htmlOverrides: {
+        ...(mergedVisualBuilder?.htmlOverrides || {}),
+        ...raw.html_overrides,
+      },
+    };
   }
 
   const payload: BackupRestorePayload = {
@@ -446,10 +484,7 @@ function validateAndSummarizePayload(
         : undefined,
     integrations:
       raw.integrations && typeof raw.integrations === 'object' ? raw.integrations : undefined,
-    visual_builder:
-      raw.visual_builder && typeof raw.visual_builder === 'object'
-        ? raw.visual_builder
-        : undefined,
+    visual_builder: mergedVisualBuilder,
     embedded_uploads:
       raw.embedded_uploads && typeof raw.embedded_uploads === 'object'
         ? raw.embedded_uploads
@@ -465,7 +500,7 @@ function validateAndSummarizePayload(
   if (payload.faqs?.length) sections.push(`Perguntas Frequentes (${payload.faqs.length})`);
   if (payload.seo) sections.push('SEO, Logo & Unidades');
   if (payload.integrations) sections.push('Integrações, APIs & Pixels');
-  if (payload.visual_builder) sections.push('Ordem dos Blocos e Layout Visual');
+  if (payload.visual_builder) sections.push('Ordem dos Blocos, Layout e Editor HTML');
   const embeddedCount = payload.embedded_uploads
     ? Object.keys(payload.embedded_uploads).length
     : 0;

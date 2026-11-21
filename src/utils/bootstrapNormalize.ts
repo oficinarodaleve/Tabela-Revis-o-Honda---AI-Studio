@@ -178,6 +178,13 @@ export function normalizePublicBootstrapData(raw: unknown): PublicBootstrapData 
       image_url: String(m.image_url || ''),
       hidden: Boolean(m.hidden),
       sort_order: Number(m.sort_order) || 0,
+      labor_price:
+        m.labor_price !== null &&
+        m.labor_price !== undefined &&
+        Number.isFinite(Number(m.labor_price)) &&
+        Number(m.labor_price) >= 0
+          ? Number(Number(m.labor_price).toFixed(2))
+          : null,
     })),
     segments: asArray<Partial<Segment>>(r.segments).map((s) => ({
       id: Number(s.id) || 0,

@@ -134,10 +134,10 @@ export function TabFaqs({
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="font-display text-2xl font-bold text-neutral-900">
+          <h1 className="font-display text-2xl font-bold text-ink">
             Perguntas frequentes
           </h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Estas perguntas aparecem na página de dúvidas do site.
           </p>
         </div>
@@ -146,8 +146,8 @@ export function TabFaqs({
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className={`inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
-            !autoSaveEnabled && isDirty ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-brand px-5 py-2.5 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60 ${
+            !autoSaveEnabled && isDirty ? 'ring-2 ring-brand/40 ring-offset-2' : ''
           }`}
         >
           <Save className="h-4 w-4" />
@@ -163,15 +163,15 @@ export function TabFaqs({
             onDragStart={() => handleDragStart(idx)}
             onDragOver={(e) => handleDragOver(e, idx)}
             onDragEnd={handleDragEnd}
-            className={`rounded-2xl border bg-white p-4 transition-shadow ${
-              dragIdx === idx ? 'border-[#E4002B] shadow-md' : 'border-neutral-200'
+            className={`rounded-2xl border bg-card p-4 transition-shadow ${
+              dragIdx === idx ? 'border-brand shadow-md' : 'border-border'
             }`}
           >
             <div className="flex items-start gap-3">
               <button
                 type="button"
                 aria-label="Arrastar para reordenar"
-                className="mt-2 cursor-grab text-neutral-400 hover:text-neutral-700 active:cursor-grabbing"
+                className="mt-2 cursor-grab text-ink-muted hover:text-ink active:cursor-grabbing"
               >
                 <GripVertical className="h-4 w-4" />
               </button>
@@ -182,14 +182,14 @@ export function TabFaqs({
                   value={item.question}
                   onChange={(e) => handleUpdate(idx, { question: e.target.value })}
                   placeholder="Digite a pergunta..."
-                  className="w-full rounded-xl border border-neutral-200 px-3.5 py-2 text-sm font-bold text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="w-full rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-bold text-ink focus:border-brand focus:outline-none"
                 />
                 <textarea
                   rows={2}
                   value={item.answer}
                   onChange={(e) => handleUpdate(idx, { answer: e.target.value })}
                   placeholder="Digite a resposta objetiva..."
-                  className="w-full resize-y rounded-xl border border-neutral-200 px-3.5 py-2 text-xs leading-relaxed text-neutral-700 focus:border-[#E4002B] focus:outline-none"
+                  className="w-full resize-y rounded-xl border border-border bg-card px-3.5 py-2 text-xs leading-relaxed text-ink focus:border-brand focus:outline-none"
                 />
               </div>
 
@@ -197,7 +197,7 @@ export function TabFaqs({
                 type="button"
                 onClick={() => handleRemove(idx)}
                 aria-label="Excluir pergunta"
-                className="mt-1 rounded-lg p-2 text-neutral-400 hover:bg-neutral-100 hover:text-[#E4002B]"
+                className="mt-1 rounded-lg p-2 text-ink-muted hover:bg-brand-soft hover:text-brand-text"
               >
                 <Trash2 className="h-4 w-4" />
               </button>
@@ -209,7 +209,7 @@ export function TabFaqs({
       <button
         type="button"
         onClick={handleAdd}
-        className="inline-flex items-center gap-2 rounded-xl bg-neutral-900 px-4 py-2.5 text-xs font-bold text-white hover:bg-neutral-800"
+        className="inline-flex items-center gap-2 rounded-xl bg-ink px-4 py-2.5 text-xs font-bold text-on-ink transition-opacity hover:opacity-90"
       >
         <Plus className="h-4 w-4" />
         Nova pergunta

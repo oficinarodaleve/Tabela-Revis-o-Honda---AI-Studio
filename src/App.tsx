@@ -17,12 +17,105 @@ const AdminPanel = lazy(() =>
   import('./components/admin/AdminPanel').then((m) => ({ default: m.AdminPanel }))
 );
 
+const BOOTSTRAP_CACHE_KEY = 'rodaleve_bootstrap_cache_v1';
+const ADMIN_HINT_KEY = 'rodaleve_admin_hint';
+
+type InitialBootstrapState = {
+  data: PublicBootstrapData | null;
+  source: 'inline' | 'cache' | 'none';
+};
+
+function readInitialPublicBootstrap(): InitialBootstrapState {
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return { data: null, source: 'none' };
+  }
+  try {
+    const inlineEl = document.getElementById('__RODALEVE_BOOTSTRAP__');
+    if (inlineEl?.textContent) {
+      const parsed = JSON.parse(inlineEl.textContent) as unknown;
+      const normalized = normalizePublicBootstrapData(parsed);
+      if (normalized.models.length > 0 || normalized.revision_tabs.length > 0) {
+        try {
+          window.localStorage?.setItem(BOOTSTRAP_CACHE_KEY, JSON.stringify(normalized));
+        } catch {
+          // Ignore storage quota errors
+        }
+        return { data: normalized, source: 'inline' };
+      }
+    }
+  } catch {
+    // Fallback to localStorage cache
+  }
+
+  try {
+    const cached = window.localStorage?.getItem(BOOTSTRAP_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached) as unknown;
+      const normalized = normalizePublicBootstrapData(parsed);
+      if (normalized.models.length > 0 || normalized.revision_tabs.length > 0) {
+        return { data: normalized, source: 'cache' };
+      }
+    }
+  } catch {
+    // Ignore corrupted cache
+  }
+
+  return { data: null, source: 'none' };
+}
+
+function PublicLoadingSkeleton() {
+  return (
+    <div className="min-h-screen bg-surface" aria-busy="true">
+      <header className="sticky top-0 z-50 w-full border-b border-border bg-card/90">
+        <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between px-4 sm:px-6">
+          <div className="h-8 w-32 rounded-lg bg-surface-neutral" />
+          <div className="flex items-center gap-2">
+            <div className="h-9 w-24 rounded-full bg-surface-neutral" />
+            <div className="h-9 w-36 rounded-full bg-brand/85" />
+          </div>
+        </div>
+      </header>
+      <section className="border-b border-border bg-card py-10 sm:py-12">
+        <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+          <div className="h-3.5 w-44 rounded bg-brand-soft" />
+          <div className="mt-3 h-9 w-4/5 max-w-xl rounded-lg bg-surface-neutral" />
+          <div className="mt-3 h-5 w-3/4 max-w-lg rounded bg-surface" />
+        </div>
+      </section>
+      <div className="mx-auto max-w-[1180px] px-4 py-6 sm:px-6">
+        <div className="flex gap-2 overflow-hidden">
+          {[1, 2, 3, 4, 5].map((i) => (
+            <div
+              key={i}
+              className="h-14 w-28 shrink-0 rounded-2xl border border-border bg-card"
+            />
+          ))}
+        </div>
+        <div className="mt-6 flex gap-4 overflow-hidden">
+          {[1, 2, 3].map((i) => (
+            <div
+              key={i}
+              className="h-[430px] w-[285px] shrink-0 rounded-2xl border border-border bg-card sm:w-[318px]"
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
+  const initialBootstrapRef = useRef<InitialBootstrapState | null>(null);
+  if (initialBootstrapRef.current === null) {
+    initialBootstrapRef.current = readInitialPublicBootstrap();
+  }
+  const initialBootstrap = initialBootstrapRef.current;
+
   const [route, setRoute] = useState<string>(() =>
     typeof window !== 'undefined' ? window.location.pathname : '/'
   );
-  const [publicData, setPublicData] = useState<PublicBootstrapData | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [publicData, setPublicData] = useState<PublicBootstrapData | null>(initialBootstrap.data);
+  const [loading, setLoading] = useState<boolean>(() => !initialBootstrap.data);
   const [error, setError] = useState<string | null>(null);
   const [darkMode, setDarkMode] = useState<boolean>(() => {
     if (typeof window === 'undefined') return false;
@@ -38,8 +131,12 @@ export default function App() {
     if (typeof window === 'undefined') return false;
     return window.location.search.includes('visual_editor=1');
   });
+  const [isHtmlEditMode, setIsHtmlEditMode] = useState<boolean>(() => {
+    if (typeof window === 'undefined') return false;
+    return window.location.search.includes('html_editor=1');
+  });
   const [language, setLanguage] = useState<SiteLanguage>(() => getInitialLanguage());
-  const hasPublicDataRef = useRef(false);
+  const hasPublicDataRef = useRef(Boolean(initialBootstrap.data));
 
   const loadPublicData = useCallback(async (options?: { manualRetry?: boolean }) => {
     if (options?.manualRetry) {
@@ -79,6 +176,11 @@ export default function App() {
       hasPublicDataRef.current = true;
       setPublicData(normalized);
       setError(null);
+      try {
+        window.localStorage?.setItem(BOOTSTRAP_CACHE_KEY, JSON.stringify(normalized));
+      } catch {
+        // Ignore storage quota errors
+      }
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'Erro ao carregar dados.';
       console.error('[App] Falha ao carregar /api/public/bootstrap:', e);
@@ -91,15 +193,55 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void loadPublicData();
-  }, [loadPublicData]);
+    if (initialBootstrap.source === 'inline') {
+      const win = window as Window & {
+        requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
+        cancelIdleCallback?: (id: number) => void;
+      };
+      let timerId: number | null = null;
+      let idleId: number | null = null;
+      if (typeof win.requestIdleCallback === 'function') {
+        idleId = win.requestIdleCallback(() => void loadPublicData(), { timeout: 2500 });
+      } else {
+        timerId = window.setTimeout(() => void loadPublicData(), 1800);
+      }
+      return () => {
+        if (idleId !== null && typeof win.cancelIdleCallback === 'function') {
+          win.cancelIdleCallback(idleId);
+        }
+        if (timerId !== null) {
+          window.clearTimeout(timerId);
+        }
+      };
+    }
 
-  // Verifica silenciosamente se há sessão administrativa Firebase válida (carregamento sob demanda fora da rota /gestor)
+    void loadPublicData();
+    return undefined;
+  }, [initialBootstrap.source, loadPublicData]);
+
+  // Verifica sessão administrativa Firebase apenas em rotas do gestor ou quando já existe sessão prévia
   useEffect(() => {
     let active = true;
     const isUrgentAuthRoute =
       route.startsWith('/gestor') ||
-      (typeof window !== 'undefined' && window.location.search.includes('visual_editor=1'));
+      (typeof window !== 'undefined' &&
+        (window.location.search.includes('visual_editor=1') ||
+          window.location.search.includes('html_editor=1')));
+
+    let hasAdminHint = Boolean(getAdminToken());
+    if (!hasAdminHint && typeof window !== 'undefined') {
+      try {
+        hasAdminHint = window.localStorage?.getItem(ADMIN_HINT_KEY) === '1';
+      } catch {
+        hasAdminHint = false;
+      }
+    }
+
+    if (!isUrgentAuthRoute && !hasAdminHint) {
+      return () => {
+        active = false;
+      };
+    }
 
     const checkAuth = async () => {
       try {
@@ -108,22 +250,40 @@ export default function App() {
         if (!active) return;
         if (!auth.currentUser) {
           clearAdminToken();
+          try {
+            window.localStorage?.removeItem(ADMIN_HINT_KEY);
+          } catch {
+            // Ignore storage errors
+          }
           setIsAdminLoggedIn(false);
           setIsEditMode(false);
+          setIsHtmlEditMode(false);
           return;
         }
         const res = await adminFetch('/api/auth/me');
         if (!active) return;
         if (res.ok) {
+          try {
+            window.localStorage?.setItem(ADMIN_HINT_KEY, '1');
+          } catch {
+            // Ignore storage errors
+          }
           setIsAdminLoggedIn(true);
         } else {
+          try {
+            window.localStorage?.removeItem(ADMIN_HINT_KEY);
+          } catch {
+            // Ignore storage errors
+          }
           setIsAdminLoggedIn(false);
           setIsEditMode(false);
+          setIsHtmlEditMode(false);
         }
       } catch {
         if (active) {
           setIsAdminLoggedIn(false);
           setIsEditMode(false);
+          setIsHtmlEditMode(false);
         }
       }
     };
@@ -163,6 +323,7 @@ export default function App() {
     const onPopState = () => {
       setRoute(window.location.pathname);
       setIsEditMode(window.location.search.includes('visual_editor=1'));
+      setIsHtmlEditMode(window.location.search.includes('html_editor=1'));
     };
     window.addEventListener('popstate', onPopState);
     return () => window.removeEventListener('popstate', onPopState);
@@ -206,11 +367,34 @@ export default function App() {
       window.history.pushState({}, '', path);
       setRoute(pathname || '/');
       setIsEditMode(path.includes('visual_editor=1'));
+      setIsHtmlEditMode(path.includes('html_editor=1'));
       window.scrollTo({ top: 0 });
     }
   }, []);
 
+  // Atalho discreto Ctrl+Shift+G (ou Cmd+Shift+G) para acessar /gestor sem exibir botões a visitantes comuns
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'g') {
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.isContentEditable)
+        ) {
+          return;
+        }
+        e.preventDefault();
+        navigate('/gestor');
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [navigate]);
+
   const enterEditMode = useCallback(() => {
+    setIsHtmlEditMode(false);
     setIsEditMode(true);
     window.history.pushState({}, '', '/?visual_editor=1');
     setRoute('/');
@@ -219,7 +403,26 @@ export default function App() {
 
   const exitEditModeToGestor = useCallback(() => {
     setIsEditMode(false);
+    setIsHtmlEditMode(false);
     navigate('/gestor');
+  }, [navigate]);
+
+  const enterHtmlEditMode = useCallback(() => {
+    setIsEditMode(false);
+    setIsHtmlEditMode(true);
+    window.history.pushState({}, '', '/?html_editor=1');
+    setRoute('/');
+    window.scrollTo({ top: 0 });
+  }, []);
+
+  const exitHtmlEditMode = useCallback(() => {
+    setIsHtmlEditMode(false);
+    navigate('/');
+  }, [navigate]);
+
+  const exitHtmlEditModeToGestor = useCallback(() => {
+    setIsHtmlEditMode(false);
+    navigate('/gestor?tab=editor_html');
   }, [navigate]);
 
   const isGestor = route.startsWith('/gestor');
@@ -254,7 +457,7 @@ export default function App() {
         >
           <Suspense
             fallback={
-              <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-600">
+              <div className="flex min-h-screen items-center justify-center bg-surface text-sm font-medium text-ink-muted">
                 Carregando Gestor Rodaleve...
               </div>
             }
@@ -263,24 +466,23 @@ export default function App() {
               onNavigate={navigate}
               onPublicDataChanged={loadPublicData}
               onOpenVisualEditor={enterEditMode}
+              onOpenHtmlEditor={enterHtmlEditMode}
               onAuthChange={setIsAdminLoggedIn}
             />
           </Suspense>
         </ErrorBoundary>
       ) : loading ? (
-        <div className="flex min-h-screen items-center justify-center bg-[#FAFAFA] text-sm font-medium text-neutral-600">
-          {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).loadingTable}
-        </div>
+        <PublicLoadingSkeleton />
       ) : error || !publicData ? (
-        <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-[#FAFAFA] px-4 text-center">
-          <p className="text-base font-bold text-neutral-900">
+        <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-surface px-4 text-center">
+          <p className="text-base font-bold text-ink">
             {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).loadErrorTitle}
           </p>
-          <p className="text-sm text-neutral-600">{error}</p>
+          <p className="text-sm text-ink-muted">{error}</p>
           <button
             type="button"
             onClick={() => void loadPublicData({ manualRetry: true })}
-            className="rounded-xl bg-[#D00027] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#B80022]"
+            className="rounded-xl bg-brand px-5 py-2.5 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover"
           >
             {(UI_TRANSLATIONS[language] || UI_TRANSLATIONS.pt).tryAgain}
           </button>
@@ -302,7 +504,11 @@ export default function App() {
             onNavigate={navigate}
             isAdminLoggedIn={isAdminLoggedIn}
             isEditMode={isEditMode && isAdminLoggedIn}
+            isHtmlEditMode={isHtmlEditMode && isAdminLoggedIn}
             onEnterEditMode={enterEditMode}
+            onEnterHtmlEditMode={enterHtmlEditMode}
+            onExitHtmlEditMode={exitHtmlEditMode}
+            onExitHtmlEditModeToGestor={exitHtmlEditModeToGestor}
             onExitEditModeToGestor={exitEditModeToGestor}
             onPublicDataChanged={loadPublicData}
           />

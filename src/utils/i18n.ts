@@ -1,3 +1,5 @@
+import { LABOR_POLICY_TEXTS } from './pricing';
+
 export type SiteLanguage = 'pt' | 'en' | 'es';
 
 export interface LanguageOption {
@@ -134,7 +136,7 @@ export const SITE_CONTENT_TRANSLATIONS: Record<Exclude<SiteLanguage, 'pt'>, Reco
     footer_policies_title: 'Policies & Terms',
     footer_disclaimer:
       'The prices shown in this table are estimates for genuine parts and basic supplies for each service and may vary according to technical inspection or additional motorcycle needs.',
-    footer_slogan: 'EXPLORE SAFELY — YOUR GREATEST ASSET IS LIFE',
+    footer_slogan: 'SLOW DOWN, YOUR GREATEST ASSET IS LIFE',
     footer_credits: 'Website created by',
   },
   es: {
@@ -169,7 +171,7 @@ export const SITE_CONTENT_TRANSLATIONS: Record<Exclude<SiteLanguage, 'pt'>, Reco
     footer_policies_title: 'Políticas y Términos',
     footer_disclaimer:
       'Los valores mostrados en esta tabla son estimados para piezas genuinas e insumos básicos de cada revisión y pueden variar según inspección técnica o necesidad adicional de la motocicleta.',
-    footer_slogan: 'EXPLORA CON CUIDADO — TU MAYOR BIEN ES LA VIDA',
+    footer_slogan: 'DESACELERA, TU MAYOR BIEN ES LA VIDA',
     footer_credits: 'Sitio creado por',
   },
 };
@@ -283,8 +285,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     itemPlural: 'itens',
     walkInBadge: 'Atendimento por ordem de chegada',
     appointmentBadge: 'Necessário agendamento prévio',
-    freeLaborBadge: 'Mão de obra gratuita (conforme manual)',
-    consultLaborBadge: 'Consultar mão de obra',
+    freeLaborBadge: LABOR_POLICY_TEXTS.pt.freeBadge,
+    consultLaborBadge: LABOR_POLICY_TEXTS.pt.paidBadge,
     noPartsLinked: 'Nenhuma peça vinculada a esta revisão.',
     codePrefix: 'CÓD.',
     optionalTag: '[Opcional]',
@@ -339,8 +341,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     modalIncludeOptionals: 'Incluir itens opcionais',
     modalNoParts: 'Nenhuma peça cadastrada para esta revisão. Você pode enviar sua solicitação mesmo assim.',
     modalEstimatedTotal: 'Total estimado',
-    modalFreeLaborNote: 'Mão de obra gratuita nesta revisão',
-    modalPaidLaborNote: 'Mão de obra sob consulta na unidade',
+    modalFreeLaborNote: LABOR_POLICY_TEXTS.pt.freeBadge,
+    modalPaidLaborNote: LABOR_POLICY_TEXTS.pt.paidBadge,
     modalCancel: 'Cancelar',
     modalSendWhatsApp: (city) => `Enviar para WhatsApp (${city})`,
     floatingWhatsAppAria: 'Falar no WhatsApp Rodaleve (arrastável)',
@@ -370,8 +372,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     itemPlural: 'items',
     walkInBadge: 'Walk-in service (first-come)',
     appointmentBadge: 'Prior appointment required',
-    freeLaborBadge: 'Free labor (per manual)',
-    consultLaborBadge: 'Check labor cost',
+    freeLaborBadge: LABOR_POLICY_TEXTS.en.freeBadge,
+    consultLaborBadge: LABOR_POLICY_TEXTS.en.paidBadge,
     noPartsLinked: 'No parts linked to this service.',
     codePrefix: 'CODE',
     optionalTag: '[Optional]',
@@ -426,8 +428,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     modalIncludeOptionals: 'Include optional items',
     modalNoParts: 'No parts registered for this service. You can still send your request.',
     modalEstimatedTotal: 'Estimated total',
-    modalFreeLaborNote: 'Free labor for this service',
-    modalPaidLaborNote: 'Labor cost upon consultation at the branch',
+    modalFreeLaborNote: LABOR_POLICY_TEXTS.en.freeBadge,
+    modalPaidLaborNote: LABOR_POLICY_TEXTS.en.paidBadge,
     modalCancel: 'Cancel',
     modalSendWhatsApp: (city) => `Send to WhatsApp (${city})`,
     floatingWhatsAppAria: 'Chat on WhatsApp Rodaleve (draggable)',
@@ -457,8 +459,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     itemPlural: 'ítems',
     walkInBadge: 'Atención por orden de llegada',
     appointmentBadge: 'Requiere cita previa',
-    freeLaborBadge: 'Mano de obra gratuita (según manual)',
-    consultLaborBadge: 'Consultar mano de obra',
+    freeLaborBadge: LABOR_POLICY_TEXTS.es.freeBadge,
+    consultLaborBadge: LABOR_POLICY_TEXTS.es.paidBadge,
     noPartsLinked: 'Ninguna pieza vinculada a esta revisión.',
     codePrefix: 'CÓD.',
     optionalTag: '[Opcional]',
@@ -513,8 +515,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     modalIncludeOptionals: 'Incluir ítems opcionales',
     modalNoParts: 'No hay piezas registradas para esta revisión. Puedes enviar tu solicitud igualmente.',
     modalEstimatedTotal: 'Total estimado',
-    modalFreeLaborNote: 'Mano de obra gratuita en esta revisión',
-    modalPaidLaborNote: 'Mano de obra bajo consulta en la sucursal',
+    modalFreeLaborNote: LABOR_POLICY_TEXTS.es.freeBadge,
+    modalPaidLaborNote: LABOR_POLICY_TEXTS.es.paidBadge,
     modalCancel: 'Cancelar',
     modalSendWhatsApp: (city) => `Enviar a WhatsApp (${city})`,
     floatingWhatsAppAria: 'Hablar por WhatsApp Rodaleve (arrastrable)',

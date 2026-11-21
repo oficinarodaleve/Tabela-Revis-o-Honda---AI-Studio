@@ -94,38 +94,38 @@ export function SectionEditorWrapper({
       }}
       className={`group relative border-b border-dashed transition-all ${
         isDraggingSelf
-          ? 'scale-[0.995] border-[#E4002B]/50 bg-red-50/20 opacity-55'
+          ? 'scale-[0.995] border-brand/50 bg-brand-soft/30 opacity-55'
           : dropPosition
-            ? 'border-[#E4002B]/60 bg-red-50/15'
-            : 'border-indigo-300/60 hover:border-indigo-500/80'
+            ? 'border-brand/60 bg-brand-soft/20'
+            : 'border-border hover:border-brand/60'
       }`}
     >
       {/* Indicador de soltura ACIMA do bloco */}
       {dropPosition === 'before' && !isDraggingSelf && (
         <div className="pointer-events-none relative z-40 mx-auto max-w-[1180px] px-4 sm:px-6">
           <div className="flex items-center gap-2 py-1">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#E4002B] shadow-sm" />
-            <div className="h-1 flex-1 rounded-full bg-[#E4002B] shadow-sm" />
-            <span className="rounded-full bg-[#E4002B] px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white shadow-sm">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand shadow-sm" />
+            <div className="h-1 flex-1 rounded-full bg-brand shadow-sm" />
+            <span className="rounded-full bg-brand px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-on-brand shadow-sm">
               Soltar bloco aqui
             </span>
-            <div className="h-1 flex-1 rounded-full bg-[#E4002B] shadow-sm" />
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#E4002B] shadow-sm" />
+            <div className="h-1 flex-1 rounded-full bg-brand shadow-sm" />
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand shadow-sm" />
           </div>
         </div>
       )}
 
       {/* Barra discreta de controles do bloco (visível apenas no Modo Edição Visual) */}
-      <div className="sticky top-[52px] z-30 mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-2 rounded-b-lg border-x border-b border-indigo-900/20 bg-neutral-900/90 px-3 py-1.5 text-[11px] text-white shadow-sm backdrop-blur">
+      <div className="sticky top-[52px] z-30 mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-2 rounded-b-lg border-x border-b border-white/15 bg-[#111827]/95 px-3 py-1.5 text-[11px] text-white shadow-sm backdrop-blur">
         <div className="flex items-center gap-2">
           <span
             onMouseEnter={() => setDragArmed(true)}
             onMouseLeave={() => setDragArmed(false)}
             onPointerDown={() => setDragArmed(true)}
             title="Arraste por aqui para reordenar este bloco na página"
-            className="inline-flex cursor-grab select-none items-center gap-1.5 rounded-md border border-white/15 bg-white/10 px-2 py-0.5 font-semibold text-white transition-colors hover:border-[#E4002B]/80 hover:bg-[#E4002B]/80 active:cursor-grabbing"
+            className="inline-flex cursor-grab select-none items-center gap-1.5 rounded-md border border-white/15 bg-white/10 px-2 py-0.5 font-semibold text-white transition-colors hover:border-brand/80 hover:bg-brand active:cursor-grabbing"
           >
-            <GripVertical className="h-3.5 w-3.5 text-neutral-300" />
+            <GripVertical className="h-3.5 w-3.5 text-white/70" />
             <span className="font-bold">{block.label}</span>
           </span>
           {!block.visible && (
@@ -190,7 +190,7 @@ export function SectionEditorWrapper({
               type="button"
               onClick={() => onDelete(block.id)}
               title="Excluir bloco personalizado"
-              className="inline-flex items-center gap-1 rounded bg-red-500/80 px-2 py-1 font-semibold text-white transition-colors hover:bg-red-600"
+              className="inline-flex items-center gap-1 rounded bg-brand/85 px-2 py-1 font-semibold text-on-brand transition-colors hover:bg-brand-hover"
             >
               <Trash2 className="h-3 w-3" />
               <span className="hidden sm:inline">Excluir</span>
@@ -205,13 +205,13 @@ export function SectionEditorWrapper({
       {dropPosition === 'after' && !isDraggingSelf && (
         <div className="pointer-events-none relative z-40 mx-auto max-w-[1180px] px-4 sm:px-6">
           <div className="flex items-center gap-2 py-1">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#E4002B] shadow-sm" />
-            <div className="h-1 flex-1 rounded-full bg-[#E4002B] shadow-sm" />
-            <span className="rounded-full bg-[#E4002B] px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-white shadow-sm">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand shadow-sm" />
+            <div className="h-1 flex-1 rounded-full bg-brand shadow-sm" />
+            <span className="rounded-full bg-brand px-2.5 py-0.5 text-[10px] font-bold tracking-wide text-on-brand shadow-sm">
               Soltar bloco aqui
             </span>
-            <div className="h-1 flex-1 rounded-full bg-[#E4002B] shadow-sm" />
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-[#E4002B] shadow-sm" />
+            <div className="h-1 flex-1 rounded-full bg-brand shadow-sm" />
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand shadow-sm" />
           </div>
         </div>
       )}

@@ -6,7 +6,7 @@ export const SEED_IMAGES = {
   trail: '/src/assets/images/moto_trail_adventure_1795147025806.jpg',
   touring: '/src/assets/images/moto_touring_africa_1795147026835.jpg',
   offroad: '/src/assets/images/moto_offroad_crf_1795147026744.jpg',
-  ogBanner: '/src/assets/images/rodaleve_og_banner_1795147026253.jpg',
+  ogBanner: 'https://oficinarodaleve.ai.studio/og-image.jpg',
 };
 
 export const INITIAL_SEGMENTS = [

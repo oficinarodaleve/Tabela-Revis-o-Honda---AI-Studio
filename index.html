@@ -9,16 +9,34 @@
       name="description"
       content="Consulte peças genuínas e valores estimados por modelo de cada revisão programada Honda na concessionária autorizada Rodaleve."
     />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Rodaleve Honda" />
+    <meta property="og:url" content="https://oficinarodaleve.ai.studio/" />
     <meta property="og:title" content="Rodaleve Honda – Tabela de Manutenção e Revisões" />
     <meta
       property="og:description"
       content="Consulte peças genuínas e valores estimados por modelo de cada revisão programada Honda na concessionária autorizada Rodaleve."
     />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="/src/assets/images/rodaleve_og_banner_1795147026253.jpg" />
+    <meta property="og:image" content="https://oficinarodaleve.ai.studio/og-image.jpg" />
+    <meta property="og:image:secure_url" content="https://oficinarodaleve.ai.studio/og-image.jpg" />
+    <meta property="og:image:type" content="image/jpeg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="670" />
+    <meta property="og:image:alt" content="Rodaleve Honda – Tabela de Manutenção e Revisões" />
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Rodaleve Honda – Tabela de Manutenção e Revisões" />
+    <meta
+      name="twitter:description"
+      content="Consulte peças genuínas e valores estimados por modelo de cada revisão programada Honda na concessionária autorizada Rodaleve."
+    />
+    <meta name="twitter:image" content="https://oficinarodaleve.ai.studio/og-image.jpg" />
+    <link rel="icon" href="/favicon.ico" />
     <script>
-      if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/gestor')) {
+      if (
+        typeof window !== 'undefined' &&
+        !window.location.pathname.startsWith('/gestor') &&
+        !document.getElementById('__RODALEVE_BOOTSTRAP__')
+      ) {
         window.__rodaleveBootstrapPromise = fetch('/api/public/bootstrap');
       }
     </script>
@@ -36,14 +54,42 @@
         rel="stylesheet"
       />
     </noscript>
-    <script async src="https://www.googletagmanager.com/gtm.js?id=GTM-N8LD84DZ"></script>
     <script>
       window.dataLayer = window.dataLayer || [];
-      function gtag(){dataLayer.push(arguments);}
+      function gtag() {
+        dataLayer.push(arguments);
+      }
       gtag('js', new Date());
+      (function () {
+        var loaded = false;
+        function loadGtm() {
+          if (loaded) return;
+          loaded = true;
+          var s = document.createElement('script');
+          s.async = true;
+          s.src = 'https://www.googletagmanager.com/gtm.js?id=GTM-N8LD84DZ';
+          document.head.appendChild(s);
+        }
+        var events = ['pointerdown', 'keydown', 'scroll', 'touchstart'];
+        events.forEach(function (ev) {
+          window.addEventListener(ev, loadGtm, { once: true, passive: true });
+        });
+        window.addEventListener('load', function () {
+          if (typeof window.requestIdleCallback === 'function') {
+            window.requestIdleCallback(
+              function () {
+                setTimeout(loadGtm, 2200);
+              },
+              { timeout: 4500 }
+            );
+          } else {
+            setTimeout(loadGtm, 3200);
+          }
+        });
+      })();
     </script>
   </head>
-  <body class="bg-[#FAFAFA] text-neutral-900 antialiased dark:bg-neutral-950 dark:text-neutral-100">
+  <body class="bg-surface text-ink antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

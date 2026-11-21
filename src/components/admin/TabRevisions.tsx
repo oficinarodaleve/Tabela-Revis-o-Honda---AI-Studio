@@ -242,10 +242,10 @@ export function TabRevisions({
       {/* Header + Revision Tabs */}
       <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
         <div>
-          <h1 className="font-display text-2xl font-bold text-neutral-900">
+          <h1 className="font-display text-2xl font-bold text-ink">
             Peças de cada modelo por revisão
           </h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Escolha a revisão e ajuste as peças e quantidades. Os preços vêm do MicroWork.
           </p>
         </div>
@@ -261,8 +261,8 @@ export function TabRevisions({
                   onClick={() => setSelectedRev(tab.revision_number)}
                   className={`whitespace-nowrap rounded-lg px-3.5 py-2 text-xs font-bold transition-colors ${
                     active
-                      ? 'bg-neutral-900 text-white'
-                      : 'border border-neutral-200 bg-white text-neutral-700 hover:bg-neutral-100'
+                      ? 'bg-ink text-on-ink'
+                      : 'border border-border bg-card text-ink-muted hover:bg-surface-neutral hover:text-ink'
                   }`}
                 >
                   {tab.revision_number}ª
@@ -275,22 +275,22 @@ export function TabRevisions({
 
       {/* Compact Clone Bar: Copiar de... -> Clonar revisão */}
       {availableSourceTabs.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-neutral-200 bg-white px-4 py-3">
-          <div className="text-xs text-neutral-600">
-            <span className="font-bold text-neutral-900">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border bg-card px-4 py-3">
+          <div className="text-xs text-ink-muted">
+            <span className="font-bold text-ink">
               Clonar para a {selectedRev}ª revisão:
             </span>{' '}
             copie rapidamente todas as peças e quantidades de uma revisão existente.
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="text-xs font-semibold text-neutral-600">
+            <label className="text-xs font-semibold text-ink-muted">
               Copiar de:
             </label>
             <select
               value={cloneSourceRev}
               onChange={(e) => setCloneSourceRev(Number(e.target.value))}
-              className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink focus:border-brand focus:outline-none"
             >
               {availableSourceTabs.map((tab) => (
                 <option key={tab.revision_number} value={tab.revision_number}>
@@ -303,7 +303,7 @@ export function TabRevisions({
               type="button"
               disabled={cloningAll}
               onClick={handleCloneRevisionAll}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-3.5 py-1.5 text-xs font-bold text-white transition-colors hover:bg-neutral-800 disabled:opacity-60"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-3.5 py-1.5 text-xs font-bold text-on-ink transition-opacity hover:opacity-90 disabled:opacity-60"
             >
               <Copy className="h-3.5 w-3.5" />
               {cloningAll ? 'Clonando...' : 'Clonar revisão'}
@@ -347,34 +347,34 @@ export function TabRevisions({
           return (
             <div
               key={model.id}
-              className="overflow-hidden rounded-2xl border border-neutral-200 bg-white"
+              className="overflow-hidden rounded-2xl border border-border bg-card"
             >
               <button
                 type="button"
                 onClick={() => setExpandedModelId(isExpanded ? null : model.id)}
-                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-neutral-50/70"
+                className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-surface/70"
               >
                 <div>
-                  <p className="text-sm font-bold text-neutral-900">{model.name}</p>
-                  <p className="mt-0.5 text-xs text-neutral-500 tabular-nums">
+                  <p className="text-sm font-bold text-ink">{model.name}</p>
+                  <p className="mt-0.5 text-xs text-ink-muted tabular-nums">
                     {model.hidden && displayCount === 0
                       ? '0 peças · R$ 0,00 · oculto no site'
                       : `${displayCount} ${displayCount === 1 ? 'peça' : 'peças'} · ${formatBRL(displayTotal)}${model.hidden ? ' · oculto no site' : ''}`}
                   </p>
                 </div>
                 <ChevronDown
-                  className={`h-5 w-5 shrink-0 text-neutral-400 transition-transform ${
-                    isExpanded ? 'rotate-180 text-neutral-900' : ''
+                  className={`h-5 w-5 shrink-0 text-ink-muted transition-transform ${
+                    isExpanded ? 'rotate-180 text-ink' : ''
                   }`}
                 />
               </button>
 
               {isExpanded && (
-                <div className="border-t border-neutral-100 bg-neutral-50/40 px-5 py-4">
+                <div className="border-t border-border/70 bg-surface/60 px-5 py-4">
                   {/* Atalho de clonagem rápida deste modelo */}
                   {availableSourceTabs.length > 0 && (
-                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-neutral-200/80 bg-white px-3 py-2">
-                      <span className="text-[11px] font-semibold text-neutral-500">
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-card px-3 py-2">
+                      <span className="text-[11px] font-semibold text-ink-muted">
                         Atalho para {model.name} ({selectedRev}ª revisão)
                       </span>
                       <div className="flex items-center gap-2">
@@ -386,7 +386,7 @@ export function TabRevisions({
                               [model.id]: Number(e.target.value),
                             }))
                           }
-                          className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-neutral-800 focus:border-[#E4002B] focus:outline-none"
+                          className="rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-ink focus:border-brand focus:outline-none"
                         >
                           {availableSourceTabs.map((tab) => (
                             <option key={tab.revision_number} value={tab.revision_number}>
@@ -397,9 +397,9 @@ export function TabRevisions({
                         <button
                           type="button"
                           onClick={() => handleCloneSingleModel(model.id, model.name)}
-                          className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-[11px] font-bold text-neutral-800 transition-colors hover:bg-neutral-100"
+                          className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface-neutral px-2.5 py-1 text-[11px] font-bold text-ink transition-colors hover:bg-border/60"
                         >
-                          <Copy className="h-3 w-3 text-[#E4002B]" />
+                          <Copy className="h-3 w-3 text-brand-text" />
                           Copiar peças
                         </button>
                       </div>
@@ -407,11 +407,11 @@ export function TabRevisions({
                   )}
 
                   {items.length === 0 ? (
-                    <p className="py-3 text-xs text-neutral-500">
+                    <p className="py-3 text-xs text-ink-muted">
                       Nenhuma peça vinculada a este modelo na {selectedRev}ª revisão.
                     </p>
                   ) : (
-                    <div className="divide-y divide-neutral-200/70 rounded-xl border border-neutral-200 bg-white">
+                    <div className="divide-y divide-border/70 rounded-xl border border-border bg-card">
                       {items.map((item, idx) => {
                         const part = partsMap[item.part_code];
                         const lineTotal = part ? computeLineTotal(part, item.quantity) : 0;
@@ -422,15 +422,15 @@ export function TabRevisions({
                             className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5"
                           >
                             <div className="min-w-0 flex-1">
-                              <p className="text-xs font-semibold text-neutral-900">
+                              <p className="text-xs font-semibold text-ink">
                                 {part?.description || item.part_code}
                                 {part?.is_optional && (
-                                  <span className="ml-1.5 text-[11px] font-normal text-neutral-500">
+                                  <span className="ml-1.5 text-[11px] font-normal text-ink-muted">
                                     (opcional)
                                   </span>
                                 )}
                               </p>
-                              <p className="font-mono text-[11px] text-neutral-400">
+                              <p className="font-mono text-[11px] text-ink-muted">
                                 {item.part_code} · Unitário:{' '}
                                 {part ? formatBRL(part.price) : 'R$ 0,00'}
                                 {part?.unit === 'ML' ? ' / 100ml' : ''}
@@ -447,14 +447,14 @@ export function TabRevisions({
                                   onChange={(e) =>
                                     handleQuantityChange(model.id, idx, Number(e.target.value))
                                   }
-                                  className="w-20 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-right text-xs font-semibold text-neutral-900 tabular-nums focus:border-[#E4002B] focus:outline-none"
+                                  className="w-20 rounded-lg border border-border bg-card px-2.5 py-1.5 text-right text-xs font-semibold text-ink tabular-nums focus:border-brand focus:outline-none"
                                 />
-                                <span className="min-w-[28px] text-[11px] font-semibold text-neutral-500">
+                                <span className="min-w-[28px] text-[11px] font-semibold text-ink-muted">
                                   {part?.unit || 'UN'}
                                 </span>
                               </div>
 
-                              <span className="w-24 text-right text-xs font-bold text-neutral-900 tabular-nums">
+                              <span className="w-24 text-right text-xs font-bold text-ink tabular-nums">
                                 {formatBRL(lineTotal)}
                               </span>
 
@@ -462,7 +462,7 @@ export function TabRevisions({
                                 type="button"
                                 onClick={() => handleRemoveItem(model.id, idx)}
                                 aria-label="Remover peça"
-                                className="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-[#E4002B]"
+                                className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-brand-soft hover:text-brand-text"
                               >
                                 <Trash2 className="h-4 w-4" />
                               </button>
@@ -484,7 +484,7 @@ export function TabRevisions({
                             [model.id]: e.target.value,
                           }))
                         }
-                        className="w-full max-w-sm rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                        className="w-full max-w-sm rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                       >
                         {parts.map((p) => (
                           <option key={p.code} value={p.code}>
@@ -497,7 +497,7 @@ export function TabRevisions({
                       <button
                         type="button"
                         onClick={() => handleAddItem(model.id)}
-                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-neutral-900 px-3.5 py-2 text-xs font-semibold text-white hover:bg-neutral-800"
+                        className="inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-ink px-3.5 py-2 text-xs font-semibold text-on-ink transition-opacity hover:opacity-90"
                       >
                         <Plus className="h-3.5 w-3.5" />
                         Adicionar
@@ -506,10 +506,10 @@ export function TabRevisions({
 
                     <div className="flex items-center justify-between gap-4 sm:justify-end">
                       <div className="text-right text-xs tabular-nums">
-                        <p className="font-bold text-neutral-900">
+                        <p className="font-bold text-ink">
                           Total: {formatBRL(totalWithOptionals)}
                         </p>
-                        <p className="text-[11px] text-neutral-500">
+                        <p className="text-[11px] text-ink-muted">
                           Sem opcionais: {formatBRL(totalWithoutOptionals)}
                         </p>
                       </div>
@@ -518,9 +518,9 @@ export function TabRevisions({
                         type="button"
                         disabled={savingModelId === model.id}
                         onClick={() => handleSaveModelRevision(model.id)}
-                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
+                        className={`inline-flex shrink-0 items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60 ${
                           !autoSaveEnabled && dirtyModelIds.includes(model.id)
-                            ? 'ring-2 ring-amber-400 ring-offset-2'
+                            ? 'ring-2 ring-brand/40 ring-offset-2'
                             : ''
                         }`}
                       >

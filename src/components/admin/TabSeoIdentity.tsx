@@ -489,22 +489,22 @@ export function TabSeoIdentity({
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="font-display text-2xl font-bold text-neutral-900">
+            <h1 className="font-display text-2xl font-bold text-ink">
               SEO & Identidade
             </h1>
             {hasPendingChanges && (
-              <span className="inline-flex items-center rounded-full bg-amber-100 px-2.5 py-0.5 text-[11px] font-bold text-amber-800">
+              <span className="inline-flex items-center rounded-full border border-brand/30 bg-brand-soft px-2.5 py-0.5 text-[11px] font-bold text-brand-text">
                 Alterações pendentes
               </span>
             )}
             {justSavedMsg && !hasPendingChanges && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[11px] font-bold text-emerald-800">
-                <CheckCircle2 className="h-3.5 w-3.5" />
+              <span className="inline-flex items-center gap-1 rounded-full border border-border bg-surface-neutral px-2.5 py-0.5 text-[11px] font-bold text-ink">
+                <CheckCircle2 className="h-3.5 w-3.5 text-ink" />
                 {justSavedMsg}
               </span>
             )}
           </div>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Identidade visual, metadados de busca, compartilhamento social e dados estruturados locais.
           </p>
         </div>
@@ -513,10 +513,10 @@ export function TabSeoIdentity({
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className={`inline-flex items-center gap-2 self-start rounded-xl px-5 py-2.5 text-xs font-bold text-white transition-all disabled:opacity-60 ${
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-brand px-5 py-2.5 text-xs font-bold text-on-brand transition-all hover:bg-brand-hover disabled:opacity-60 ${
             hasPendingChanges
-              ? 'bg-[#E4002B] shadow-md ring-2 ring-[#E4002B]/30 hover:bg-[#C80024]'
-              : 'bg-[#E4002B] hover:bg-[#C80024]'
+              ? 'shadow-md ring-2 ring-brand/30'
+              : ''
           }`}
         >
           <Save className="h-4 w-4" />
@@ -532,16 +532,16 @@ export function TabSeoIdentity({
         {/* Coluna Esquerda: Formulários */}
         <div className="space-y-6 lg:col-span-8">
           {/* Card 1: Identidade visual, SEO on-page e compartilhamento */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-5">
-            <h2 className="text-base font-bold text-neutral-900">
+          <div className="space-y-5 rounded-2xl border border-border bg-card p-5">
+            <h2 className="text-base font-bold text-ink">
               Identidade visual, SEO on-page e compartilhamento
             </h2>
 
             {/* Favicon */}
-            <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4">
+            <div className="rounded-xl border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-neutral-200 bg-white">
+                  <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-border bg-card">
                     {faviconPreviewSrc ? (
                       <img
                         src={faviconPreviewSrc}
@@ -562,19 +562,19 @@ export function TabSeoIdentity({
                         className="h-8 w-8 object-contain"
                       />
                     ) : (
-                      <span className="font-display text-xs font-extrabold text-[#E4002B]">R</span>
+                      <span className="font-display text-xs font-extrabold text-brand-text">R</span>
                     )}
                   </div>
                   <div>
-                    <p className="text-xs font-bold text-neutral-800">Favicon</p>
-                    <p className="text-[11px] text-neutral-500">
+                    <p className="text-xs font-bold text-ink">Favicon</p>
+                    <p className="text-[11px] text-ink-muted">
                       PNG, JPG, WEBP, SVG ou ICO (até 8 MB · 512x512 recomendado)
                     </p>
                   </div>
                 </div>
 
                 {/* Prévia da aba do navegador */}
-                <div className="flex items-center gap-2 rounded-t-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs shadow-xs">
+                <div className="flex items-center gap-2 rounded-t-lg border border-border bg-card px-3 py-1.5 text-xs shadow-xs">
                   {faviconPreviewSrc ? (
                     <img
                       src={faviconPreviewSrc}
@@ -583,9 +583,9 @@ export function TabSeoIdentity({
                       className="h-3.5 w-3.5 object-contain"
                     />
                   ) : (
-                    <span className="inline-block h-3 w-3 rounded-sm bg-[#E4002B]" />
+                    <span className="inline-block h-3 w-3 rounded-sm bg-brand" />
                   )}
-                  <span className="max-w-[160px] truncate text-[11px] font-medium text-neutral-700">
+                  <span className="max-w-[160px] truncate text-[11px] font-medium text-ink">
                     {draft.meta_title || 'Rodaleve Honda'}
                   </span>
                 </div>
@@ -600,7 +600,7 @@ export function TabSeoIdentity({
                     update({ favicon_url: normalizeSeoImageInput(e.target.value) });
                   }}
                   placeholder="URL do favicon..."
-                  className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-800"
+                  className="min-w-[200px] flex-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                 />
                 <input
                   ref={faviconInputRef}
@@ -617,7 +617,7 @@ export function TabSeoIdentity({
                   type="button"
                   disabled={uploadingField === 'favicon'}
                   onClick={() => faviconInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingField === 'favicon' ? 'Enviando...' : 'Enviar arquivo'}
@@ -629,20 +629,20 @@ export function TabSeoIdentity({
                     clearFieldPreviewAndError('favicon');
                     update({ favicon_url: '' });
                   }}
-                  className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B] disabled:opacity-50"
+                  className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink-muted hover:text-brand-text disabled:opacity-50"
                 >
                   Remover
                 </button>
               </div>
               {fieldErrors.favicon && (
-                <p className="mt-2 text-[11px] font-medium text-[#E4002B]">{fieldErrors.favicon}</p>
+                <p className="mt-2 text-[11px] font-medium text-brand-text">{fieldErrors.favicon}</p>
               )}
             </div>
 
             {/* Logo Principal */}
-            <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4 space-y-3">
+            <div className="space-y-3 rounded-xl border border-border bg-surface p-4">
               <div className="flex items-center gap-3">
-                <div className="flex h-12 w-28 items-center justify-center overflow-hidden rounded-xl border border-neutral-200 bg-white px-2">
+                <div className="flex h-12 w-28 items-center justify-center overflow-hidden rounded-xl border border-border bg-card px-2">
                   {logoPreviewSrc ? (
                     <img
                       src={logoPreviewSrc}
@@ -662,12 +662,12 @@ export function TabSeoIdentity({
                       className="max-h-9 w-auto object-contain"
                     />
                   ) : (
-                    <span className="font-display text-sm font-extrabold text-[#E4002B]">RODALEVE</span>
+                    <span className="font-display text-sm font-extrabold text-brand-text">RODALEVE</span>
                   )}
                 </div>
                 <div>
-                  <p className="text-xs font-bold text-neutral-800">Logo principal</p>
-                  <p className="text-[11px] text-neutral-500">
+                  <p className="text-xs font-bold text-ink">Logo principal</p>
+                  <p className="text-[11px] text-ink-muted">
                     Exibida no cabeçalho e rodapé do site (PNG, JPG, WEBP ou SVG até 8 MB)
                   </p>
                 </div>
@@ -682,7 +682,7 @@ export function TabSeoIdentity({
                     update({ logo_url: normalizeSeoImageInput(e.target.value) });
                   }}
                   placeholder="Caminho ou URL da logo..."
-                  className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-800"
+                  className="min-w-[200px] flex-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                 />
                 <input
                   ref={logoInputRef}
@@ -699,7 +699,7 @@ export function TabSeoIdentity({
                   type="button"
                   disabled={uploadingField === 'logo'}
                   onClick={() => logoInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingField === 'logo' ? 'Enviando...' : 'Enviar arquivo'}
@@ -711,18 +711,18 @@ export function TabSeoIdentity({
                     clearFieldPreviewAndError('logo');
                     update({ logo_url: '' });
                   }}
-                  className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B] disabled:opacity-50"
+                  className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink-muted hover:text-brand-text disabled:opacity-50"
                 >
                   Remover
                 </button>
               </div>
               {fieldErrors.logo && (
-                <p className="text-[11px] font-medium text-[#E4002B]">{fieldErrors.logo}</p>
+                <p className="text-[11px] font-medium text-brand-text">{fieldErrors.logo}</p>
               )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="block text-[11px] font-semibold text-neutral-600">
+                  <label className="block text-[11px] font-semibold text-ink-muted">
                     Nome curto da marca
                   </label>
                   <input
@@ -730,27 +730,27 @@ export function TabSeoIdentity({
                     value={draft.short_name || ''}
                     onChange={(e) => update({ short_name: e.target.value })}
                     placeholder="Ex.: Rodaleve"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-neutral-600">
+                  <label className="block text-[11px] font-semibold text-ink-muted">
                     Texto alternativo (Alt Text) da logo
                   </label>
                   <input
                     type="text"
                     value={draft.logo_alt}
                     onChange={(e) => update({ logo_alt: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
               </div>
             </div>
 
             {/* Logo e Cabeçalho do Gestor */}
-            <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-4 space-y-3">
+            <div className="space-y-3 rounded-xl border border-border bg-surface p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-3.5 rounded-xl border border-neutral-200 bg-white px-3.5 py-2.5">
+                <div className="flex items-center gap-3.5 rounded-xl border border-border bg-card px-3.5 py-2.5">
                   {gestorLogoPreviewSrc ? (
                     <img
                       src={gestorLogoPreviewSrc}
@@ -771,13 +771,13 @@ export function TabSeoIdentity({
                       className="max-h-[46px] w-auto max-w-[160px] object-contain"
                     />
                   ) : (
-                    <span className="font-display text-sm font-extrabold text-[#E4002B]">RODALEVE</span>
+                    <span className="font-display text-sm font-extrabold text-brand-text">RODALEVE</span>
                   )}
-                  <div className="border-l border-neutral-200 pl-3.5">
-                    <p className="text-sm font-bold leading-tight text-neutral-900">
+                  <div className="border-l border-border pl-3.5">
+                    <p className="text-sm font-bold leading-tight text-ink">
                       {draft.gestor_title || 'Gestor Rodaleve'}
                     </p>
-                    <p className="text-[11px] text-neutral-500">
+                    <p className="text-[11px] text-ink-muted">
                       {draft.gestor_subtitle || 'Tabela de manutenção e revisões'}
                     </p>
                   </div>
@@ -794,7 +794,7 @@ export function TabSeoIdentity({
                         gestor_subtitle: 'Tabela de manutenção e revisões',
                       });
                     }}
-                    className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-neutral-300 hover:text-neutral-900"
+                    className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink-muted hover:bg-surface-neutral hover:text-ink"
                   >
                     Restaurar padrão
                   </button>
@@ -802,7 +802,7 @@ export function TabSeoIdentity({
                     type="button"
                     disabled={saving}
                     onClick={handleSave}
-                    className="inline-flex items-center gap-1 rounded-xl bg-[#E4002B] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#C80024] disabled:opacity-60"
+                    className="inline-flex items-center gap-1 rounded-xl bg-brand px-3 py-1.5 text-xs font-bold text-on-brand hover:bg-brand-hover disabled:opacity-60"
                   >
                     <Save className="h-3.5 w-3.5" />
                     Salvar
@@ -811,10 +811,10 @@ export function TabSeoIdentity({
               </div>
 
               <div>
-                <p className="text-xs font-bold text-neutral-800">
+                <p className="text-xs font-bold text-ink">
                   Logo e identificação no topo do Gestor
                 </p>
-                <p className="text-[11px] text-neutral-500">
+                <p className="text-[11px] text-ink-muted">
                   Aceita PNG, SVG, WEBP ou JPG até 8 MB (preferencialmente com fundo transparente).
                 </p>
               </div>
@@ -828,7 +828,7 @@ export function TabSeoIdentity({
                     update({ gestor_logo_url: normalizeSeoImageInput(e.target.value) });
                   }}
                   placeholder="URL da logo do Gestor (ex.: /rodaleve-gestor-logo.svg ou https://...)"
-                  className="min-w-[200px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs text-neutral-800"
+                  className="min-w-[200px] flex-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                 />
                 <input
                   ref={gestorLogoInputRef}
@@ -845,19 +845,19 @@ export function TabSeoIdentity({
                   type="button"
                   disabled={uploadingField === 'gestor_logo'}
                   onClick={() => gestorLogoInputRef.current?.click()}
-                  className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                  className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
                 >
                   <Upload className="h-3.5 w-3.5" />
                   {uploadingField === 'gestor_logo' ? 'Enviando...' : 'Enviar arquivo'}
                 </button>
               </div>
               {fieldErrors.gestor_logo && (
-                <p className="text-[11px] font-medium text-[#E4002B]">{fieldErrors.gestor_logo}</p>
+                <p className="text-[11px] font-medium text-brand-text">{fieldErrors.gestor_logo}</p>
               )}
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="block text-[11px] font-semibold text-neutral-600">
+                  <label className="block text-[11px] font-semibold text-ink-muted">
                     Título do cabeçalho do Gestor
                   </label>
                   <input
@@ -865,11 +865,11 @@ export function TabSeoIdentity({
                     value={draft.gestor_title || ''}
                     onChange={(e) => update({ gestor_title: e.target.value })}
                     placeholder="Gestor Rodaleve"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
                 <div>
-                  <label className="block text-[11px] font-semibold text-neutral-600">
+                  <label className="block text-[11px] font-semibold text-ink-muted">
                     Subtítulo do cabeçalho do Gestor
                   </label>
                   <input
@@ -877,7 +877,7 @@ export function TabSeoIdentity({
                     value={draft.gestor_subtitle || ''}
                     onChange={(e) => update({ gestor_subtitle: e.target.value })}
                     placeholder="Tabela de manutenção e revisões"
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
               </div>
@@ -886,9 +886,9 @@ export function TabSeoIdentity({
             {/* Meta Title, Description, Keywords, Author, Canonical */}
             <div className="space-y-3.5">
               <div>
-                <div className="flex justify-between text-xs font-semibold text-neutral-700">
+                <div className="flex justify-between text-xs font-semibold text-ink">
                   <span>Título do site (Meta Title)</span>
-                  <span className="font-mono text-[11px] text-neutral-500 tabular-nums">
+                  <span className="font-mono text-[11px] text-ink-muted tabular-nums">
                     {draft.meta_title.length}/60
                   </span>
                 </div>
@@ -896,14 +896,14 @@ export function TabSeoIdentity({
                   type="text"
                   value={draft.meta_title}
                   onChange={(e) => update({ meta_title: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3.5 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3.5 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
 
               <div>
-                <div className="flex justify-between text-xs font-semibold text-neutral-700">
+                <div className="flex justify-between text-xs font-semibold text-ink">
                   <span>Descrição (Meta Description)</span>
-                  <span className="font-mono text-[11px] text-neutral-500 tabular-nums">
+                  <span className="font-mono text-[11px] text-ink-muted tabular-nums">
                     {draft.meta_description.length}/155
                   </span>
                 </div>
@@ -911,63 +911,63 @@ export function TabSeoIdentity({
                   rows={2}
                   value={draft.meta_description}
                   onChange={(e) => update({ meta_description: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3.5 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3.5 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
+                  <label className="block text-xs font-semibold text-ink">
                     Palavras-chave (Meta Keywords)
                   </label>
                   <input
                     type="text"
                     value={draft.meta_keywords}
                     onChange={(e) => update({ meta_keywords: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
+                  <label className="block text-xs font-semibold text-ink">
                     Autor / Nome da marca
                   </label>
                   <input
                     type="text"
                     value={draft.author_brand}
                     onChange={(e) => update({ author_brand: e.target.value })}
-                    className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   URL Canônica
                 </label>
                 <input
                   type="url"
                   value={draft.canonical_url}
                   onChange={(e) => update({ canonical_url: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-xs text-neutral-900"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
             </div>
 
             {/* Open Graph */}
-            <div className="space-y-3 border-t border-neutral-100 pt-4">
+            <div className="space-y-3 border-t border-border/70 pt-4">
               <div>
                 <div className="flex items-center justify-between">
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-neutral-700">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
                     <input
                       type="checkbox"
                       checked={draft.og_same_title}
                       onChange={(e) => update({ og_same_title: e.target.checked })}
-                      className="h-4 w-4 rounded accent-[#E4002B]"
+                      className="h-4 w-4 rounded accent-brand"
                     />
                     Usar o mesmo título do Meta Title
                   </label>
-                  <span className="font-mono text-[11px] text-neutral-500 tabular-nums">
+                  <span className="font-mono text-[11px] text-ink-muted tabular-nums">
                     {effectiveOgTitle.length}/70
                   </span>
                 </div>
@@ -977,23 +977,23 @@ export function TabSeoIdentity({
                     value={draft.og_title}
                     onChange={(e) => update({ og_title: e.target.value })}
                     placeholder="Título Open Graph..."
-                    className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1.5 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 )}
               </div>
 
               <div>
                 <div className="flex items-center justify-between">
-                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-neutral-700">
+                  <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-semibold text-ink">
                     <input
                       type="checkbox"
                       checked={draft.og_same_description}
                       onChange={(e) => update({ og_same_description: e.target.checked })}
-                      className="h-4 w-4 rounded accent-[#E4002B]"
+                      className="h-4 w-4 rounded accent-brand"
                     />
                     Usar a mesma Meta Description
                   </label>
-                  <span className="font-mono text-[11px] text-neutral-500 tabular-nums">
+                  <span className="font-mono text-[11px] text-ink-muted tabular-nums">
                     {effectiveOgDesc.length}/200
                   </span>
                 </div>
@@ -1003,21 +1003,21 @@ export function TabSeoIdentity({
                     value={draft.og_description}
                     onChange={(e) => update({ og_description: e.target.value })}
                     placeholder="Descrição Open Graph..."
-                    className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900"
+                    className="mt-1.5 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 )}
               </div>
 
               {/* og:image */}
-              <div className="rounded-xl border border-neutral-100 bg-neutral-50/70 p-3.5">
-                <p className="text-xs font-bold text-neutral-800">
+              <div className="rounded-xl border border-border bg-surface p-3.5">
+                <p className="text-xs font-bold text-ink">
                   Imagem de compartilhamento (og:image, 1200x630)
                 </p>
-                <p className="mt-0.5 text-[11px] text-neutral-500">
+                <p className="mt-0.5 text-[11px] text-ink-muted">
                   PNG, JPG, WEBP ou SVG (até 8 MB · ideal 1200x630 para WhatsApp e Facebook)
                 </p>
                 <div className="mt-2.5 flex flex-wrap items-center gap-3">
-                  <div className="flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-neutral-200 bg-white">
+                  <div className="flex h-16 w-28 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-card">
                     {ogPreviewSrc ? (
                       <img
                         src={ogPreviewSrc}
@@ -1035,7 +1035,7 @@ export function TabSeoIdentity({
                         className="h-full w-full object-cover"
                       />
                     ) : (
-                      <ImageIcon className="h-5 w-5 text-neutral-300" />
+                      <ImageIcon className="h-5 w-5 text-ink-muted" />
                     )}
                   </div>
                   <div className="flex flex-1 flex-wrap items-center gap-2">
@@ -1047,7 +1047,7 @@ export function TabSeoIdentity({
                         update({ og_image: normalizeSeoImageInput(e.target.value) });
                       }}
                       placeholder="URL da imagem de compartilhamento..."
-                      className="min-w-[180px] flex-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs"
+                      className="min-w-[180px] flex-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       ref={ogInputRef}
@@ -1064,7 +1064,7 @@ export function TabSeoIdentity({
                       type="button"
                       disabled={uploadingField === 'og'}
                       onClick={() => ogInputRef.current?.click()}
-                      className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:bg-neutral-50 disabled:opacity-50"
+                      className="inline-flex items-center gap-1 rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink hover:bg-surface-neutral disabled:opacity-50"
                     >
                       <Upload className="h-3.5 w-3.5" />
                       {uploadingField === 'og' ? 'Enviando...' : 'Enviar'}
@@ -1076,26 +1076,26 @@ export function TabSeoIdentity({
                         clearFieldPreviewAndError('og');
                         update({ og_image: '' });
                       }}
-                      className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:text-[#E4002B] disabled:opacity-50"
+                      className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-semibold text-ink-muted hover:text-brand-text disabled:opacity-50"
                     >
                       Remover
                     </button>
                   </div>
                 </div>
                 {fieldErrors.og && (
-                  <p className="mt-2 text-[11px] font-medium text-[#E4002B]">{fieldErrors.og}</p>
+                  <p className="mt-2 text-[11px] font-medium text-brand-text">{fieldErrors.og}</p>
                 )}
               </div>
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
+                  <label className="block text-xs font-semibold text-ink">
                     Tipo de conteúdo (og:type)
                   </label>
                   <select
                     value={draft.og_type}
                     onChange={(e) => update({ og_type: e.target.value as SeoSettings['og_type'] })}
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   >
                     <option value="website">website</option>
                     <option value="article">article</option>
@@ -1103,7 +1103,7 @@ export function TabSeoIdentity({
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-neutral-700">
+                  <label className="block text-xs font-semibold text-ink">
                     Twitter Card
                   </label>
                   <select
@@ -1111,7 +1111,7 @@ export function TabSeoIdentity({
                     onChange={(e) =>
                       update({ twitter_card: e.target.value as SeoSettings['twitter_card'] })
                     }
-                    className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs"
+                    className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                   >
                     <option value="summary_large_image">summary_large_image</option>
                     <option value="summary">summary</option>
@@ -1122,73 +1122,73 @@ export function TabSeoIdentity({
           </div>
 
           {/* Card 2: SEO local e dados estruturados */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-5">
-            <h2 className="text-base font-bold text-neutral-900">
+          <div className="space-y-5 rounded-2xl border border-border bg-card p-5">
+            <h2 className="text-base font-bold text-ink">
               SEO local e dados estruturados
             </h2>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Tipo de negócio (Schema.org)
                 </label>
                 <input
                   type="text"
                   value={draft.business_type}
                   onChange={(e) => update({ business_type: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-xs"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Nome da empresa / marca principal
                 </label>
                 <input
                   type="text"
                   value={draft.company_name}
                   onChange={(e) => update({ company_name: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">Instagram</label>
+                <label className="block text-xs font-semibold text-ink">Instagram</label>
                 <input
                   type="url"
                   value={draft.instagram_url}
                   onChange={(e) => update({ instagram_url: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">Facebook</label>
+                <label className="block text-xs font-semibold text-ink">Facebook</label>
                 <input
                   type="url"
                   value={draft.facebook_url}
                   onChange={(e) => update({ facebook_url: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-neutral-700">YouTube</label>
+                <label className="block text-xs font-semibold text-ink">YouTube</label>
                 <input
                   type="url"
                   value={draft.youtube_url}
                   onChange={(e) => update({ youtube_url: e.target.value })}
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
             </div>
 
             {/* Unidades / Lojas */}
-            <div className="space-y-3 border-t border-neutral-100 pt-4">
+            <div className="space-y-3 border-t border-border/70 pt-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs font-bold text-neutral-800">
+                <p className="text-xs font-bold text-ink">
                   Unidades / Lojas ({draft.units.length})
                 </p>
                 <button
                   type="button"
                   onClick={handleAddUnit}
-                  className="inline-flex items-center gap-1 rounded-xl bg-neutral-900 px-3 py-1.5 text-xs font-bold text-white hover:bg-neutral-800"
+                  className="inline-flex items-center gap-1 rounded-xl bg-ink px-3 py-1.5 text-xs font-bold text-on-ink transition-opacity hover:opacity-90"
                 >
                   <Plus className="h-3.5 w-3.5" />
                   Adicionar Unidade
@@ -1198,14 +1198,14 @@ export function TabSeoIdentity({
               {draft.units.map((unit, idx) => (
                 <div
                   key={unit.id}
-                  className="space-y-3 rounded-xl border border-neutral-200 bg-neutral-50/60 p-4"
+                  className="space-y-3 rounded-xl border border-border bg-surface p-4"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-neutral-900">{unit.name}</span>
+                    <span className="text-xs font-bold text-ink">{unit.name}</span>
                     <button
                       type="button"
                       onClick={() => handleRemoveUnit(idx)}
-                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-neutral-500 hover:bg-neutral-200/70 hover:text-[#E4002B]"
+                      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-semibold text-ink-muted hover:bg-brand-soft hover:text-brand-text"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                       Remover
@@ -1218,63 +1218,63 @@ export function TabSeoIdentity({
                       value={unit.name}
                       onChange={(e) => handleUpdateUnit(idx, { name: e.target.value })}
                       placeholder="Nome da unidade"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs sm:col-span-2"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none sm:col-span-2"
                     />
                     <input
                       type="text"
                       value={unit.cnpj}
                       onChange={(e) => handleUpdateUnit(idx, { cnpj: e.target.value })}
                       placeholder="CNPJ"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       type="text"
                       value={unit.phone}
                       onChange={(e) => handleUpdateUnit(idx, { phone: e.target.value })}
                       placeholder="Telefone"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       type="text"
                       value={unit.whatsapp}
                       onChange={(e) => handleUpdateUnit(idx, { whatsapp: e.target.value })}
                       placeholder="WhatsApp (ex: (77) 2888-0003)"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       type="text"
                       value={unit.hours}
                       onChange={(e) => handleUpdateUnit(idx, { hours: e.target.value })}
                       placeholder="Horário (Mo-Fr 07:30-18:00)"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       type="text"
                       value={unit.street}
                       onChange={(e) => handleUpdateUnit(idx, { street: e.target.value })}
                       placeholder="Rua / Av."
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs sm:col-span-2"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none sm:col-span-2"
                     />
                     <input
                       type="text"
                       value={unit.number}
                       onChange={(e) => handleUpdateUnit(idx, { number: e.target.value })}
                       placeholder="Número"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       type="text"
                       value={unit.neighborhood}
                       onChange={(e) => handleUpdateUnit(idx, { neighborhood: e.target.value })}
                       placeholder="Bairro"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <input
                       type="text"
                       value={unit.city}
                       onChange={(e) => handleUpdateUnit(idx, { city: e.target.value })}
                       placeholder="Cidade"
-                      className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                      className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                     />
                     <div className="grid grid-cols-2 gap-2">
                       <input
@@ -1282,14 +1282,14 @@ export function TabSeoIdentity({
                         value={unit.state}
                         onChange={(e) => handleUpdateUnit(idx, { state: e.target.value })}
                         placeholder="UF"
-                        className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                        className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                       />
                       <input
                         type="text"
                         value={unit.zip}
                         onChange={(e) => handleUpdateUnit(idx, { zip: e.target.value })}
                         placeholder="CEP"
-                        className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-xs"
+                        className="rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                       />
                     </div>
                     <div className="flex flex-wrap items-center gap-2 sm:col-span-3">
@@ -1298,7 +1298,7 @@ export function TabSeoIdentity({
                         value={unit.gmb_url}
                         onChange={(e) => handleUpdateUnit(idx, { gmb_url: e.target.value })}
                         placeholder="Link do Google Maps / Google Meu Negócio"
-                        className="min-w-[200px] flex-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs"
+                        className="min-w-[200px] flex-1 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs text-ink focus:border-brand focus:outline-none"
                       />
                       <button
                         type="button"
@@ -1313,7 +1313,7 @@ export function TabSeoIdentity({
                             gmb_url: `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(fullQuery)}`,
                           });
                         }}
-                        className="whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-neutral-700 hover:border-[#E4002B] hover:text-[#E4002B]"
+                        className="whitespace-nowrap rounded-lg border border-border bg-card px-2.5 py-1.5 text-[11px] font-semibold text-ink hover:border-brand hover:text-brand-text"
                       >
                         Atualizar link pelo endereço
                       </button>
@@ -1323,25 +1323,25 @@ export function TabSeoIdentity({
               ))}
             </div>
 
-            {/* Bloco preto JSON-LD */}
+            {/* Bloco JSON-LD */}
             <div>
-              <p className="mb-1.5 text-xs font-bold text-neutral-800">
+              <p className="mb-1.5 text-xs font-bold text-ink">
                 JSON-LD (schema.org) gerado automaticamente (injetado no &lt;head&gt;)
               </p>
-              <pre className="max-h-60 overflow-auto rounded-xl bg-neutral-950 p-4 font-mono text-[11px] leading-relaxed text-emerald-300">
+              <pre className="max-h-60 overflow-auto rounded-xl border border-border bg-surface-neutral p-4 font-mono text-[11px] leading-relaxed text-ink">
                 {jsonLdString}
               </pre>
             </div>
           </div>
 
           {/* Card 3: SEO técnico e indexação */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5 space-y-4">
-            <h2 className="text-base font-bold text-neutral-900">
+          <div className="space-y-4 rounded-2xl border border-border bg-card p-5">
+            <h2 className="text-base font-bold text-ink">
               SEO técnico e indexação
             </h2>
 
             <div>
-              <label className="block text-xs font-semibold text-neutral-700">
+              <label className="block text-xs font-semibold text-ink">
                 Indexação nos buscadores
               </label>
               <select
@@ -1349,7 +1349,7 @@ export function TabSeoIdentity({
                 onChange={(e) =>
                   update({ robots_policy: e.target.value as SeoSettings['robots_policy'] })
                 }
-                className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs"
+                className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
               >
                 <option value="index, follow">Indexar e seguir links (index, follow)</option>
                 <option value="noindex, follow">Não indexar, seguir links (noindex, follow)</option>
@@ -1360,19 +1360,19 @@ export function TabSeoIdentity({
 
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-neutral-700">robots.txt</label>
+                <label className="text-xs font-semibold text-ink">robots.txt</label>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={handleGenerateRobots}
-                    className="rounded-lg border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                    className="rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-surface-neutral"
                   >
                     Gerar padrão
                   </button>
                   <button
                     type="button"
                     onClick={() => downloadTextFile('robots.txt', draft.robots_txt)}
-                    className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-surface-neutral"
                   >
                     <Download className="h-3 w-3" />
                     Baixar
@@ -1383,18 +1383,18 @@ export function TabSeoIdentity({
                 rows={4}
                 value={draft.robots_txt}
                 onChange={(e) => update({ robots_txt: e.target.value })}
-                className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-xs"
+                className="mt-1.5 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
               />
             </div>
 
             <div>
               <div className="flex items-center justify-between">
-                <label className="text-xs font-semibold text-neutral-700">sitemap.xml</label>
+                <label className="text-xs font-semibold text-ink">sitemap.xml</label>
                 <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={handleGenerateSitemap}
-                    className="rounded-lg border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                    className="rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-surface-neutral"
                   >
                     Gerar sitemap
                   </button>
@@ -1404,7 +1404,7 @@ export function TabSeoIdentity({
                       void navigator.clipboard.writeText(draft.sitemap_xml);
                       onToast('success', 'Sitemap copiado para a área de transferência.');
                     }}
-                    className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-surface-neutral"
                   >
                     <Copy className="h-3 w-3" />
                     Copiar
@@ -1414,7 +1414,7 @@ export function TabSeoIdentity({
                     onClick={() =>
                       downloadTextFile('sitemap.xml', draft.sitemap_xml, 'application/xml')
                     }
-                    className="inline-flex items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:bg-neutral-50"
+                    className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2.5 py-1 text-[11px] font-semibold text-ink hover:bg-surface-neutral"
                   >
                     <Download className="h-3 w-3" />
                     Baixar
@@ -1425,13 +1425,13 @@ export function TabSeoIdentity({
                 rows={5}
                 value={draft.sitemap_xml}
                 onChange={(e) => update({ sitemap_xml: e.target.value })}
-                className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-xs"
+                className="mt-1.5 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
               />
             </div>
 
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Scripts de rastreamento (&lt;head&gt;)
                 </label>
                 <textarea
@@ -1439,11 +1439,11 @@ export function TabSeoIdentity({
                   value={draft.head_scripts}
                   onChange={(e) => update({ head_scripts: e.target.value })}
                   placeholder="GA4, Search Console meta tag, GTM head..."
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-[11px]"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-[11px] text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Scripts do &lt;body&gt;
                 </label>
                 <textarea
@@ -1451,7 +1451,7 @@ export function TabSeoIdentity({
                   value={draft.body_scripts}
                   onChange={(e) => update({ body_scripts: e.target.value })}
                   placeholder="GTM noscript ou tags personalizadas..."
-                  className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-[11px]"
+                  className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-[11px] text-ink focus:border-brand focus:outline-none"
                 />
               </div>
             </div>
@@ -1461,15 +1461,15 @@ export function TabSeoIdentity({
         {/* Painel Lateral Direito: Prévias */}
         <div className="space-y-5 lg:col-span-4">
           {/* Pré-visualização no Google */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+          <div className="rounded-2xl border border-border bg-card p-5">
             <div className="flex items-center justify-between">
-              <h3 className="text-sm font-bold text-neutral-900">Prévia no Google</h3>
-              <div className="inline-flex rounded-lg border border-neutral-200 bg-neutral-50 p-0.5 text-[11px]">
+              <h3 className="text-sm font-bold text-ink">Prévia no Google</h3>
+              <div className="inline-flex rounded-lg border border-border bg-surface-neutral p-0.5 text-[11px]">
                 <button
                   type="button"
                   onClick={() => setPreviewDevice('desktop')}
                   className={`rounded-md px-2 py-1 font-semibold ${
-                    previewDevice === 'desktop' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-500'
+                    previewDevice === 'desktop' ? 'bg-card text-ink shadow-xs' : 'text-ink-muted'
                   }`}
                 >
                   Desktop
@@ -1478,7 +1478,7 @@ export function TabSeoIdentity({
                   type="button"
                   onClick={() => setPreviewDevice('mobile')}
                   className={`rounded-md px-2 py-1 font-semibold ${
-                    previewDevice === 'mobile' ? 'bg-white text-neutral-900 shadow-xs' : 'text-neutral-500'
+                    previewDevice === 'mobile' ? 'bg-card text-ink shadow-xs' : 'text-ink-muted'
                   }`}
                 >
                   Celular
@@ -1487,12 +1487,12 @@ export function TabSeoIdentity({
             </div>
 
             <div
-              className={`mt-3 rounded-xl border border-neutral-100 bg-white p-3.5 ${
+              className={`mt-3 rounded-xl border border-border/70 bg-card p-3.5 ${
                 previewDevice === 'mobile' ? 'max-w-[290px]' : ''
               }`}
             >
               <div className="flex items-center gap-2">
-                <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-neutral-200 bg-neutral-50">
+                <div className="flex h-6 w-6 shrink-0 items-center justify-center overflow-hidden rounded-full border border-border bg-surface-neutral">
                   {faviconPreviewSrc ? (
                     <img
                       src={faviconPreviewSrc}
@@ -1501,34 +1501,34 @@ export function TabSeoIdentity({
                       className="h-4 w-4 object-contain"
                     />
                   ) : (
-                    <span className="font-display text-[10px] font-extrabold text-[#E4002B]">R</span>
+                    <span className="font-display text-[10px] font-extrabold text-brand-text">R</span>
                   )}
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-[11px] font-medium leading-tight text-neutral-900">
+                  <p className="truncate text-[11px] font-medium leading-tight text-ink">
                     {draft.short_name || draft.company_name || 'Rodaleve Honda'}
                   </p>
-                  <p className="truncate text-[10px] leading-tight text-neutral-500">
+                  <p className="truncate text-[10px] leading-tight text-ink-muted">
                     {draft.canonical_url || 'https://revisoes.rodaleve.com.br'}
                   </p>
                 </div>
               </div>
-              <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-[#1a0dab]">
+              <p className="mt-1.5 line-clamp-1 text-sm font-semibold text-brand-text underline">
                 {draft.meta_title || 'Título do site'}
               </p>
-              <p className="mt-1 line-clamp-2 text-xs leading-snug text-neutral-600">
+              <p className="mt-1 line-clamp-2 text-xs leading-snug text-ink-muted">
                 {draft.meta_description || 'Descrição do site exibida nos resultados do Google.'}
               </p>
             </div>
           </div>
 
           {/* Prévia de Compartilhamento (WhatsApp/Facebook) */}
-          <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-            <h3 className="text-sm font-bold text-neutral-900">
+          <div className="rounded-2xl border border-border bg-card p-5">
+            <h3 className="text-sm font-bold text-ink">
               Compartilhamento (WhatsApp / Facebook)
             </h3>
-            <div className="mt-3 overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50">
-              <div className="aspect-[1200/630] w-full bg-neutral-200">
+            <div className="mt-3 overflow-hidden rounded-xl border border-border bg-surface">
+              <div className="aspect-[1200/630] w-full bg-surface-neutral">
                 {ogPreviewSrc && !fieldErrors.og ? (
                   <img
                     src={ogPreviewSrc}
@@ -1537,7 +1537,7 @@ export function TabSeoIdentity({
                     className="h-full w-full object-cover"
                   />
                 ) : (
-                  <div className="flex h-full items-center justify-center px-4 text-center text-xs text-neutral-500">
+                  <div className="flex h-full items-center justify-center px-4 text-center text-xs text-ink-muted">
                     {fieldErrors.og
                       ? 'Falha ao carregar imagem og:image'
                       : 'Sem imagem og:image'}
@@ -1545,13 +1545,13 @@ export function TabSeoIdentity({
                 )}
               </div>
               <div className="p-3">
-                <p className="text-[10px] uppercase tracking-wider text-neutral-500">
+                <p className="text-[10px] uppercase tracking-wider text-ink-muted">
                   {(draft.canonical_url || 'revisoes.rodaleve.com.br').replace(/^https?:\/\//, '')}
                 </p>
-                <p className="mt-0.5 line-clamp-1 text-xs font-bold text-neutral-900">
+                <p className="mt-0.5 line-clamp-1 text-xs font-bold text-ink">
                   {effectiveOgTitle}
                 </p>
-                <p className="mt-0.5 line-clamp-2 text-[11px] text-neutral-600">
+                <p className="mt-0.5 line-clamp-2 text-[11px] text-ink-muted">
                   {effectiveOgDesc}
                 </p>
               </div>

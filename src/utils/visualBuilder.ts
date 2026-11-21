@@ -64,7 +64,7 @@ export const DEFAULT_SITE_CONTENT: Record<string, string> = {
   footer_policies_title: 'Políticas e Termos',
   footer_disclaimer:
     'Os valores exibidos nesta tabela são estimados para peças genuínas e insumos básicos de cada revisão e podem variar conforme inspeção técnica ou necessidade adicional da motocicleta.',
-  footer_slogan: 'DESBRAVE SEU BEM MAIOR É A VIDA',
+  footer_slogan: 'DESACELERE, SEU BEM MAIOR É A VIDA',
   footer_credits: 'Site criado por',
 };
 
@@ -76,6 +76,7 @@ export function createDefaultVisualConfig(modelIds: number[] = []): VisualBuilde
     modelOrder: modelIds,
     hiddenModelIds: [],
     imageOverrides: {},
+    htmlOverrides: {},
   };
 }
 
@@ -126,10 +127,21 @@ export function mergeWithDefaultVisualConfig(
   const savedOrder = rawOrder.filter((id) => safeModelIds.includes(id));
   const missingIds = safeModelIds.filter((id) => !savedOrder.includes(id));
 
-  const siteContent =
+  const rawSiteContent =
     saved.siteContent && typeof saved.siteContent === 'object' && !Array.isArray(saved.siteContent)
-      ? saved.siteContent
+      ? { ...saved.siteContent }
       : {};
+  const savedSlogan = rawSiteContent.footer_slogan?.text?.trim().toUpperCase();
+  if (
+    savedSlogan === 'DESBRAVE SEU BEM MAIOR É A VIDA' ||
+    savedSlogan === 'DESACELERE SEU BEM MAIOR É A VIDA'
+  ) {
+    rawSiteContent.footer_slogan = {
+      ...rawSiteContent.footer_slogan,
+      text: DEFAULT_SITE_CONTENT.footer_slogan,
+    };
+  }
+  const siteContent = rawSiteContent;
   const hiddenModelIds = Array.isArray(saved.hiddenModelIds)
     ? saved.hiddenModelIds.filter((id) => typeof id === 'number')
     : [];
@@ -140,6 +152,19 @@ export function mergeWithDefaultVisualConfig(
       ? saved.imageOverrides
       : {};
 
+  const htmlOverrides: Record<string, string> = {};
+  if (
+    saved.htmlOverrides &&
+    typeof saved.htmlOverrides === 'object' &&
+    !Array.isArray(saved.htmlOverrides)
+  ) {
+    for (const [k, v] of Object.entries(saved.htmlOverrides)) {
+      if (typeof k === 'string' && typeof v === 'string' && v.trim().length > 0) {
+        htmlOverrides[k] = v;
+      }
+    }
+  }
+
   return {
     sectionsVersion: CURRENT_SECTIONS_VERSION,
     sections: mergedSections,
@@ -147,6 +172,7 @@ export function mergeWithDefaultVisualConfig(
     modelOrder: [...savedOrder, ...missingIds],
     hiddenModelIds,
     imageOverrides,
+    htmlOverrides,
   };
 }
 

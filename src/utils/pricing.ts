@@ -52,12 +52,58 @@ export function formatPartQuantity(part: Part, quantity: number): string {
   return `${qty} ${unitLabel}`;
 }
 
+export const FREE_LABOR_MAX_REVISION = 2;
+
+export const LABOR_POLICY_TEXTS = {
+  pt: {
+    freeBadge: 'Mão de obra gratuita: 1.ª e 2.ª revisão (conforme manual)',
+    paidBadge: 'Mão de obra cobrada conforme tabela / manual',
+    laborItemLabel: 'Mão de obra (a partir da 3.ª revisão)',
+    laborShortLabel: 'Mão de obra',
+  },
+  en: {
+    freeBadge: 'Free labor: 1st & 2nd service (per manual)',
+    paidBadge: 'Labor charged per price table / manual',
+    laborItemLabel: 'Labor (3rd service onward)',
+    laborShortLabel: 'Labor',
+  },
+  es: {
+    freeBadge: 'Mano de obra gratuita: 1.ª y 2.ª revisión (según manual)',
+    paidBadge: 'Mano de obra cobrada según tabla / manual',
+    laborItemLabel: 'Mano de obra (a partir de la 3.ª revisión)',
+    laborShortLabel: 'Mano de obra',
+  },
+} as const;
+
+export function isFreeLaborRevision(revisionNumber: number): boolean {
+  return !Number.isFinite(revisionNumber) || revisionNumber <= FREE_LABOR_MAX_REVISION;
+}
+
+export function normalizeLaborPrice(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return Number(num.toFixed(2));
+}
+
+export function getLaborBadgeText(
+  revisionNumber: number,
+  lang: 'pt' | 'en' | 'es' = 'pt'
+): string {
+  const texts = LABOR_POLICY_TEXTS[lang] || LABOR_POLICY_TEXTS.pt;
+  return isFreeLaborRevision(revisionNumber) ? texts.freeBadge : texts.paidBadge;
+}
+
 export interface ComputedRevisionSummary {
   items: Array<{
     revisionPart: RevisionPart;
     part: Part;
     lineTotal: number;
   }>;
+  partsTotalWithOptionals: number;
+  partsTotalWithoutOptionals: number;
+  laborCost: number;
+  hasDefinedLabor: boolean;
   totalWithOptionals: number;
   totalWithoutOptionals: number;
 }
@@ -66,7 +112,8 @@ export function computeModelRevision(
   modelId: number,
   revisionNumber: number,
   revisionParts: RevisionPart[],
-  partsMap: Record<string, Part>
+  partsMap: Record<string, Part>,
+  laborPrice?: number | null
 ): ComputedRevisionSummary {
   const safeRevisionParts = Array.isArray(revisionParts) ? revisionParts : [];
   const safePartsMap = partsMap && typeof partsMap === 'object' ? partsMap : {};
@@ -74,8 +121,8 @@ export function computeModelRevision(
     (rp) => rp && rp.model_id === modelId && rp.revision_number === revisionNumber
   );
 
-  let totalWithOptionals = 0;
-  let totalWithoutOptionals = 0;
+  let partsTotalWithOptionals = 0;
+  let partsTotalWithoutOptionals = 0;
   const items: ComputedRevisionSummary['items'] = [];
 
   for (const rp of matching) {
@@ -83,15 +130,23 @@ export function computeModelRevision(
     if (!part) continue;
     const lineTotal = computeLineTotal(part, rp.quantity);
     items.push({ revisionPart: rp, part, lineTotal });
-    totalWithOptionals += lineTotal;
+    partsTotalWithOptionals += lineTotal;
     if (!part.is_optional) {
-      totalWithoutOptionals += lineTotal;
+      partsTotalWithoutOptionals += lineTotal;
     }
   }
 
+  const normalizedLabor = normalizeLaborPrice(laborPrice);
+  const freeLabor = isFreeLaborRevision(revisionNumber);
+  const laborCost = !freeLabor && normalizedLabor !== null ? normalizedLabor : 0;
+
   return {
     items,
-    totalWithOptionals: Number(totalWithOptionals.toFixed(2)),
-    totalWithoutOptionals: Number(totalWithoutOptionals.toFixed(2)),
+    partsTotalWithOptionals: Number(partsTotalWithOptionals.toFixed(2)),
+    partsTotalWithoutOptionals: Number(partsTotalWithoutOptionals.toFixed(2)),
+    laborCost,
+    hasDefinedLabor: normalizedLabor !== null,
+    totalWithOptionals: Number((partsTotalWithOptionals + laborCost).toFixed(2)),
+    totalWithoutOptionals: Number((partsTotalWithoutOptionals + laborCost).toFixed(2)),
   };
 }

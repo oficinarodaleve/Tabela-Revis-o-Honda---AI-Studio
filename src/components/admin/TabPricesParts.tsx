@@ -270,10 +270,10 @@ export function TabPricesParts({
       {/* Header */}
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="font-display text-2xl font-bold text-neutral-900">
+          <h1 className="font-display text-2xl font-bold text-ink">
             Preços das peças
           </h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Origem: MicroWork. Última atualização: {formatDateTimeBR(lastSync)}
           </p>
         </div>
@@ -282,7 +282,7 @@ export function TabPricesParts({
           type="button"
           disabled={syncing}
           onClick={handleSyncNow}
-          className="inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-4 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+          className="inline-flex items-center gap-2 self-start rounded-xl bg-brand px-4 py-2.5 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60"
         >
           <RefreshCw className={`h-4 w-4 ${syncing ? 'animate-spin' : ''}`} />
           {syncing ? 'Atualizando...' : 'Atualizar agora'}
@@ -292,12 +292,12 @@ export function TabPricesParts({
       {/* Card Nova peça / insumo */}
       <form
         onSubmit={handleCreatePart}
-        className="rounded-2xl border border-neutral-200 bg-white p-5"
+        className="rounded-2xl border border-border bg-card p-5"
       >
-        <h2 className="text-sm font-bold text-neutral-900">Nova peça / insumo</h2>
+        <h2 className="text-sm font-bold text-ink">Nova peça / insumo</h2>
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <div>
-            <label className="block text-[11px] font-semibold text-neutral-600">
+            <label className="block text-[11px] font-semibold text-ink-muted">
               Código Honda
             </label>
             <input
@@ -305,12 +305,12 @@ export function TabPricesParts({
               value={newCode}
               onChange={(e) => setNewCode(e.target.value)}
               placeholder="Ex.: 90401KRMR20"
-              className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
             />
           </div>
 
           <div className="lg:col-span-2">
-            <label className="block text-[11px] font-semibold text-neutral-600">
+            <label className="block text-[11px] font-semibold text-ink-muted">
               Descrição da peça
             </label>
             <input
@@ -318,18 +318,18 @@ export function TabPricesParts({
               value={newDesc}
               onChange={(e) => setNewDesc(e.target.value)}
               placeholder="Ex.: Arruela Plana 12mm"
-              className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-[11px] font-semibold text-neutral-600">
+            <label className="block text-[11px] font-semibold text-ink-muted">
               Unidade
             </label>
             <select
               value={newUnitSelect}
               onChange={(e) => setNewUnitSelect(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-neutral-200 bg-white px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
             >
               {STANDARD_PART_UNITS.map((u) => (
                 <option key={u} value={u}>
@@ -345,13 +345,13 @@ export function TabPricesParts({
                 value={newCustomUnit}
                 onChange={(e) => setNewCustomUnit(e.target.value.toUpperCase())}
                 placeholder="Ex.: CX, PCT, CM"
-                className="mt-1.5 w-full rounded-xl border border-[#E4002B]/40 bg-red-50/30 px-3 py-1.5 font-mono text-xs font-semibold uppercase text-neutral-900 placeholder:normal-case focus:border-[#E4002B] focus:outline-none"
+                className="mt-1.5 w-full rounded-xl border border-brand/40 bg-brand-soft/60 px-3 py-1.5 font-mono text-xs font-semibold uppercase text-ink placeholder:normal-case focus:border-brand focus:outline-none"
               />
             )}
           </div>
 
           <div>
-            <label className="block text-[11px] font-semibold text-neutral-600">
+            <label className="block text-[11px] font-semibold text-ink-muted">
               Qtd. padrão
             </label>
             <input
@@ -359,12 +359,12 @@ export function TabPricesParts({
               min={1}
               value={newQty}
               onChange={(e) => setNewQty(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 tabular-nums focus:border-[#E4002B] focus:outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink tabular-nums focus:border-brand focus:outline-none"
             />
           </div>
 
           <div>
-            <label className="block text-[11px] font-semibold text-neutral-600">
+            <label className="block text-[11px] font-semibold text-ink-muted">
               Valor (R$)
             </label>
             <input
@@ -374,31 +374,31 @@ export function TabPricesParts({
               value={newPrice}
               onChange={(e) => setNewPrice(e.target.value)}
               placeholder="0,00"
-              className="mt-1 w-full rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 tabular-nums focus:border-[#E4002B] focus:outline-none"
+              className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink tabular-nums focus:border-brand focus:outline-none"
             />
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-neutral-100 pt-4">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 border-t border-border/70 pt-4">
           <div className="flex flex-wrap items-center gap-4">
             <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold text-neutral-600">Modo:</span>
+              <span className="text-xs font-semibold text-ink-muted">Modo:</span>
               <select
                 value={newMode}
                 onChange={(e) => setNewMode(e.target.value as PriceMode)}
-                className="rounded-xl border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-800 focus:border-[#E4002B] focus:outline-none"
+                className="rounded-xl border border-border bg-card px-3 py-1.5 text-xs font-medium text-ink focus:border-brand focus:outline-none"
               >
                 <option value="auto">Automático (MicroWork)</option>
                 <option value="manual">Manual</option>
               </select>
             </div>
 
-            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-neutral-700">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-ink">
               <input
                 type="checkbox"
                 checked={newOptional}
                 onChange={(e) => setNewOptional(e.target.checked)}
-                className="h-4 w-4 rounded border-neutral-300 accent-[#E4002B]"
+                className="h-4 w-4 rounded border-border accent-brand"
               />
               Item opcional no orçamento
             </label>
@@ -407,7 +407,7 @@ export function TabPricesParts({
           <button
             type="submit"
             disabled={adding}
-            className="rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+            className="rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60"
           >
             {adding ? 'Adicionando...' : 'Adicionar Nova Peça / Insumo'}
           </button>
@@ -415,21 +415,21 @@ export function TabPricesParts({
       </form>
 
       {/* Card da tabela */}
-      <div className="overflow-hidden rounded-2xl border border-neutral-200 bg-white">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-neutral-100 p-4">
+      <div className="overflow-hidden rounded-2xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 p-4">
           <div className="relative flex-1 sm:max-w-sm">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
             <input
               type="text"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Buscar por código ou nome da peça..."
-              className="w-full rounded-xl border border-neutral-200 py-2 pl-9 pr-3 text-xs text-neutral-900 placeholder:text-neutral-400 focus:border-[#E4002B] focus:outline-none"
+              className="w-full rounded-xl border border-border bg-card py-2 pl-9 pr-3 text-xs text-ink placeholder:text-ink-muted focus:border-brand focus:outline-none"
             />
           </div>
 
           <div className="flex items-center gap-4">
-            <span className="text-xs font-medium text-neutral-500 tabular-nums">
+            <span className="text-xs font-medium text-ink-muted tabular-nums">
               {filteredRows.length} de {rows.length} peça(s)
             </span>
 
@@ -439,10 +439,10 @@ export function TabPricesParts({
               onClick={handleSaveBatch}
               className={`rounded-xl px-4 py-2 text-xs font-bold transition-colors ${
                 isDirty
-                  ? `bg-[#E4002B] text-white hover:bg-[#C80024] ${
-                      !autoSaveEnabled ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+                  ? `bg-brand text-on-brand hover:bg-brand-hover ${
+                      !autoSaveEnabled ? 'ring-2 ring-brand/40 ring-offset-2' : ''
                     }`
-                  : 'cursor-not-allowed bg-red-100 text-red-400'
+                  : 'cursor-not-allowed bg-surface-neutral text-ink-muted'
               }`}
             >
               {savingBatch ? 'Salvando...' : 'Salvar Alterações'}
@@ -453,7 +453,7 @@ export function TabPricesParts({
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-left text-xs">
             <thead>
-              <tr className="border-b border-neutral-100 bg-neutral-50/70 text-[11px] font-bold uppercase tracking-wider text-neutral-500">
+              <tr className="border-b border-border/70 bg-surface text-[11px] font-bold uppercase tracking-wider text-ink-muted">
                 <th className="px-4 py-3">CÓDIGO</th>
                 <th className="px-4 py-3">DESCRIÇÃO</th>
                 <th className="px-3 py-3">UN.</th>
@@ -464,14 +464,14 @@ export function TabPricesParts({
                 <th className="px-3 py-3 text-center"></th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-neutral-100">
+            <tbody className="divide-y divide-border/70">
               {filteredRows.map((row) => {
                 const isCustom =
                   Boolean(customModeByRow[row.original_code]) || !isStandardUnit(row.unit);
                 const selectVal = isCustom ? CUSTOM_UNIT_VALUE : row.unit;
 
                 return (
-                  <tr key={row.original_code} className="hover:bg-neutral-50/60">
+                  <tr key={row.original_code} className="hover:bg-surface/60">
                     <td className="px-4 py-2.5 align-top">
                       <input
                         type="text"
@@ -479,7 +479,7 @@ export function TabPricesParts({
                         onChange={(e) =>
                           updateRow(row.original_code, { code: e.target.value })
                         }
-                        className="w-32 rounded-lg border border-neutral-200 px-2.5 py-1.5 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                        className="w-32 rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                       />
                     </td>
                     <td className="px-4 py-2.5 align-top">
@@ -489,16 +489,16 @@ export function TabPricesParts({
                         onChange={(e) =>
                           updateRow(row.original_code, { description: e.target.value })
                         }
-                        className="w-full min-w-[200px] rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs font-medium text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                        className="w-full min-w-[200px] rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-ink focus:border-brand focus:outline-none"
                       />
-                      <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-neutral-500">
+                      <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 text-[11px] text-ink-muted">
                         <input
                           type="checkbox"
                           checked={row.is_optional}
                           onChange={(e) =>
                             updateRow(row.original_code, { is_optional: e.target.checked })
                           }
-                          className="h-3 w-3 rounded accent-[#E4002B]"
+                          className="h-3 w-3 rounded accent-brand"
                         />
                         <span>opcional</span>
                       </label>
@@ -525,7 +525,7 @@ export function TabPricesParts({
                               updateRow(row.original_code, { unit: chosen });
                             }
                           }}
-                          className="w-24 rounded-lg border border-neutral-200 bg-white px-2 py-1.5 text-xs font-semibold text-neutral-700 focus:border-[#E4002B] focus:outline-none"
+                          className="w-24 rounded-lg border border-border bg-card px-2 py-1.5 text-xs font-semibold text-ink focus:border-brand focus:outline-none"
                         >
                           {STANDARD_PART_UNITS.map((u) => (
                             <option key={u} value={u}>
@@ -545,14 +545,14 @@ export function TabPricesParts({
                               })
                             }
                             placeholder="Ex.: CX"
-                            className="w-24 rounded-lg border border-[#E4002B]/40 bg-red-50/30 px-2 py-1 font-mono text-[11px] font-semibold uppercase text-neutral-900 placeholder:normal-case focus:border-[#E4002B] focus:outline-none"
+                            className="w-24 rounded-lg border border-brand/40 bg-brand-soft/60 px-2 py-1 font-mono text-[11px] font-semibold uppercase text-ink placeholder:normal-case focus:border-brand focus:outline-none"
                           />
                         )}
                       </div>
                     </td>
                     <td className="px-4 py-2.5 align-top text-right">
-                      <div className="inline-flex items-center rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5">
-                        <span className="mr-1.5 text-[11px] font-semibold text-neutral-400">
+                      <div className="inline-flex items-center rounded-lg border border-border bg-card px-2.5 py-1.5">
+                        <span className="mr-1.5 text-[11px] font-semibold text-ink-muted">
                           R$
                         </span>
                         <input
@@ -563,7 +563,7 @@ export function TabPricesParts({
                           onChange={(e) =>
                             updateRow(row.original_code, { price: Number(e.target.value) })
                           }
-                          className="w-20 text-right font-mono text-xs font-semibold text-neutral-900 tabular-nums focus:outline-none"
+                          className="w-20 bg-transparent text-right font-mono text-xs font-semibold text-ink tabular-nums focus:outline-none"
                         />
                       </div>
                     </td>
@@ -573,16 +573,16 @@ export function TabPricesParts({
                         onChange={(e) =>
                           updateRow(row.original_code, { mode: e.target.value as PriceMode })
                         }
-                        className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-800 focus:border-[#E4002B] focus:outline-none"
+                        className="rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-medium text-ink focus:border-brand focus:outline-none"
                       >
                         <option value="auto">Automático</option>
                         <option value="manual">Manual</option>
                       </select>
                     </td>
-                    <td className="px-3 py-3 align-top text-right font-mono text-xs text-neutral-500 tabular-nums">
+                    <td className="px-3 py-3 align-top text-right font-mono text-xs text-ink-muted tabular-nums">
                       {row.microwork_price !== null ? formatBRL(row.microwork_price) : '–'}
                     </td>
-                    <td className="px-3 py-3 align-top text-xs text-neutral-500">
+                    <td className="px-3 py-3 align-top text-xs text-ink-muted">
                       {row.sync_status || '—'}
                     </td>
                     <td className="px-3 py-2.5 align-top text-center">
@@ -590,7 +590,7 @@ export function TabPricesParts({
                         type="button"
                         onClick={() => handleDeletePart(row.original_code)}
                         aria-label="Excluir peça"
-                        className="rounded-lg p-1.5 text-neutral-400 transition-colors hover:bg-neutral-100 hover:text-[#E4002B]"
+                        className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-brand-soft hover:text-brand-text"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -602,7 +602,7 @@ export function TabPricesParts({
           </table>
         </div>
 
-        <div className="border-t border-neutral-100 bg-neutral-50/70 px-4 py-3 text-xs text-neutral-500">
+        <div className="border-t border-border/70 bg-surface px-4 py-3 text-xs text-ink-muted">
           Peças em modo manual mantêm o preço salvo e não são sobrescritas pela atualização do MicroWork.
         </div>
       </div>

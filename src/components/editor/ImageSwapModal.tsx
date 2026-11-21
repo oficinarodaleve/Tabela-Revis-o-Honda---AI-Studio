@@ -36,38 +36,36 @@ export function ImageSwapModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-ink/60 p-4 backdrop-blur-xs"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-5 shadow-2xl"
+        className="w-full max-w-md rounded-2xl border border-border bg-card p-5 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-neutral-100 pb-3">
+        <div className="flex items-center justify-between border-b border-border pb-3">
           <div>
-            <h3 className="font-display text-base font-bold text-neutral-900">
-              Trocar Imagem
-            </h3>
-            <p className="text-xs text-neutral-500">{title}</p>
+            <h3 className="font-display text-base font-bold text-ink">Trocar Imagem</h3>
+            <p className="text-xs text-ink-muted">{title}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            className="rounded-lg p-1 text-ink-muted hover:bg-surface hover:text-ink"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Mode selector */}
-        <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-neutral-100 p-1">
+        <div className="mt-4 grid grid-cols-2 gap-2 rounded-xl bg-surface p-1">
           <button
             type="button"
             onClick={() => setMode('upload')}
             className={`inline-flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-colors ${
               mode === 'upload'
-                ? 'bg-white text-neutral-900 shadow-xs'
-                : 'text-neutral-600 hover:text-neutral-900'
+                ? 'bg-card text-ink shadow-xs'
+                : 'text-ink-muted hover:text-ink'
             }`}
           >
             <Upload className="h-3.5 w-3.5" />
@@ -78,8 +76,8 @@ export function ImageSwapModal({
             onClick={() => setMode('url')}
             className={`inline-flex items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-bold transition-colors ${
               mode === 'url'
-                ? 'bg-white text-neutral-900 shadow-xs'
-                : 'text-neutral-600 hover:text-neutral-900'
+                ? 'bg-card text-ink shadow-xs'
+                : 'text-ink-muted hover:text-ink'
             }`}
           >
             <Link2 className="h-3.5 w-3.5" />
@@ -103,40 +101,38 @@ export function ImageSwapModal({
               type="button"
               disabled={processing}
               onClick={() => fileRef.current?.click()}
-              className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-neutral-300 bg-neutral-50 px-4 py-6 text-center transition-colors hover:border-[#E4002B] hover:bg-red-50/30"
+              className="flex w-full flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-border bg-surface px-4 py-6 text-center transition-colors hover:border-brand hover:bg-brand-soft/40"
             >
-              <Upload className="h-6 w-6 text-[#E4002B]" />
-              <span className="text-xs font-bold text-neutral-800">
+              <Upload className="h-6 w-6 text-brand-text" />
+              <span className="text-xs font-bold text-ink">
                 {processing
                   ? 'Comprimindo imagem...'
                   : 'Clique para enviar PNG, JPG, WEBP ou SVG'}
               </span>
-              <span className="text-[11px] text-neutral-500">
+              <span className="text-[11px] text-ink-muted">
                 Compressão automática otimizada para armazenamento local
               </span>
             </button>
           </div>
         ) : (
           <div className="mt-4">
-            <label className="block text-xs font-semibold text-neutral-700">
-              URL da imagem
-            </label>
+            <label className="block text-xs font-semibold text-ink">URL da imagem</label>
             <input
               type="url"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
               placeholder="https://exemplo.com/imagem.webp"
-              className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3.5 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 text-xs text-ink focus:border-brand focus:outline-none"
             />
           </div>
         )}
 
         {/* Instant preview */}
         <div className="mt-4">
-          <p className="mb-1.5 text-[11px] font-semibold text-neutral-500">
+          <p className="mb-1.5 text-[11px] font-semibold text-ink-muted">
             Pré-visualização instantânea
           </p>
-          <div className="flex h-36 items-center justify-center overflow-hidden rounded-xl border border-neutral-200 bg-neutral-50 p-3">
+          <div className="flex h-36 items-center justify-center overflow-hidden rounded-xl border border-border bg-surface p-3">
             {urlInput ? (
               <img
                 src={urlInput}
@@ -147,23 +143,23 @@ export function ImageSwapModal({
                 className="max-h-full max-w-full object-contain"
               />
             ) : (
-              <div className="flex flex-col items-center gap-1 text-neutral-400">
+              <div className="flex flex-col items-center gap-1 text-ink-muted">
                 <ImageIcon className="h-6 w-6" />
                 <span className="text-xs">Sem imagem selecionada</span>
               </div>
             )}
           </div>
-          {error && <p className="mt-1.5 text-xs font-medium text-[#E4002B]">{error}</p>}
+          {error && <p className="mt-1.5 text-xs font-medium text-brand-text">{error}</p>}
         </div>
 
-        <div className="mt-5 flex items-center justify-between gap-2 border-t border-neutral-100 pt-4">
+        <div className="mt-5 flex items-center justify-between gap-2 border-t border-border pt-4">
           <button
             type="button"
             onClick={() => {
               onApply('');
               onClose();
             }}
-            className="inline-flex items-center gap-1 rounded-xl border border-neutral-200 px-3 py-2 text-xs font-semibold text-neutral-600 hover:bg-neutral-50 hover:text-[#E4002B]"
+            className="inline-flex items-center gap-1 rounded-xl border border-border px-3 py-2 text-xs font-semibold text-ink-muted hover:bg-surface hover:text-brand-text"
           >
             <Trash2 className="h-3.5 w-3.5" />
             Remover
@@ -173,7 +169,7 @@ export function ImageSwapModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-neutral-200 px-3.5 py-2 text-xs font-semibold text-neutral-700 hover:bg-neutral-50"
+              className="rounded-xl border border-border px-3.5 py-2 text-xs font-semibold text-ink hover:bg-surface"
             >
               Cancelar
             </button>
@@ -183,7 +179,7 @@ export function ImageSwapModal({
                 onApply(urlInput.trim());
                 onClose();
               }}
-              className="rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024]"
+              className="rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand hover:bg-brand-hover"
             >
               Aplicar Imagem
             </button>

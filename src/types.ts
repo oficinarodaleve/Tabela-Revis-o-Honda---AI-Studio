@@ -58,6 +58,7 @@ export interface MotoModel {
   image_url: string;
   hidden: boolean;
   sort_order: number;
+  labor_price?: number | null;
 }
 
 export interface FaqItem {
@@ -296,6 +297,7 @@ export interface VisualBuilderConfig {
   modelOrder: number[];
   hiddenModelIds: number[];
   imageOverrides: Record<string, string>;
+  htmlOverrides?: Record<string, string>;
 }
 
 export interface PublicBootstrapData {

@@ -97,32 +97,32 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
 
     return (
       <div
-        className={`flex flex-col items-center justify-center bg-[#FAFAFA] px-4 text-center text-neutral-900 ${
+        className={`flex flex-col items-center justify-center bg-surface px-4 text-center text-ink ${
           this.props.compact ? 'min-h-[320px] rounded-2xl py-10' : 'min-h-screen'
         }`}
       >
-        <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm">
-          <p className="font-display text-lg font-extrabold text-neutral-900">
+        <div className="w-full max-w-md rounded-2xl border border-border bg-card p-6 shadow-sm">
+          <p className="font-display text-lg font-extrabold text-ink">
             {this.props.title || 'Não foi possível exibir esta tela'}
           </p>
-          <p className="mt-2 text-sm text-neutral-600">
+          <p className="mt-2 text-sm text-ink-muted">
             {this.props.description ||
               'Ocorreu uma falha temporária durante o carregamento. Tente novamente ou recarregue a página.'}
           </p>
           {(showDetailedError || this.props.screenName || shortErrorMsg) && (
-            <div className="mt-3 rounded-xl border border-neutral-200 bg-neutral-50 px-3 py-2 text-left text-[11px] text-neutral-600">
+            <div className="mt-3 rounded-xl border border-border bg-surface px-3 py-2 text-left text-[11px] text-ink-muted">
               {this.props.screenName && (
-                <p className="font-semibold text-neutral-700">
+                <p className="font-semibold text-ink">
                   Tela: {this.props.screenName}
                 </p>
               )}
               {shortErrorMsg && (
-                <p className="mt-0.5 break-words font-mono text-[11px] text-neutral-600">
+                <p className="mt-0.5 break-words font-mono text-[11px] text-ink-muted">
                   {shortErrorMsg}
                 </p>
               )}
               {showDetailedError && firstStackLine && (
-                <p className="mt-0.5 truncate font-mono text-[10px] text-neutral-400">
+                <p className="mt-0.5 truncate font-mono text-[10px] text-ink-muted">
                   {firstStackLine}
                 </p>
               )}
@@ -132,7 +132,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             <button
               type="button"
               onClick={this.handleReset}
-              className="rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-semibold text-neutral-800 hover:bg-neutral-50"
+              className="rounded-xl border border-border bg-card px-4 py-2 text-xs font-semibold text-ink hover:bg-surface"
             >
               Tentar novamente
             </button>
@@ -146,7 +146,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                 }
                 window.location.reload();
               }}
-              className="rounded-xl bg-[#E4002B] px-4 py-2 text-xs font-bold text-white hover:bg-[#C80024]"
+              className="rounded-xl bg-brand px-4 py-2 text-xs font-bold text-on-brand hover:bg-brand-hover"
             >
               Recarregar página
             </button>

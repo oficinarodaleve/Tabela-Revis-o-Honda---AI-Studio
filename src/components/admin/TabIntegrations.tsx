@@ -472,10 +472,10 @@ export function TabIntegrations({
     <div className="space-y-6">
       <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
         <div>
-          <h1 className="font-display text-2xl font-bold text-neutral-900">
+          <h1 className="font-display text-2xl font-bold text-ink">
             Integrações & APIs
           </h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-ink-muted">
             Configure Google Maps, sincronização automática com o ERP MicroWork e webhooks externos.
           </p>
         </div>
@@ -484,8 +484,8 @@ export function TabIntegrations({
           type="button"
           disabled={saving}
           onClick={handleSave}
-          className={`inline-flex items-center gap-2 self-start rounded-xl bg-[#E4002B] px-5 py-2.5 text-xs font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60 ${
-            !autoSaveEnabled && isDirty ? 'ring-2 ring-amber-400 ring-offset-2' : ''
+          className={`inline-flex items-center gap-2 self-start rounded-xl bg-brand px-5 py-2.5 text-xs font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60 ${
+            !autoSaveEnabled && isDirty ? 'ring-2 ring-brand/40 ring-offset-2' : ''
           }`}
         >
           <Save className="h-4 w-4" />
@@ -494,13 +494,13 @@ export function TabIntegrations({
       </div>
 
       {/* Card 1: Google Maps */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="rounded-2xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-neutral-900">
+            <h2 className="text-base font-bold text-ink">
               Integração Google Maps
             </h2>
-            <p className="mt-0.5 text-xs text-neutral-500">
+            <p className="mt-0.5 text-xs text-ink-muted">
               Desativada, o site mostra um link direto para o Google Maps.
             </p>
           </div>
@@ -510,8 +510,8 @@ export function TabIntegrations({
             onClick={() => setMapsActive(!mapsActive)}
             className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
               mapsActive
-                ? 'bg-emerald-600 text-white'
-                : 'bg-neutral-200 text-neutral-700'
+                ? 'bg-brand text-on-brand'
+                : 'bg-surface-neutral text-ink-muted'
             }`}
           >
             {mapsActive ? 'Ativo' : 'Inativo'}
@@ -519,7 +519,7 @@ export function TabIntegrations({
         </div>
 
         <div className="mt-4">
-          <label className="block text-xs font-semibold text-neutral-700">
+          <label className="block text-xs font-semibold text-ink">
             Chave da API Google Maps (opcional — sobrescreve a chave do ambiente)
           </label>
           <div className="mt-1.5 flex items-center gap-2">
@@ -528,13 +528,13 @@ export function TabIntegrations({
               value={mapsKey}
               onChange={(e) => setMapsKey(e.target.value)}
               placeholder="Usando chave provisionada do projeto (ou cole AIza...)"
-              className="flex-1 rounded-xl border border-neutral-200 px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="flex-1 rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
             />
             <button
               type="button"
               onClick={() => setShowMapsKey(!showMapsKey)}
               aria-label="Mostrar ou ocultar chave"
-              className="rounded-xl border border-neutral-200 bg-white p-2 text-neutral-600 hover:bg-neutral-50"
+              className="rounded-xl border border-border bg-card p-2 text-ink-muted hover:bg-surface-neutral hover:text-ink"
             >
               {showMapsKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </button>
@@ -542,25 +542,25 @@ export function TabIntegrations({
               type="button"
               onClick={() => setMapsKey('')}
               aria-label="Limpar chave"
-              className="rounded-xl border border-neutral-200 bg-white p-2 text-neutral-400 hover:bg-neutral-50 hover:text-[#E4002B]"
+              className="rounded-xl border border-border bg-card p-2 text-ink-muted hover:bg-brand-soft hover:text-brand-text"
             >
               <Trash2 className="h-4 w-4" />
             </button>
           </div>
-          <p className="mt-2 text-[11px] text-neutral-500">
+          <p className="mt-2 text-[11px] text-ink-muted">
             Restrinja a chave por domínio no Google Cloud. Ela fica visível no código do site, como toda chave de mapa.
           </p>
         </div>
       </div>
 
       {/* Card 2: Preços e estoque (ERP MicroWork) */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="rounded-2xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-bold text-neutral-900">
+            <h2 className="text-base font-bold text-ink">
               Preços e estoque (ERP da oficina — MicroWork)
             </h2>
-            <p className="mt-0.5 text-xs text-neutral-500">
+            <p className="mt-0.5 text-xs text-ink-muted">
               Atualiza os preços das peças automaticamente a partir do seu ERP sem expor o token no front-end.
             </p>
           </div>
@@ -569,7 +569,7 @@ export function TabIntegrations({
             type="button"
             onClick={() => setMwAuto(!mwAuto)}
             className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
-              mwAuto ? 'bg-emerald-600 text-white' : 'bg-neutral-200 text-neutral-700'
+              mwAuto ? 'bg-brand text-on-brand' : 'bg-surface-neutral text-ink-muted'
             }`}
           >
             {mwAuto ? 'Ligada' : 'Desligada'}
@@ -578,13 +578,13 @@ export function TabIntegrations({
 
         <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div>
-            <label className="block text-xs font-semibold text-neutral-700">
+            <label className="block text-xs font-semibold text-ink">
               Modo de atualização
             </label>
             <select
               value={mwMode}
               onChange={(e) => setMwMode(e.target.value as 'manual' | 'auto_api')}
-              className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-medium text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-medium text-ink focus:border-brand focus:outline-none"
             >
               <option value="auto_api">Automático via API (MicroWork)</option>
               <option value="manual">Manual</option>
@@ -592,13 +592,13 @@ export function TabIntegrations({
           </div>
 
           <div>
-            <label className="block text-xs font-semibold text-neutral-700">
+            <label className="block text-xs font-semibold text-ink">
               Frequência de atualização
             </label>
             <select
               value={mwFreq}
               onChange={(e) => setMwFreq(e.target.value as 'daily' | 'weekly')}
-              className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 text-xs font-medium text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-medium text-ink focus:border-brand focus:outline-none"
             >
               <option value="weekly">Semanalmente (padrão)</option>
               <option value="daily">Diariamente</option>
@@ -606,7 +606,7 @@ export function TabIntegrations({
           </div>
 
           <div className="sm:col-span-2">
-            <label className="block text-xs font-semibold text-neutral-700">
+            <label className="block text-xs font-semibold text-ink">
               URL do endpoint / webhook MicroWork
             </label>
             <input
@@ -614,12 +614,12 @@ export function TabIntegrations({
               value={mwEndpoint}
               onChange={(e) => setMwEndpoint(e.target.value)}
               placeholder="https://api.microwork.com.br/v1/pecas/precos"
-              className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
             />
           </div>
 
           <div className="sm:col-span-2">
-            <label className="block text-xs font-semibold text-neutral-700">
+            <label className="block text-xs font-semibold text-ink">
               Token / chave de autenticação (Bearer — armazenado apenas no servidor)
             </label>
             <input
@@ -631,14 +631,14 @@ export function TabIntegrations({
                   ? `Token salvo (${integrations.microwork.token_masked}) — digite apenas para substituir`
                   : 'Cole aqui o Bearer token secreto do MicroWork'
               }
-              className="mt-1.5 w-full rounded-xl border border-neutral-200 px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+              className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
             />
           </div>
         </div>
 
         {/* Regra de mapeamento */}
-        <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 text-xs text-neutral-600">
-          <p className="font-bold text-neutral-800">Regra de mapeamento:</p>
+        <div className="mt-4 rounded-xl border border-border bg-surface-neutral p-3.5 text-xs text-ink-muted">
+          <p className="font-bold text-ink">Regra de mapeamento:</p>
           <p className="mt-0.5">
             O preço é vinculado pelo código Honda da peça. Peças configuradas em modo Manual nunca são sobrescritas, e se a consulta falhar ou retornar zero/vazio, o último preço salvo é preservado.
           </p>
@@ -649,9 +649,9 @@ export function TabIntegrations({
             type="button"
             disabled={testing}
             onClick={handleTestConnection}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-4 py-2 text-xs font-bold text-neutral-800 hover:bg-neutral-50 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-border bg-card px-4 py-2 text-xs font-bold text-ink hover:bg-surface-neutral disabled:opacity-60"
           >
-            <ShieldCheck className="h-4 w-4 text-neutral-600" />
+            <ShieldCheck className="h-4 w-4 text-ink-muted" />
             {testing ? 'Testando...' : 'Testar Conexão'}
           </button>
 
@@ -659,7 +659,7 @@ export function TabIntegrations({
             type="button"
             disabled={syncing}
             onClick={handleSyncNow}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-bold text-white hover:bg-neutral-800 disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-xs font-bold text-on-ink transition-opacity hover:opacity-90 disabled:opacity-60"
           >
             <RefreshCw className={`h-3.5 w-3.5 ${syncing ? 'animate-spin' : ''}`} />
             {syncing ? 'Sincronizando...' : 'Sincronizar Preços Agora'}
@@ -670,21 +670,21 @@ export function TabIntegrations({
           <div
             className={`mt-3 rounded-xl border px-3.5 py-2.5 text-xs font-medium ${
               testFeedback.ok
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : 'border-amber-200 bg-amber-50 text-amber-800'
+                ? 'border-border bg-surface-neutral text-ink'
+                : 'border-brand/30 bg-brand-soft text-brand-text'
             }`}
           >
             {testFeedback.msg}
           </div>
         )}
 
-        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50/70 p-3.5 text-xs">
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-border bg-surface p-3.5 text-xs">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-ink" />
           <div>
-            <p className="font-bold text-neutral-800">
+            <p className="font-bold text-ink">
               Última sincronização: {formatDateTimeBR(integrations.microwork.last_sync_at)}
             </p>
-            <p className="mt-0.5 text-neutral-600">
+            <p className="mt-0.5 text-ink-muted">
               {integrations.microwork.last_sync_result}
             </p>
           </div>
@@ -692,24 +692,24 @@ export function TabIntegrations({
       </div>
 
       {/* Card 3: Outras chaves e webhooks */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
-        <h2 className="text-base font-bold text-neutral-900">
+      <div className="rounded-2xl border border-border bg-card p-5">
+        <h2 className="text-base font-bold text-ink">
           Outras chaves e webhooks
         </h2>
-        <p className="mt-0.5 text-xs text-neutral-500">
+        <p className="mt-0.5 text-xs text-ink-muted">
           Google Analytics (GA4), Pixel da Meta, webhook de leads ou Firebase.
         </p>
 
         <div className="mt-4 space-y-2.5">
           {customItems.length === 0 ? (
-            <p className="text-xs text-neutral-400">
+            <p className="text-xs text-ink-muted">
               Nenhuma integração adicional cadastrada.
             </p>
           ) : (
             customItems.map((item, idx) => (
               <div
                 key={item.id}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-neutral-200 bg-neutral-50/40 p-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-3"
               >
                 <div className="flex flex-1 flex-wrap items-center gap-2.5">
                   <input
@@ -720,7 +720,7 @@ export function TabIntegrations({
                         prev.map((it, i) => (i === idx ? { ...it, name: e.target.value } : it))
                       )
                     }
-                    className="w-44 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-xs font-bold text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                    className="w-44 rounded-lg border border-border bg-card px-2.5 py-1.5 text-xs font-bold text-ink focus:border-brand focus:outline-none"
                   />
                   <input
                     type="text"
@@ -730,7 +730,7 @@ export function TabIntegrations({
                         prev.map((it, i) => (i === idx ? { ...it, value: e.target.value } : it))
                       )
                     }
-                    className="min-w-[200px] flex-1 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 font-mono text-xs text-neutral-800 focus:border-[#E4002B] focus:outline-none"
+                    className="min-w-[200px] flex-1 rounded-lg border border-border bg-card px-2.5 py-1.5 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                   />
                 </div>
                 <div className="flex items-center gap-2.5">
@@ -745,8 +745,8 @@ export function TabIntegrations({
                     }
                     className={`rounded-full px-3 py-1 text-[11px] font-bold ${
                       item.active
-                        ? 'bg-emerald-600 text-white'
-                        : 'bg-neutral-200 text-neutral-700'
+                        ? 'bg-brand text-on-brand'
+                        : 'bg-surface-neutral text-ink-muted'
                     }`}
                   >
                     {item.active ? 'Ativo' : 'Inativo'}
@@ -756,7 +756,7 @@ export function TabIntegrations({
                     onClick={() =>
                       setCustomItems((prev) => prev.filter((_, i) => i !== idx))
                     }
-                    className="rounded-lg p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-[#E4002B]"
+                    className="rounded-lg p-1.5 text-ink-muted hover:bg-brand-soft hover:text-brand-text"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -766,25 +766,25 @@ export function TabIntegrations({
           )}
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-neutral-100 pt-4">
+        <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-border/70 pt-4">
           <input
             type="text"
             value={newIntName}
             onChange={(e) => setNewIntName(e.target.value)}
             placeholder="Nome (ex.: Google Analytics GA4)"
-            className="w-56 rounded-xl border border-neutral-200 px-3 py-2 text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+            className="w-56 rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
           />
           <input
             type="text"
             value={newIntValue}
             onChange={(e) => setNewIntValue(e.target.value)}
             placeholder="ID, chave ou URL do webhook..."
-            className="min-w-[220px] flex-1 rounded-xl border border-neutral-200 px-3 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+            className="min-w-[220px] flex-1 rounded-xl border border-border bg-card px-3 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
           />
           <button
             type="button"
             onClick={handleAddCustom}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-neutral-900 px-4 py-2 text-xs font-bold text-white hover:bg-neutral-800"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-ink px-4 py-2 text-xs font-bold text-on-ink transition-opacity hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" />
             Nova Chave / Integração
@@ -793,17 +793,17 @@ export function TabIntegrations({
       </div>
 
       {/* Card 4: Pixels, Tags & Rastreamento */}
-      <div className="rounded-2xl border border-neutral-200 bg-white p-5">
+      <div className="rounded-2xl border border-border bg-card p-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50 text-[#E4002B]">
+            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-text">
               <Activity className="h-4 w-4" />
             </div>
             <div>
-              <h2 className="text-base font-bold text-neutral-900">
+              <h2 className="text-base font-bold text-ink">
                 Pixels, Tags & Rastreamento
               </h2>
-              <p className="mt-0.5 text-xs text-neutral-500">
+              <p className="mt-0.5 text-xs text-ink-muted">
                 Configure tags de análise e pixels de conversão para campanhas de anúncios sem precisar editar o código do site.
               </p>
             </div>
@@ -811,28 +811,28 @@ export function TabIntegrations({
         </div>
 
         {/* Aviso de segurança / privacidade */}
-        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 text-xs text-neutral-600">
-          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-neutral-500" />
+        <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-border bg-surface-neutral p-3.5 text-xs text-ink-muted">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-ink-muted" />
           <p>
             Tokens secretos de API (server-side) são armazenados apenas no servidor e nunca expostos no front-end. Quando uma tag estiver desativada ou sem ID preenchido, nenhum script dela é carregado no site.
           </p>
         </div>
 
         {trackingValidationError && (
-          <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2.5 text-xs font-semibold text-amber-800">
+          <div className="mt-3 rounded-xl border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-xs font-semibold text-brand-text">
             {trackingValidationError}
           </div>
         )}
 
         <div className="mt-5 space-y-4">
           {/* 1. Google Tag Manager (GTM) */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/40 p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-neutral-900">
+                <h3 className="text-sm font-bold text-ink">
                   Google Tag Manager (GTM)
                 </h3>
-                <p className="mt-0.5 text-xs text-neutral-500">
+                <p className="mt-0.5 text-xs text-ink-muted">
                   Injeta o snippet padrão do GTM no <code className="font-mono">&lt;head&gt;</code> e <code className="font-mono">&lt;noscript&gt;</code> logo após a abertura do <code className="font-mono">&lt;body&gt;</code> apenas quando ativo.
                 </p>
               </div>
@@ -843,15 +843,15 @@ export function TabIntegrations({
                 onClick={() => setTpGtmEnabled(!tpGtmEnabled)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   tpGtmEnabled
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-brand text-on-brand'
+                    : 'bg-surface-neutral text-ink-muted'
                 }`}
               >
                 {tpGtmEnabled ? 'Ativo' : 'Desativado'}
               </button>
             </div>
             <div className="mt-3">
-              <label className="block text-xs font-semibold text-neutral-700">
+              <label className="block text-xs font-semibold text-ink">
                 ID do Contêiner GTM
               </label>
               <input
@@ -859,19 +859,19 @@ export function TabIntegrations({
                 value={tpGtmId}
                 onChange={(e) => setTpGtmId(sanitizeGtmId(e.target.value))}
                 placeholder="GTM-XXXXXXX"
-                className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none sm:max-w-sm"
+                className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none sm:max-w-sm"
               />
             </div>
           </div>
 
           {/* 2. Google Analytics 4 (GA4) */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/40 p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-neutral-900">
+                <h3 className="text-sm font-bold text-ink">
                   Google Analytics 4 (GA4)
                 </h3>
-                <p className="mt-0.5 text-xs text-neutral-500">
+                <p className="mt-0.5 text-xs text-ink-muted">
                   Carrega o <code className="font-mono">gtag.js</code> e dispara <code className="font-mono">page_view</code> automaticamente na navegação entre rotas públicas.
                 </p>
               </div>
@@ -882,15 +882,15 @@ export function TabIntegrations({
                 onClick={() => setTpGa4Enabled(!tpGa4Enabled)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   tpGa4Enabled
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-brand text-on-brand'
+                    : 'bg-surface-neutral text-ink-muted'
                 }`}
               >
                 {tpGa4Enabled ? 'Ativo' : 'Desativado'}
               </button>
             </div>
             <div className="mt-3">
-              <label className="block text-xs font-semibold text-neutral-700">
+              <label className="block text-xs font-semibold text-ink">
                 ID da Métrica GA4
               </label>
               <input
@@ -898,19 +898,19 @@ export function TabIntegrations({
                 value={tpGa4Id}
                 onChange={(e) => setTpGa4Id(sanitizeGoogleTagId(e.target.value))}
                 placeholder="G-XXXXXXXXXX"
-                className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none sm:max-w-sm"
+                className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none sm:max-w-sm"
               />
             </div>
           </div>
 
           {/* 3. Google Ads (Conversões & Remarketing) */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/40 p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-neutral-900">
+                <h3 className="text-sm font-bold text-ink">
                   Google Ads (Conversões & Remarketing)
                 </h3>
-                <p className="mt-0.5 text-xs text-neutral-500">
+                <p className="mt-0.5 text-xs text-ink-muted">
                   Rastreia remarketing e conversões de cliques no WhatsApp e solicitações de revisão.
                 </p>
               </div>
@@ -921,8 +921,8 @@ export function TabIntegrations({
                 onClick={() => setTpAdsEnabled(!tpAdsEnabled)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   tpAdsEnabled
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-brand text-on-brand'
+                    : 'bg-surface-neutral text-ink-muted'
                 }`}
               >
                 {tpAdsEnabled ? 'Ativo' : 'Desativado'}
@@ -930,7 +930,7 @@ export function TabIntegrations({
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   ID da Tag do Google Ads
                 </label>
                 <input
@@ -938,11 +938,11 @@ export function TabIntegrations({
                   value={tpAdsId}
                   onChange={(e) => setTpAdsId(sanitizeGoogleTagId(e.target.value))}
                   placeholder="AW-123456789"
-                  className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Rótulo de Conversão de Lead / WhatsApp (opcional)
                 </label>
                 <input
@@ -950,20 +950,20 @@ export function TabIntegrations({
                   value={tpAdsLabel}
                   onChange={(e) => setTpAdsLabel(sanitizeGoogleConversionLabel(e.target.value))}
                   placeholder="AbCdEfGhIjKlMnOpQr"
-                  className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
             </div>
           </div>
 
           {/* 4. Meta Pixel (Facebook & Instagram) */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/40 p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-neutral-900">
+                <h3 className="text-sm font-bold text-ink">
                   Meta Pixel (Facebook & Instagram)
                 </h3>
-                <p className="mt-0.5 text-xs text-neutral-500">
+                <p className="mt-0.5 text-xs text-ink-muted">
                   Dispara <code className="font-mono">PageView</code>, <code className="font-mono">ViewContent</code> e <code className="font-mono">Lead / Contact</code> automaticamente nas ações públicas.
                 </p>
               </div>
@@ -974,8 +974,8 @@ export function TabIntegrations({
                 onClick={() => setTpMetaEnabled(!tpMetaEnabled)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   tpMetaEnabled
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-brand text-on-brand'
+                    : 'bg-surface-neutral text-ink-muted'
                 }`}
               >
                 {tpMetaEnabled ? 'Ativo' : 'Desativado'}
@@ -983,7 +983,7 @@ export function TabIntegrations({
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   ID do Pixel da Meta
                 </label>
                 <input
@@ -992,11 +992,11 @@ export function TabIntegrations({
                   value={tpMetaId}
                   onChange={(e) => setTpMetaId(sanitizePixelId(e.target.value))}
                   placeholder="123456789012345"
-                  className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Código de verificação de domínio da Meta (opcional)
                 </label>
                 <input
@@ -1004,11 +1004,11 @@ export function TabIntegrations({
                   value={tpMetaDomain}
                   onChange={(e) => setTpMetaDomain(e.target.value)}
                   placeholder="Ex.: abcdef1234567890ghijkl"
-                  className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Token da Conversions API / CAPI (opcional — armazenado apenas no servidor)
                 </label>
                 <div className="mt-1.5 flex items-center gap-2">
@@ -1026,13 +1026,13 @@ export function TabIntegrations({
                           ? `Token salvo (${incomingTp.meta_pixel.capi_token_masked}) — digite apenas para substituir`
                           : 'Cole aqui o token secreto da Conversions API (CAPI)'
                     }
-                    className="flex-1 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                    className="flex-1 rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => setShowMetaCapi(!showMetaCapi)}
                     aria-label="Mostrar ou ocultar token CAPI"
-                    className="rounded-xl border border-neutral-200 bg-white p-2 text-neutral-600 hover:bg-neutral-50"
+                    className="rounded-xl border border-border bg-card p-2 text-ink-muted hover:bg-surface-neutral hover:text-ink"
                   >
                     {showMetaCapi ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -1043,7 +1043,7 @@ export function TabIntegrations({
                       setTpMetaClearCapi(true);
                     }}
                     aria-label="Limpar token CAPI"
-                    className="rounded-xl border border-neutral-200 bg-white p-2 text-neutral-400 hover:bg-neutral-50 hover:text-[#E4002B]"
+                    className="rounded-xl border border-border bg-card p-2 text-ink-muted hover:bg-brand-soft hover:text-brand-text"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -1053,11 +1053,11 @@ export function TabIntegrations({
           </div>
 
           {/* 5. TikTok Pixel */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/40 p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-neutral-900">TikTok Pixel</h3>
-                <p className="mt-0.5 text-xs text-neutral-500">
+                <h3 className="text-sm font-bold text-ink">TikTok Pixel</h3>
+                <p className="mt-0.5 text-xs text-ink-muted">
                   Dispara eventos de visualização de página, modelos e conversão de contato no TikTok Ads.
                 </p>
               </div>
@@ -1068,8 +1068,8 @@ export function TabIntegrations({
                 onClick={() => setTpTtEnabled(!tpTtEnabled)}
                 className={`rounded-full px-4 py-1.5 text-xs font-bold transition-colors ${
                   tpTtEnabled
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-neutral-200 text-neutral-700'
+                    ? 'bg-brand text-on-brand'
+                    : 'bg-surface-neutral text-ink-muted'
                 }`}
               >
                 {tpTtEnabled ? 'Ativo' : 'Desativado'}
@@ -1077,7 +1077,7 @@ export function TabIntegrations({
             </div>
             <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   ID do Pixel do TikTok
                 </label>
                 <input
@@ -1085,11 +1085,11 @@ export function TabIntegrations({
                   value={tpTtId}
                   onChange={(e) => setTpTtId(sanitizeTikTokPixelId(e.target.value))}
                   placeholder="CXXXXXXXXXXXXXXXXX"
-                  className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                  className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-neutral-700">
+                <label className="block text-xs font-semibold text-ink">
                   Token da Events API (opcional — armazenado apenas no servidor)
                 </label>
                 <div className="mt-1.5 flex items-center gap-2">
@@ -1107,13 +1107,13 @@ export function TabIntegrations({
                           ? `Token salvo (${incomingTp.tiktok_pixel.events_token_masked}) — digite apenas para substituir`
                           : 'Cole aqui o token da Events API'
                     }
-                    className="flex-1 rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                    className="flex-1 rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
                   />
                   <button
                     type="button"
                     onClick={() => setShowTtToken(!showTtToken)}
                     aria-label="Mostrar ou ocultar token TikTok"
-                    className="rounded-xl border border-neutral-200 bg-white p-2 text-neutral-600 hover:bg-neutral-50"
+                    className="rounded-xl border border-border bg-card p-2 text-ink-muted hover:bg-surface-neutral hover:text-ink"
                   >
                     {showTtToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                   </button>
@@ -1124,7 +1124,7 @@ export function TabIntegrations({
                       setTpTtClearToken(true);
                     }}
                     aria-label="Limpar token TikTok"
-                    className="rounded-xl border border-neutral-200 bg-white p-2 text-neutral-400 hover:bg-neutral-50 hover:text-[#E4002B]"
+                    className="rounded-xl border border-border bg-card p-2 text-ink-muted hover:bg-brand-soft hover:text-brand-text"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -1133,12 +1133,12 @@ export function TabIntegrations({
             </div>
           </div>
           {/* 6. Google Search Console (Verificação de Domínio) */}
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50/40 p-4">
+          <div className="rounded-xl border border-border bg-surface p-4">
             <div>
-              <h3 className="text-sm font-bold text-neutral-900">
+              <h3 className="text-sm font-bold text-ink">
                 Google Search Console (Verificação de Domínio)
               </h3>
-              <p className="mt-0.5 text-xs text-neutral-500">
+              <p className="mt-0.5 text-xs text-ink-muted">
                 Injeta automaticamente a meta tag{' '}
                 <code className="font-mono">
                   &lt;meta name=&quot;google-site-verification&quot; content=&quot;...&quot; /&gt;
@@ -1147,7 +1147,7 @@ export function TabIntegrations({
               </p>
             </div>
             <div className="mt-3">
-              <label className="block text-xs font-semibold text-neutral-700">
+              <label className="block text-xs font-semibold text-ink">
                 Código de verificação ou tag HTML completa
               </label>
               <input
@@ -1155,16 +1155,16 @@ export function TabIntegrations({
                 value={tpGscVerification}
                 onChange={(e) => setTpGscVerification(e.target.value)}
                 placeholder='<meta name="google-site-verification" content="seu-codigo" /> ou apenas o código'
-                className="mt-1.5 w-full rounded-xl border border-neutral-200 bg-white px-3.5 py-2 font-mono text-xs text-neutral-900 focus:border-[#E4002B] focus:outline-none"
+                className="mt-1.5 w-full rounded-xl border border-border bg-card px-3.5 py-2 font-mono text-xs text-ink focus:border-brand focus:outline-none"
               />
               {tpGscVerification.trim() &&
               (/<meta\b/i.test(tpGscVerification) || /\bcontent\s*=/i.test(tpGscVerification)) &&
               extractedGscCode ? (
-                <p className="mt-1.5 text-[11px] text-emerald-700">
+                <p className="mt-1.5 text-[11px] font-medium text-brand-text">
                   Código extraído automaticamente: <code className="font-mono font-semibold">{extractedGscCode}</code>
                 </p>
               ) : (
-                <p className="mt-1.5 text-[11px] text-neutral-500">
+                <p className="mt-1.5 text-[11px] text-ink-muted">
                   Cole a tag HTML completa fornecida pelo Google Search Console ou apenas o valor do atributo <code className="font-mono">content</code>.
                 </p>
               )}
@@ -1173,25 +1173,25 @@ export function TabIntegrations({
         </div>
 
         {/* Eventos padrão rastreados automaticamente */}
-        <div className="mt-4 rounded-xl border border-neutral-200 bg-neutral-50 p-3.5 text-xs text-neutral-600">
-          <p className="font-bold text-neutral-800">
+        <div className="mt-4 rounded-xl border border-border bg-surface-neutral p-3.5 text-xs text-ink-muted">
+          <p className="font-bold text-ink">
             Eventos padrão rastreados automaticamente (quando ativos):
           </p>
           <ul className="mt-1.5 space-y-1">
             <li>
-              • <span className="font-semibold text-neutral-800">Visualização de página (PageView):</span> disparado nas páginas públicas (nunca nas rotas <code className="font-mono">/gestor</code>).
+              • <span className="font-semibold text-ink">Visualização de página (PageView):</span> disparado nas páginas públicas (nunca nas rotas <code className="font-mono">/gestor</code>).
             </li>
             <li>
-              • <span className="font-semibold text-neutral-800">Visualização de produto/modelo (ViewContent):</span> disparado ao selecionar modelos, revisões ou segmentos na tabela de preços.
+              • <span className="font-semibold text-ink">Visualização de produto/modelo (ViewContent):</span> disparado ao selecionar modelos, revisões ou segmentos na tabela de preços.
             </li>
             <li>
-              • <span className="font-semibold text-neutral-800">Conversão / Contato (Lead / Contact):</span> disparado ao clicar nos botões de WhatsApp e agendamento de revisão.
+              • <span className="font-semibold text-ink">Conversão / Contato (Lead / Contact):</span> disparado ao clicar nos botões de WhatsApp e agendamento de revisão.
             </li>
           </ul>
         </div>
       </div>
 
-      <p className="text-center text-xs text-neutral-500">
+      <p className="text-center text-xs text-ink-muted">
         Sem chaves configuradas, o site continua funcionando com os dados e preços cadastrados manualmente no gestor.
       </p>
     </div>

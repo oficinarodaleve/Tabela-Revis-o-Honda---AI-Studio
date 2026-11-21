@@ -8,7 +8,7 @@ function FlagSvg({ lang, className = 'h-[18px] w-[18px]' }: { lang: SiteLanguage
     return (
       <svg
         viewBox="0 0 24 24"
-        className={`${className} shrink-0 overflow-hidden rounded-full ring-1 ring-black/10 dark:ring-white/20`}
+        className={`${className} shrink-0 overflow-hidden rounded-full ring-1 ring-border`}
         aria-hidden="true"
       >
         <rect width="24" height="24" fill="#009B3A" />
@@ -30,7 +30,7 @@ function FlagSvg({ lang, className = 'h-[18px] w-[18px]' }: { lang: SiteLanguage
     return (
       <svg
         viewBox="0 0 24 24"
-        className={`${className} shrink-0 overflow-hidden rounded-full ring-1 ring-black/10 dark:ring-white/20`}
+        className={`${className} shrink-0 overflow-hidden rounded-full ring-1 ring-border`}
         aria-hidden="true"
       >
         <rect width="24" height="24" fill="#FFFFFF" />
@@ -58,7 +58,7 @@ function FlagSvg({ lang, className = 'h-[18px] w-[18px]' }: { lang: SiteLanguage
   return (
     <svg
       viewBox="0 0 24 24"
-      className={`${className} shrink-0 overflow-hidden rounded-full ring-1 ring-black/10 dark:ring-white/20`}
+      className={`${className} shrink-0 overflow-hidden rounded-full ring-1 ring-border`}
       aria-hidden="true"
     >
       <rect width="24" height="6.2" fill="#AA151B" />
@@ -107,12 +107,12 @@ export function LanguageSelector({ language, onChange }: LanguageSelectorProps) 
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={dict.languageSelectorLabel}
-        className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-neutral-200 bg-white/95 px-2.5 text-xs font-bold text-neutral-800 shadow-xs transition-colors hover:border-neutral-300 hover:bg-neutral-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#E4002B] dark:border-neutral-700 dark:bg-neutral-800/95 dark:text-neutral-100 dark:hover:border-neutral-600 dark:hover:bg-neutral-800 sm:h-10 sm:gap-2 sm:px-3"
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card/95 px-2.5 text-xs font-bold text-ink shadow-xs transition-colors hover:bg-surface focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand sm:h-10 sm:gap-2 sm:px-3"
       >
         <FlagSvg lang={language} className="h-[18px] w-[18px]" />
         <span className="tracking-wide">{activeOption.code}</span>
         <ChevronDown
-          className={`h-3.5 w-3.5 text-neutral-500 transition-transform duration-150 dark:text-neutral-400 ${
+          className={`h-3.5 w-3.5 text-ink-muted transition-transform duration-150 ${
             open ? 'rotate-180' : ''
           }`}
         />
@@ -122,7 +122,7 @@ export function LanguageSelector({ language, onChange }: LanguageSelectorProps) 
         <div
           role="listbox"
           aria-label={dict.languageSelectorLabel}
-          className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-neutral-200 bg-white p-1.5 shadow-xl dark:border-neutral-700 dark:bg-neutral-900"
+          className="absolute right-0 top-full z-50 mt-2 w-48 overflow-hidden rounded-2xl border border-border bg-card p-1.5 shadow-xl"
         >
           {LANGUAGE_OPTIONS.map((opt) => {
             const isSelected = opt.id === language;
@@ -138,8 +138,8 @@ export function LanguageSelector({ language, onChange }: LanguageSelectorProps) 
                 }}
                 className={`flex w-full items-center justify-between gap-2.5 rounded-xl px-2.5 py-2 text-left text-xs transition-colors ${
                   isSelected
-                    ? 'bg-red-50 font-bold text-[#C80024] dark:bg-red-950/40 dark:text-[#ff4d6d]'
-                    : 'font-medium text-neutral-700 hover:bg-neutral-100 dark:text-neutral-200 dark:hover:bg-neutral-800'
+                    ? 'bg-brand-soft font-bold text-brand-text'
+                    : 'font-medium text-ink hover:bg-surface'
                 }`}
               >
                 <span className="flex items-center gap-2.5">
@@ -149,12 +149,12 @@ export function LanguageSelector({ language, onChange }: LanguageSelectorProps) 
                 <span className="flex items-center gap-1.5">
                   <span
                     className={`font-mono text-[11px] font-bold ${
-                      isSelected ? 'text-[#C80024] dark:text-[#ff4d6d]' : 'text-neutral-600 dark:text-neutral-300'
+                      isSelected ? 'text-brand-text' : 'text-ink-muted'
                     }`}
                   >
                     {opt.code}
                   </span>
-                  {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-[#C80024] dark:text-[#ff4d6d]" />}
+                  {isSelected && <Check className="h-3.5 w-3.5 shrink-0 text-brand-text" />}
                 </span>
               </button>
             );

@@ -30,6 +30,11 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
 
       if (!res.ok || !data.user) {
         clearAdminToken();
+        try {
+          window.localStorage?.removeItem('rodaleve_admin_hint');
+        } catch {
+          // Ignore storage errors
+        }
         await signOut(auth).catch(() => {});
         setError(
           data.error ||
@@ -38,6 +43,11 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
         return;
       }
 
+      try {
+        window.localStorage?.setItem('rodaleve_admin_hint', '1');
+      } catch {
+        // Ignore storage errors
+      }
       await onSuccess(data.user);
     } catch (err) {
       clearAdminToken();
@@ -65,22 +75,22 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
   };
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-[#FAFAFA] px-4 py-12">
-      <div className="w-full max-w-md rounded-2xl border border-neutral-200 bg-white p-8 shadow-sm">
+    <div className="flex min-h-screen flex-col items-center justify-center bg-surface px-4 py-12">
+      <div className="w-full max-w-md rounded-2xl border border-border bg-card p-8 shadow-sm">
         <div className="text-center">
           <p className="font-display text-2xl font-extrabold uppercase tracking-tight">
-            <span className="text-neutral-900">RODALEVE </span>
-            <span className="text-[#E4002B]">GESTOR</span>
+            <span className="text-ink">RODALEVE </span>
+            <span className="text-brand-text">GESTOR</span>
           </p>
-          <p className="mt-1.5 text-sm text-neutral-500">
+          <p className="mt-1.5 text-sm text-ink-muted">
             Acesso restrito a administradores autorizados
           </p>
         </div>
 
         <div className="mt-7 space-y-4">
-          <div className="rounded-xl border border-neutral-200 bg-neutral-50 p-4 text-xs leading-relaxed text-neutral-600">
+          <div className="rounded-xl border border-border bg-surface-neutral p-4 text-xs leading-relaxed text-ink-muted">
             <div className="flex items-start gap-2.5">
-              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-[#E4002B]" />
+              <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-brand-text" />
               <p>
                 Entre com sua conta Google administrativa autorizada para gerenciar tabelas de
                 revisões, preços, modelos, SEO e integrações.
@@ -89,7 +99,7 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
           </div>
 
           {error && (
-            <div className="rounded-xl border border-red-200 bg-red-50 px-3.5 py-2.5 text-xs font-medium text-[#E4002B]">
+            <div className="rounded-xl border border-brand/30 bg-brand-soft px-3.5 py-2.5 text-xs font-medium text-brand-text">
               {error}
             </div>
           )}
@@ -98,7 +108,7 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
             type="button"
             onClick={() => void handleGoogleSignIn()}
             disabled={loading}
-            className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-[#E4002B] px-4 py-3 text-sm font-bold text-white transition-colors hover:bg-[#C80024] disabled:opacity-60"
+            className="flex w-full items-center justify-center gap-2.5 rounded-xl bg-brand px-4 py-3 text-sm font-bold text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-60"
           >
             <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" aria-hidden="true">
               <path
@@ -113,7 +123,7 @@ export function AdminLogin({ onSuccess, onBackToSite }: AdminLoginProps) {
         <button
           type="button"
           onClick={onBackToSite}
-          className="mt-5 inline-flex w-full items-center justify-center gap-1.5 text-xs font-semibold text-neutral-600 hover:text-neutral-900"
+          className="mt-5 inline-flex w-full items-center justify-center gap-1.5 text-xs font-semibold text-ink-muted hover:text-ink"
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Voltar para o site público
