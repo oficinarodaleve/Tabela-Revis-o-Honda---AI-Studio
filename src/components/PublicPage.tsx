@@ -6,16 +6,13 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ChevronUp,
   Clock,
   Code2,
   Eye,
   EyeOff,
-  Facebook,
   GripVertical,
   HelpCircle,
   Image as ImageIcon,
-  Instagram,
   LayoutGrid,
   List,
   MapPin,
@@ -25,7 +22,6 @@ import {
   Sun,
   Wrench,
   X,
-  Youtube,
 } from 'lucide-react';
 import {
   CustomBlockVariant,
@@ -219,7 +215,6 @@ export function PublicPage({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSegment, setSelectedSegment] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [showAllModels, setShowAllModels] = useState(false);
   const [highlightedModelId, setHighlightedModelId] = useState<number | null>(null);
   const [scheduleTarget, setScheduleTarget] = useState<{
     model: MotoModel;
@@ -230,6 +225,15 @@ export function PublicPage({
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const railRef = useRef<HTMLDivElement | null>(null);
+  const railDragRef = useRef<{
+    active: boolean;
+    moved: boolean;
+    startX: number;
+    startScrollLeft: number;
+  }>({ active: false, moved: false, startX: 0, startScrollLeft: 0 });
+  const suppressRailClickRef = useRef(false);
+  const railDragCleanupRef = useRef<(() => void) | null>(null);
+  const [isDraggingRail, setIsDraggingRail] = useState(false);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
   const [shouldMountUnits, setShouldMountUnits] = useState(isEditMode);
@@ -1099,18 +1103,81 @@ export function PublicPage({
     railRafRef.current = window.requestAnimationFrame(updateRailScrollState);
   }, [updateRailScrollState]);
 
-  const scrollRailBy = useCallback(
-    (direction: -1 | 1) => {
-      if (direction === 1 && !showAllModels) {
-        setShowAllModels(true);
-      }
+  const scrollRailBy = useCallback((direction: -1 | 1) => {
+    const el = railRef.current;
+    if (!el) return;
+    const step = Math.max(320, Math.round(el.clientWidth * 0.72));
+    el.scrollBy({ left: direction * step, behavior: 'smooth' });
+  }, []);
+
+  const handleRailMouseDown = useCallback(
+    (e: React.MouseEvent<HTMLDivElement>) => {
+      if (isEditMode || e.button !== 0) return;
+      const target = e.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, option')) return;
       const el = railRef.current;
       if (!el) return;
-      const step = Math.max(320, Math.round(el.clientWidth * 0.72));
-      el.scrollBy({ left: direction * step, behavior: 'smooth' });
+
+      railDragCleanupRef.current?.();
+      railDragRef.current = {
+        active: true,
+        moved: false,
+        startX: e.clientX,
+        startScrollLeft: el.scrollLeft,
+      };
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        if (!railDragRef.current.active) return;
+        const dx = moveEvent.clientX - railDragRef.current.startX;
+        if (!railDragRef.current.moved && Math.abs(dx) > 6) {
+          railDragRef.current.moved = true;
+          setIsDraggingRail(true);
+        }
+        if (railDragRef.current.moved) {
+          el.scrollLeft = railDragRef.current.startScrollLeft - dx;
+        }
+      };
+
+      const cleanup = () => {
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+        railDragCleanupRef.current = null;
+      };
+
+      const onMouseUp = () => {
+        const hadMoved = railDragRef.current.moved;
+        railDragRef.current.active = false;
+        railDragRef.current.moved = false;
+        setIsDraggingRail(false);
+        if (hadMoved) {
+          suppressRailClickRef.current = true;
+          window.setTimeout(() => {
+            suppressRailClickRef.current = false;
+          }, 0);
+        }
+        cleanup();
+      };
+
+      railDragCleanupRef.current = cleanup;
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
     },
-    [showAllModels]
+    [isEditMode]
   );
+
+  const handleRailClickCapture = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressRailClickRef.current) {
+      e.preventDefault();
+      e.stopPropagation();
+      suppressRailClickRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      railDragCleanupRef.current?.();
+    };
+  }, []);
 
   useEffect(() => {
     const raf = window.requestAnimationFrame(updateRailScrollState);
@@ -1144,7 +1211,6 @@ export function PublicPage({
       setHeroTab('tabela');
       setSearchQuery('');
       setSelectedSegment('all');
-      setShowAllModels(true);
       setHighlightedModelId(id);
       window.setTimeout(() => {
         window.requestAnimationFrame(() => {
@@ -1419,16 +1485,7 @@ export function PublicPage({
 
       case 'filters_catalog': {
         if (heroTab !== 'tabela' && !isEditMode) return null;
-        const collapseLimit = viewMode === 'grid' ? 6 : 9;
-        const canCollapseModels =
-          !isEditMode &&
-          !searchQuery.trim() &&
-          selectedSegment === 'all' &&
-          computedModels.length > collapseLimit;
-        const visibleModels =
-          canCollapseModels && !showAllModels
-            ? computedModels.slice(0, collapseLimit)
-            : computedModels;
+        const visibleModels = computedModels;
         const isFreeLabor = isFreeLaborRevision(selectedRevision);
         const laborBadgeText = getLaborBadgeText(selectedRevision, language);
         const laborTexts = LABOR_POLICY_TEXTS[language] || LABOR_POLICY_TEXTS.pt;
@@ -1650,7 +1707,18 @@ export function PublicPage({
                 <div
                   ref={railRef}
                   onScroll={scheduleRailScrollUpdate}
-                  className="flex flex-row items-stretch gap-4 overflow-x-auto snap-x snap-mandatory scroll-smooth pb-3 pt-1"
+                  onMouseDown={handleRailMouseDown}
+                  onClickCapture={handleRailClickCapture}
+                  onDragStart={(e) => {
+                    if (!isEditMode) e.preventDefault();
+                  }}
+                  className={`flex flex-row items-stretch gap-4 overflow-x-auto pb-3 pt-1 ${
+                    isDraggingRail
+                      ? 'cursor-grabbing select-none'
+                      : isEditMode
+                        ? ''
+                        : 'cursor-grab snap-x snap-mandatory scroll-smooth'
+                  }`}
                 >
                   {visibleModels.map(({ model, summary, isVisuallyHidden }, modelIdx) => {
                     const categoryLabel = segmentNameMap[model.segment_slug] || 'Street';
@@ -2226,29 +2294,6 @@ export function PublicPage({
                 })}
               </div>
             )}
-
-            {/* Controle de exibição: Ver todos os modelos (X) / Recolher */}
-            {canCollapseModels && (
-              <div className="mt-8 flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => setShowAllModels((prev) => !prev)}
-                  className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-6 py-3 text-sm font-bold text-ink shadow-sm transition-all hover:border-brand hover:text-brand-text"
-                >
-                  {showAllModels ? (
-                    <>
-                      <ChevronUp className="h-4 w-4 text-brand-text" />
-                      {dict.collapseModels}
-                    </>
-                  ) : (
-                    <>
-                      <ChevronDown className="h-4 w-4 text-brand-text" />
-                      {dict.viewAllModels(computedModels.length)}
-                    </>
-                  )}
-                </button>
-              </div>
-            )}
           </main>
         );
       }
@@ -2492,18 +2537,53 @@ export function PublicPage({
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label="Instagram Rodaleve"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-ink transition-colors hover:border-brand hover:text-brand-text"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card transition-all hover:-translate-y-0.5 hover:border-[#E1306C]/50 hover:shadow-sm"
                     >
-                      <Instagram className="h-4 w-4" />
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+                        <defs>
+                          <linearGradient id="rodaleve-ig-grad" x1="0%" y1="100%" x2="100%" y2="0%">
+                            <stop offset="0%" stopColor="#F58529" />
+                            <stop offset="35%" stopColor="#DD2A7B" />
+                            <stop offset="70%" stopColor="#8134AF" />
+                            <stop offset="100%" stopColor="#515BD4" />
+                          </linearGradient>
+                        </defs>
+                        <rect x="2" y="2" width="20" height="20" rx="5.5" fill="url(#rodaleve-ig-grad)" />
+                        <rect
+                          x="5.5"
+                          y="5.5"
+                          width="13"
+                          height="13"
+                          rx="3.6"
+                          fill="none"
+                          stroke="#FFFFFF"
+                          strokeWidth="1.7"
+                        />
+                        <circle
+                          cx="12"
+                          cy="12"
+                          r="3.1"
+                          fill="none"
+                          stroke="#FFFFFF"
+                          strokeWidth="1.7"
+                        />
+                        <circle cx="15.8" cy="8.2" r="0.95" fill="#FFFFFF" />
+                      </svg>
                     </a>
                     <a
                       href={data.seo.youtube_url || 'https://youtube.com'}
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label="YouTube Rodaleve"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-ink transition-colors hover:border-brand hover:text-brand-text"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card transition-all hover:-translate-y-0.5 hover:border-[#FF0000]/50 hover:shadow-sm"
                     >
-                      <Youtube className="h-4 w-4" />
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          fill="#FF0000"
+                          d="M22.54 6.42a2.78 2.78 0 0 0-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 0 0-1.94 2A29 29 0 0 0 1 12a29 29 0 0 0 .46 5.58 2.78 2.78 0 0 0 1.94 2c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 0 0 1.94-2A29 29 0 0 0 23 12a29 29 0 0 0-.46-5.58Z"
+                        />
+                        <path fill="#FFFFFF" d="M9.75 15.02 15.5 12 9.75 8.98v6.04Z" />
+                      </svg>
                     </a>
                     <a
                       href={
@@ -2513,9 +2593,15 @@ export function PublicPage({
                       target="_blank"
                       rel="noopener noreferrer"
                       aria-label="Facebook Rodaleve"
-                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card text-ink transition-colors hover:border-brand hover:text-brand-text"
+                      className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border bg-card transition-all hover:-translate-y-0.5 hover:border-[#1877F2]/50 hover:shadow-sm"
                     >
-                      <Facebook className="h-4 w-4" />
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" aria-hidden="true">
+                        <circle cx="12" cy="12" r="10" fill="#1877F2" />
+                        <path
+                          fill="#FFFFFF"
+                          d="M15.12 12.78l.45-2.9h-2.78V8c0-.8.39-1.57 1.64-1.57h1.27V3.96s-1.15-.2-2.26-.2c-2.3 0-3.81 1.4-3.81 3.92v2.2H7.08v2.9h2.55v7.02a10.2 10.2 0 0 0 3.16 0v-7.02h2.33Z"
+                        />
+                      </svg>
                     </a>
                   </div>
                   <button
