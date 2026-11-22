@@ -2,7 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, Copy, Plus, Save, Trash2 } from 'lucide-react';
 import { MotoModel, Part, RevisionPart, RevisionTab } from '../../types';
 import { adminFetch } from '../../utils/adminAuth';
-import { computeLineTotal, computeModelRevision, formatBRL } from '../../utils/pricing';
+import {
+  calculateOilItemLine,
+  comparePartNamesPT,
+  computeModelRevision,
+  formatBRL,
+  formatLitersPT,
+} from '../../utils/pricing';
 
 import { saveGestorDraftCache } from '../../utils/gestorBackup';
 
@@ -58,6 +64,25 @@ export function TabRevisions({
     return map;
   }, [parts]);
 
+  const sortedParts = useMemo(
+    () =>
+      [...parts].sort((a, b) => {
+        const byName = comparePartNamesPT(a.description, b.description);
+        return byName !== 0 ? byName : comparePartNamesPT(a.code, b.code);
+      }),
+    [parts]
+  );
+
+  const sortDraftItemsList = (
+    list: Array<{ part_code: string; quantity: number }>
+  ) =>
+    [...list].sort((a, b) => {
+      const descA = partsMap[a.part_code]?.description || a.part_code;
+      const descB = partsMap[b.part_code]?.description || b.part_code;
+      const byName = comparePartNamesPT(descA, descB);
+      return byName !== 0 ? byName : comparePartNamesPT(a.part_code, b.part_code);
+    });
+
   const availableSourceTabs = useMemo(
     () => revisionTabs.filter((t) => t.revision_number !== selectedRev),
     [revisionTabs, selectedRev]
@@ -112,7 +137,7 @@ export function TabRevisions({
       saveGestorDraftCache(`revisoes_rev_${selectedRev}`, draftItemsByModel);
       try {
         for (const modelId of dirtyModelIds) {
-          const items = draftItemsByModel[modelId] || [];
+          const items = sortDraftItemsList(draftItemsByModel[modelId] || []);
           const res = await adminFetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -203,7 +228,7 @@ export function TabRevisions({
   };
 
   const handleAddItem = (modelId: number) => {
-    const chosenCode = addPartCodeByModel[modelId] || parts[0]?.code;
+    const chosenCode = addPartCodeByModel[modelId] || sortedParts[0]?.code;
     if (!chosenCode) return;
     const partObj = partsMap[chosenCode];
     const defaultQty = partObj?.default_qty ?? (partObj?.unit === 'ML' ? 1000 : 1);
@@ -211,14 +236,14 @@ export function TabRevisions({
     setDraftItemsByModel((prev) => {
       const list = [...(prev[modelId] || [])];
       list.push({ part_code: chosenCode, quantity: defaultQty });
-      return { ...prev, [modelId]: list };
+      return { ...prev, [modelId]: sortDraftItemsList(list) };
     });
   };
 
   const handleSaveModelRevision = async (modelId: number) => {
     setSavingModelId(modelId);
     try {
-      const items = draftItemsByModel[modelId] || [];
+      const items = sortDraftItemsList(draftItemsByModel[modelId] || []);
       const res = await adminFetch(`/api/admin/revisions/${modelId}/${selectedRev}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -323,7 +348,12 @@ export function TabRevisions({
           for (const item of items) {
             const p = partsMap[item.part_code];
             if (!p) continue;
-            const line = computeLineTotal(p, item.quantity);
+            const { lineTotal: line } = calculateOilItemLine(
+              p,
+              item.quantity,
+              model.oil_liters,
+              model.oil_sale_mode
+            );
             totalWithOptionals += line;
             if (!p.is_optional) totalWithoutOptionals += line;
           }
@@ -332,7 +362,12 @@ export function TabRevisions({
             model.id,
             selectedRev,
             revisionParts,
-            partsMap
+            partsMap,
+            model.labor_price,
+            {
+              oilLiters: model.oil_liters,
+              oilSaleMode: model.oil_sale_mode,
+            }
           );
           const displayCount = isExpanded ? items.length : savedSummary.items.length;
           const displayTotal = isExpanded
@@ -412,19 +447,37 @@ export function TabRevisions({
                     </p>
                   ) : (
                     <div className="divide-y divide-border/70 rounded-xl border border-border bg-card">
-                      {items.map((item, idx) => {
+                      {items
+                        .map((item, origIdx) => ({ item, origIdx }))
+                        .sort((a, b) => {
+                          const descA = partsMap[a.item.part_code]?.description || a.item.part_code;
+                          const descB = partsMap[b.item.part_code]?.description || b.item.part_code;
+                          const byName = comparePartNamesPT(descA, descB);
+                          return byName !== 0
+                            ? byName
+                            : comparePartNamesPT(a.item.part_code, b.item.part_code);
+                        })
+                        .map(({ item, origIdx }) => {
                         const part = partsMap[item.part_code];
-                        const lineTotal = part ? computeLineTotal(part, item.quantity) : 0;
+                        const { lineTotal, oilMeta } = part
+                          ? calculateOilItemLine(
+                              part,
+                              item.quantity,
+                              model.oil_liters,
+                              model.oil_sale_mode
+                            )
+                          : { lineTotal: 0, oilMeta: undefined };
 
                         return (
                           <div
-                            key={`${item.part_code}-${idx}`}
+                            key={`${item.part_code}-${origIdx}`}
                             className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5"
                           >
                             <div className="min-w-0 flex-1">
                               <p className="text-xs font-semibold text-ink">
                                 {part?.description || item.part_code}
-                                {part?.is_optional && (
+                                {part?.is_optional &&
+                                  !(part.description || '').toLowerCase().includes('[opcional]') && (
                                   <span className="ml-1.5 text-[11px] font-normal text-ink-muted">
                                     (opcional)
                                   </span>
@@ -434,6 +487,9 @@ export function TabRevisions({
                                 {item.part_code} · Unitário:{' '}
                                 {part ? formatBRL(part.price) : 'R$ 0,00'}
                                 {part?.unit === 'ML' ? ' / 100ml' : ''}
+                                {oilMeta?.isEngineOil &&
+                                  oilMeta.saleMode === 'closed_bottle_1l' &&
+                                  ` · ${oilMeta.bottles} ${oilMeta.bottles === 1 ? 'frasco' : 'frascos'} de 1L (${formatLitersPT(oilMeta.oilLiters)}L no motor${oilMeta.surplusMl > 0 ? ` + ${oilMeta.surplusMl}ml sobra` : ''})`}
                               </p>
                             </div>
 
@@ -445,7 +501,7 @@ export function TabRevisions({
                                   step={part?.unit === 'ML' ? 100 : 1}
                                   value={item.quantity}
                                   onChange={(e) =>
-                                    handleQuantityChange(model.id, idx, Number(e.target.value))
+                                    handleQuantityChange(model.id, origIdx, Number(e.target.value))
                                   }
                                   className="w-20 rounded-lg border border-border bg-card px-2.5 py-1.5 text-right text-xs font-semibold text-ink tabular-nums focus:border-brand focus:outline-none"
                                 />
@@ -460,7 +516,7 @@ export function TabRevisions({
 
                               <button
                                 type="button"
-                                onClick={() => handleRemoveItem(model.id, idx)}
+                                onClick={() => handleRemoveItem(model.id, origIdx)}
                                 aria-label="Remover peça"
                                 className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-brand-soft hover:text-brand-text"
                               >
@@ -477,7 +533,7 @@ export function TabRevisions({
                   <div className="mt-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                     <div className="flex flex-1 items-center gap-2">
                       <select
-                        value={addPartCodeByModel[model.id] || parts[0]?.code || ''}
+                        value={addPartCodeByModel[model.id] || sortedParts[0]?.code || ''}
                         onChange={(e) =>
                           setAddPartCodeByModel((prev) => ({
                             ...prev,
@@ -486,9 +542,9 @@ export function TabRevisions({
                         }
                         className="w-full max-w-sm rounded-xl border border-border bg-card px-3 py-2 text-xs text-ink focus:border-brand focus:outline-none"
                       >
-                        {parts.map((p) => (
+                        {sortedParts.map((p) => (
                           <option key={p.code} value={p.code}>
-                            {p.code} — {p.description} ({formatBRL(p.price)}
+                            {p.description} — {p.code} ({formatBRL(p.price)}
                             {p.unit === 'ML' ? '/100ml' : `/${p.unit}`})
                           </option>
                         ))}

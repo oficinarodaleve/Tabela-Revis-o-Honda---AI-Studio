@@ -1,16 +1,24 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, MapPin, Phone, X } from 'lucide-react';
 import { MotoModel, UnitLocation } from '../types';
 import { SiteLanguage, UI_TRANSLATIONS, translatePartDescription } from '../utils/i18n';
 import {
   ComputedRevisionSummary,
   LABOR_POLICY_TEXTS,
+  comparePartNamesPT,
   formatBRL,
-  formatPartQuantity,
+  formatLitersPT,
   getLaborBadgeText,
   isFreeLaborRevision,
 } from '../utils/pricing';
-import { WhatsAppIcon, buildWhatsAppHref, getUnitWhatsAppNumber } from './WhatsAppIcon';
+import {
+  buildRodaleveApiWhatsAppUrl,
+  buildWhatsAppScheduleMessage,
+  downloadAndOpenWhatsApp,
+  openExternalLink,
+  preloadHtml2Canvas,
+} from '../utils/whatsappSchedule';
+import { WhatsAppIcon, getUnitWhatsAppNumber } from './WhatsAppIcon';
 
 interface WhatsAppScheduleModalProps {
   model: MotoModel;
@@ -21,6 +29,7 @@ interface WhatsAppScheduleModalProps {
   initialIncludeOptionals: boolean;
   units: UnitLocation[];
   language?: SiteLanguage;
+  darkMode?: boolean;
   onClose: () => void;
   onTrackLead?: (unitName: string) => void;
 }
@@ -34,12 +43,21 @@ export function WhatsAppScheduleModal({
   initialIncludeOptionals,
   units,
   language = 'pt',
+  darkMode = false,
   onClose,
   onTrackLead,
 }: WhatsAppScheduleModalProps) {
   const dict = UI_TRANSLATIONS[language];
-  const [selectedUnitId, setSelectedUnitId] = useState<string>(units[0]?.id || 'vitoria-da-conquista');
+  const [selectedUnitId, setSelectedUnitId] = useState<string>(
+    units[0]?.id || 'vitoria-da-conquista'
+  );
   const [includeOptionals, setIncludeOptionals] = useState<boolean>(initialIncludeOptionals);
+  const [sending, setSending] = useState<boolean>(false);
+  const modalCaptureRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    preloadHtml2Canvas();
+  }, []);
 
   const hasOptionals = useMemo(
     () => summary.items.some(({ part }) => part.is_optional),
@@ -53,7 +71,9 @@ export function WhatsAppScheduleModal({
 
   const activeItems = useMemo(
     () =>
-      summary.items.filter(({ part }) => (includeOptionals ? true : !part.is_optional)),
+      summary.items
+        .filter(({ part }) => (includeOptionals ? true : !part.is_optional))
+        .sort((a, b) => comparePartNamesPT(a.part.description, b.part.description)),
     [summary.items, includeOptionals]
   );
 
@@ -65,75 +85,60 @@ export function WhatsAppScheduleModal({
   const laborTexts = LABOR_POLICY_TEXTS[language] || LABOR_POLICY_TEXTS.pt;
   const laborBadgeText = getLaborBadgeText(revisionNumber, language);
 
-  const whatsappUrl = useMemo(() => {
-    const unitCity = selectedUnit?.city || selectedUnit?.name || 'Vitória da Conquista';
-    const unitPhone = getUnitWhatsAppNumber(selectedUnit);
-    const revDisplay = revisionSubtitle
-      ? `${revisionLabel} (${revisionSubtitle})`
-      : revisionLabel;
+  const handleConfirmSend = async () => {
+    if (sending) return;
+    const unitSnapshot = units.find((u) => u.id === selectedUnitId) || units[0];
 
-    const lines: string[] = [
-      `Olá, Rodaleve! Gostaria de agendar a *${revDisplay}* da minha *${model.name.toUpperCase()}* na unidade de *${unitCity}*.`,
-      '',
-    ];
-
-    if (activeItems.length > 0) {
-      lines.push('*Resumo estimado das peças:*');
-      for (const { revisionPart, part, lineTotal } of activeItems) {
-        const qtySuffix =
-          part.unit === 'ML' || revisionPart.quantity > 1
-            ? ` (${formatPartQuantity(part, revisionPart.quantity)})`
-            : '';
-        const optTag = part.is_optional ? ' [Opcional]' : '';
-        lines.push(`• ${part.description}${optTag}${qtySuffix}: ${formatBRL(lineTotal)}`);
-      }
-      lines.push('');
+    try {
+      onTrackLead?.(unitSnapshot?.city || unitSnapshot?.name || 'Rodaleve');
+    } catch {
+      // Nunca impede o envio ao WhatsApp caso algum pixel falhe
     }
 
-    if (!isFreeLabor && summary.laborCost > 0) {
-      lines.push(
-        `• Mão de obra (a partir da 3.ª revisão): ${formatBRL(summary.laborCost)}`
+    setSending(true);
+    try {
+      await downloadAndOpenWhatsApp({
+        captureElement: modalCaptureRef.current,
+        darkMode,
+        model,
+        revisionNumber,
+        revisionLabel,
+        revisionSubtitle,
+        summary,
+        includeOptionals,
+        unit: unitSnapshot,
+      });
+    } catch {
+      const fallbackMessage = buildWhatsAppScheduleMessage({
+        model,
+        revisionNumber,
+        revisionLabel,
+        revisionSubtitle,
+        summary,
+        includeOptionals,
+        unit: unitSnapshot,
+        includeDownloadedImageNote: false,
+      });
+      openExternalLink(
+        buildRodaleveApiWhatsAppUrl(fallbackMessage, getUnitWhatsAppNumber(unitSnapshot))
       );
-      lines.push('');
+    } finally {
+      setSending(false);
     }
-
-    if (hasOptionals) {
-      lines.push(
-        includeOptionals
-          ? '_Inclui itens opcionais selecionados no simulador._'
-          : '_Orçamento somente com peças obrigatórias (sem itens opcionais)._'
-      );
-    }
-
-    lines.push(`*Valor total estimado:* ${formatBRL(estimatedTotal)}`);
-    lines.push(
-      isFreeLabor
-        ? '_Mão de obra gratuita: 1.ª e 2.ª revisão (conforme manual). Atendimento por ordem de chegada._'
-        : '_Mão de obra cobrada conforme tabela / manual. Solicito confirmação de horário para agendamento prévio._'
-    );
-
-    return buildWhatsAppHref(unitPhone, lines.join('\n'));
-  }, [
-    selectedUnit,
-    revisionLabel,
-    revisionSubtitle,
-    model.name,
-    activeItems,
-    summary.laborCost,
-    hasOptionals,
-    includeOptionals,
-    estimatedTotal,
-    isFreeLabor,
-  ]);
+    onClose();
+  };
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-ink/55 p-4 backdrop-blur-xs"
       onClick={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (!sending && e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card shadow-2xl">
+      <div
+        ref={modalCaptureRef}
+        className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-card shadow-2xl"
+      >
         {/* Header */}
         <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
           <div>
@@ -152,9 +157,11 @@ export function WhatsAppScheduleModal({
           </div>
           <button
             type="button"
+            data-html2canvas-ignore="true"
+            disabled={sending}
             onClick={onClose}
             aria-label={dict.modalCloseAria}
-            className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-surface"
+            className="rounded-lg p-1.5 text-ink-muted transition-colors hover:bg-surface disabled:opacity-50"
           >
             <X className="h-5 w-5" />
           </button>
@@ -177,6 +184,7 @@ export function WhatsAppScheduleModal({
                   <button
                     key={unit.id}
                     type="button"
+                    disabled={sending}
                     onClick={() => setSelectedUnitId(unit.id)}
                     className={`flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all ${
                       isSelected
@@ -225,6 +233,7 @@ export function WhatsAppScheduleModal({
                 <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-card px-2.5 py-1 text-xs font-semibold text-ink">
                   <input
                     type="checkbox"
+                    disabled={sending}
                     checked={includeOptionals}
                     onChange={(e) => setIncludeOptionals(e.target.checked)}
                     className="h-3.5 w-3.5 rounded accent-brand"
@@ -237,21 +246,35 @@ export function WhatsAppScheduleModal({
             {activeItems.length === 0 ? (
               <p className="mt-3 text-xs text-ink-muted">{dict.modalNoParts}</p>
             ) : (
-              <ul className="mt-3 max-h-40 space-y-1.5 overflow-y-auto pr-1 text-xs">
-                {activeItems.map(({ revisionPart, part, lineTotal }) => {
+              <ul
+                data-capture-scroll-list="true"
+                className="mt-3 max-h-40 space-y-1.5 overflow-y-auto pr-1 text-xs"
+              >
+                {activeItems.map(({ revisionPart, part, lineTotal, oilMeta }) => {
                   const translatedDesc = translatePartDescription(part.description, language);
                   return (
                     <li
                       key={`${revisionPart.id}-${part.code}`}
-                      className="flex items-center justify-between gap-3 text-ink-muted"
+                      className="flex items-start justify-between gap-3 text-ink-muted"
                     >
-                      <span className="truncate">
-                        {translatedDesc}
-                        {part.is_optional &&
-                        !translatedDesc.includes('[Opcional]') &&
-                        !translatedDesc.includes('[Optional]')
-                          ? ` ${dict.optionalTag}`
-                          : ''}
+                      <span className="min-w-0">
+                        <span className="block truncate">
+                          {translatedDesc}
+                          {part.is_optional &&
+                          !translatedDesc.includes('[Opcional]') &&
+                          !translatedDesc.includes('[Optional]')
+                            ? ` ${dict.optionalTag}`
+                            : ''}
+                        </span>
+                        {oilMeta?.isEngineOil &&
+                          oilMeta.saleMode === 'closed_bottle_1l' &&
+                          oilMeta.surplusMl > 0 && (
+                            <span className="block text-[10px] text-ink-muted">
+                              {oilMeta.bottles} {oilMeta.bottles === 1 ? 'frasco' : 'frascos'} de 1L (
+                              {formatLitersPT(oilMeta.oilLiters)}L no motor + {oilMeta.surplusMl}ml de
+                              sobra)
+                            </span>
+                          )}
                       </span>
                       <span className="shrink-0 font-semibold text-ink tabular-nums">
                         {formatBRL(lineTotal)}
@@ -260,6 +283,13 @@ export function WhatsAppScheduleModal({
                   );
                 })}
               </ul>
+            )}
+
+            {summary.oilSurplusNotice && summary.oilSurplusNotice.surplusMl > 0 && (
+              <p className="mt-2.5 rounded-lg border border-border bg-card px-2.5 py-2 text-[11px] leading-snug text-ink-muted">
+                Óleo comercializado apenas em frascos fechados de 1L. O excedente (
+                {summary.oilSurplusNotice.surplusMl}ml) é entregue ao cliente para reposição.
+              </p>
             )}
 
             <div className="mt-3 flex items-center justify-between border-t border-border pt-3">
@@ -286,27 +316,29 @@ export function WhatsAppScheduleModal({
           </div>
 
           {/* Ação final */}
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <div
+            data-html2canvas-ignore="true"
+            className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end"
+          >
             <button
               type="button"
+              disabled={sending}
               onClick={onClose}
-              className="rounded-xl border border-border px-4 py-2.5 text-xs font-semibold text-ink hover:bg-surface"
+              className="rounded-xl border border-border px-4 py-2.5 text-xs font-semibold text-ink hover:bg-surface disabled:opacity-50"
             >
               {dict.modalCancel}
             </button>
-            <a
-              href={whatsappUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              onClick={() => {
-                onTrackLead?.(selectedUnit?.city || selectedUnit?.name || 'Rodaleve');
-                setTimeout(onClose, 150);
-              }}
-              className="inline-flex items-center justify-center gap-2 rounded-xl bg-whatsapp px-5 py-2.5 text-sm font-bold text-on-whatsapp shadow-sm transition-colors hover:bg-whatsapp-hover"
+            <button
+              type="button"
+              disabled={sending}
+              onClick={() => void handleConfirmSend()}
+              className="inline-flex items-center justify-center gap-2 rounded-xl bg-whatsapp px-5 py-2.5 text-sm font-bold text-on-whatsapp shadow-sm transition-colors hover:bg-whatsapp-hover disabled:cursor-wait disabled:opacity-75"
             >
               <WhatsAppIcon className="h-4 w-4" />
-              {dict.modalSendWhatsApp(selectedUnit?.city || 'Rodaleve')}
-            </a>
+              {sending
+                ? dict.generatingQuote
+                : dict.modalSendWhatsApp(selectedUnit?.city || 'Rodaleve')}
+            </button>
           </div>
         </div>
       </div>

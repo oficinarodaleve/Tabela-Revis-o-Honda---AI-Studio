@@ -124,6 +124,17 @@ function parseOptionalLaborPrice(raw: unknown): number | null {
   return Number(parsed.toFixed(2));
 }
 
+function parseOptionalOilLiters(raw: unknown): number | null {
+  if (raw === null || raw === undefined || raw === '') return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 25) return null;
+  return Number(parsed.toFixed(3));
+}
+
+function parseOilSaleMode(raw: unknown): 'exact' | 'closed_bottle_1l' {
+  return raw === 'closed_bottle_1l' ? 'closed_bottle_1l' : 'exact';
+}
+
 function formatModelRow(row: typeof models.$inferSelect) {
   return {
     id: row.id,
@@ -136,6 +147,11 @@ function formatModelRow(row: typeof models.$inferSelect) {
       row.laborPrice !== null && row.laborPrice !== undefined
         ? Number(row.laborPrice)
         : null,
+    oil_liters:
+      row.oilLiters !== null && row.oilLiters !== undefined
+        ? Number(row.oilLiters)
+        : null,
+    oil_sale_mode: parseOilSaleMode(row.oilSaleMode),
   };
 }
 
@@ -681,13 +697,16 @@ app.post('/api/admin/prices/sync', requireAuth, async (_req: AuthRequest, res: R
 
 // Aba 3: Modelos e Fotos
 app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Response) => {
-  const { name, segment_slug, image_url, hidden, labor_price } = req.body as {
-    name?: string;
-    segment_slug?: string;
-    image_url?: string;
-    hidden?: boolean;
-    labor_price?: number | null;
-  };
+  const { name, segment_slug, image_url, hidden, labor_price, oil_liters, oil_sale_mode } =
+    req.body as {
+      name?: string;
+      segment_slug?: string;
+      image_url?: string;
+      hidden?: boolean;
+      labor_price?: number | null;
+      oil_liters?: number | string | null;
+      oil_sale_mode?: string;
+    };
   if (!name?.trim()) {
     res.status(400).json({ error: 'Nome do modelo é obrigatório.' });
     return;
@@ -708,6 +727,8 @@ app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Respons
         hidden: hidden ? 1 : 0,
         sortOrder: Number(maxSort ?? 0) + 1,
         laborPrice: parseOptionalLaborPrice(labor_price),
+        oilLiters: parseOptionalOilLiters(oil_liters),
+        oilSaleMode: parseOilSaleMode(oil_sale_mode),
       })
       .returning();
 
@@ -720,13 +741,16 @@ app.post('/api/admin/models', requireAuth, async (req: AuthRequest, res: Respons
 
 app.put('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Response) => {
   const id = Number(req.params.id);
-  const { name, segment_slug, image_url, hidden, labor_price } = req.body as {
-    name: string;
-    segment_slug: string;
-    image_url: string;
-    hidden: boolean;
-    labor_price?: number | null;
-  };
+  const { name, segment_slug, image_url, hidden, labor_price, oil_liters, oil_sale_mode } =
+    req.body as {
+      name: string;
+      segment_slug: string;
+      image_url: string;
+      hidden: boolean;
+      labor_price?: number | null;
+      oil_liters?: number | string | null;
+      oil_sale_mode?: string;
+    };
   if (!name?.trim()) {
     res.status(400).json({ error: 'Nome do modelo é obrigatório.' });
     return;
@@ -742,6 +766,12 @@ app.put('/api/admin/models/:id', requireAuth, async (req: AuthRequest, res: Resp
     };
     if (labor_price !== undefined) {
       updatePayload.laborPrice = parseOptionalLaborPrice(labor_price);
+    }
+    if (oil_liters !== undefined) {
+      updatePayload.oilLiters = parseOptionalOilLiters(oil_liters);
+    }
+    if (oil_sale_mode !== undefined) {
+      updatePayload.oilSaleMode = parseOilSaleMode(oil_sale_mode);
     }
 
     const [updated] = await db
@@ -1167,6 +1197,8 @@ app.post('/api/admin/backup/restore', requireAuth, async (req: AuthRequest, res:
             hidden: m.hidden ? 1 : 0,
             sortOrder: Number(m.sort_order ?? 0),
             laborPrice: parseOptionalLaborPrice(m.labor_price),
+            oilLiters: parseOptionalOilLiters(m.oil_liters),
+            oilSaleMode: parseOilSaleMode(m.oil_sale_mode),
           }));
         if (modelRows.length > 0) {
           await tx.insert(models).values(modelRows);

@@ -168,13 +168,19 @@ export function buildGestorBackupFiles(source: GestorExportSource): Record<strin
     model_name: m.name,
     segment_slug: m.segment_slug,
     labor_price: m.labor_price ?? null,
+    oil_liters: m.oil_liters ?? null,
+    oil_sale_mode: m.oil_sale_mode ?? 'exact',
     revisions: source.revision_tabs.map((tab) => {
       const calc = computeModelRevision(
         m.id,
         tab.revision_number,
         source.revision_parts,
         partsMap,
-        m.labor_price
+        m.labor_price,
+        {
+          oilLiters: m.oil_liters,
+          oilSaleMode: m.oil_sale_mode,
+        }
       );
       return {
         revision_number: tab.revision_number,

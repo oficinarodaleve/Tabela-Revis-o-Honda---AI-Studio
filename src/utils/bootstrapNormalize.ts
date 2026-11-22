@@ -185,6 +185,14 @@ export function normalizePublicBootstrapData(raw: unknown): PublicBootstrapData 
         Number(m.labor_price) >= 0
           ? Number(Number(m.labor_price).toFixed(2))
           : null,
+      oil_liters:
+        m.oil_liters !== null &&
+        m.oil_liters !== undefined &&
+        Number.isFinite(Number(m.oil_liters)) &&
+        Number(m.oil_liters) > 0
+          ? Number(Number(m.oil_liters).toFixed(3))
+          : null,
+      oil_sale_mode: m.oil_sale_mode === 'closed_bottle_1l' ? 'closed_bottle_1l' : 'exact',
     })),
     segments: asArray<Partial<Segment>>(r.segments).map((s) => ({
       id: Number(s.id) || 0,

@@ -44,6 +44,8 @@ import {
   LABOR_POLICY_TEXTS,
   computeModelRevision,
   formatBRL,
+  formatExactOilQuantity,
+  formatLitersPT,
   formatPartQuantity,
   getLaborBadgeText,
   isFreeLaborRevision,
@@ -1030,7 +1032,11 @@ export function PublicPage({
           selectedRevision,
           data.revision_parts || [],
           partsMap,
-          model.labor_price
+          model.labor_price,
+          {
+            oilLiters: model.oil_liters,
+            oilSaleMode: model.oil_sale_mode,
+          }
         );
         return {
           model: { ...model, image_url: effectiveImage },
@@ -1761,7 +1767,10 @@ export function PublicPage({
                         } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                       >
                         {isEditMode && (
-                          <div className="flex items-center justify-between gap-1 border-b border-border bg-brand-soft px-3 py-1.5 text-[11px] text-ink">
+                          <div
+                            data-html2canvas-ignore="true"
+                            className="flex items-center justify-between gap-1 border-b border-border bg-brand-soft px-3 py-1.5 text-[11px] text-ink"
+                          >
                             <span className="inline-flex cursor-grab items-center gap-1 font-bold active:cursor-grabbing">
                               <GripVertical className="h-3.5 w-3.5 text-brand-text" />
                               Arrastar card
@@ -1825,6 +1834,7 @@ export function PublicPage({
                           {isEditMode && (
                             <button
                               type="button"
+                              data-html2canvas-ignore="true"
                               onClick={() =>
                                 setImageModal({
                                   kind: 'model',
@@ -1915,6 +1925,7 @@ export function PublicPage({
                             {activeHtmlEditMode && (
                               <button
                                 type="button"
+                                data-html2canvas-ignore="true"
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   openHtmlModalForKey(
@@ -1932,19 +1943,33 @@ export function PublicPage({
                         )}
 
                         {/* Lista compacta de peças da revisão (altura alinhada no carrossel) */}
-                        <div className="mt-2.5 h-[196px] flex-1 overflow-y-auto divide-y divide-border px-4">
+                        <div
+                          data-capture-scroll-list="true"
+                          className="mt-2.5 h-[196px] flex-1 overflow-y-auto divide-y divide-border px-4"
+                        >
                           {summary.items.length === 0 && (isFreeLabor || summary.laborCost <= 0) ? (
                             <p className="py-6 text-center text-xs text-ink-muted">
                               {dict.noPartsLinked}
                             </p>
                           ) : (
                             <>
-                              {summary.items.map(({ revisionPart, part, lineTotal }) => {
+                              {summary.items.map(({ revisionPart, part, lineTotal, oilMeta }) => {
                                 const dimmedOptional = part.is_optional && !includeOptionals;
                                 const translatedDesc = translatePartDescription(
                                   part.description,
                                   language
                                 );
+                                const oilCodeSubtext = oilMeta?.isEngineOil
+                                  ? oilMeta.saleMode === 'closed_bottle_1l'
+                                    ? oilMeta.surplusMl > 0
+                                      ? `${dict.codePrefix} ${part.code} • ${oilMeta.bottles} ${oilMeta.bottles === 1 ? 'frasco' : 'frascos'} de 1L (${formatLitersPT(oilMeta.oilLiters)}L no motor + ${oilMeta.surplusMl}ml de sobra entregue ao cliente)`
+                                      : `${dict.codePrefix} ${part.code} • ${oilMeta.bottles} ${oilMeta.bottles === 1 ? 'frasco' : 'frascos'} de 1L (${formatLitersPT(oilMeta.oilLiters)}L)`
+                                    : `${dict.codePrefix} ${part.code} · ${formatExactOilQuantity(oilMeta.oilLiters)}`
+                                  : `${dict.codePrefix} ${part.code}${
+                                      part.unit === 'ML' || revisionPart.quantity > 1
+                                        ? ` · ${formatPartQuantity(part, revisionPart.quantity)}`
+                                        : ''
+                                    }`;
                                 return (
                                   <div
                                     key={`${revisionPart.id}-${part.code}`}
@@ -1967,10 +1992,8 @@ export function PublicPage({
                                           </span>
                                         ) : null}
                                       </p>
-                                      <p className="mt-0.5 font-mono text-[10px] text-ink-muted">
-                                        {dict.codePrefix} {part.code}
-                                        {(part.unit === 'ML' || revisionPart.quantity > 1) &&
-                                          ` · ${formatPartQuantity(part, revisionPart.quantity)}`}
+                                      <p className="mt-0.5 font-mono text-[10px] leading-snug text-ink-muted">
+                                        {oilCodeSubtext}
                                       </p>
                                     </div>
                                     <span
@@ -1999,8 +2022,23 @@ export function PublicPage({
                           )}
                         </div>
 
+                        {summary.oilSurplusNotice && summary.oilSurplusNotice.surplusMl > 0 && (
+                          <p className="border-t border-border bg-surface/75 px-4 py-2 text-[10px] leading-snug text-ink-muted">
+                            Óleo comercializado apenas em frascos fechados de 1L. O excedente (
+                            {summary.oilSurplusNotice.surplusMl}ml) é entregue ao cliente para
+                            reposição.
+                          </p>
+                        )}
+
                         {/* Rodapé vermelho de destaque */}
-                        <div className="mt-2.5 bg-gradient-to-r from-brand to-brand-hover px-4 py-3 text-on-brand">
+                        <div
+                          data-capture-footer-gradient="true"
+                          className={`${
+                            summary.oilSurplusNotice && summary.oilSurplusNotice.surplusMl > 0
+                              ? ''
+                              : 'mt-2.5'
+                          } bg-gradient-to-r from-brand to-brand-hover px-4 py-3 text-on-brand`}
+                        >
                           <div className="flex items-center justify-between gap-2">
                             <div>
                               <p className="text-[10px] font-bold uppercase tracking-wider text-on-brand">
@@ -2112,6 +2150,7 @@ export function PublicPage({
                         {isEditMode && (
                           <button
                             type="button"
+                            data-html2canvas-ignore="true"
                             onClick={() =>
                               setImageModal({
                                 kind: 'model',
@@ -2188,6 +2227,7 @@ export function PublicPage({
                               {activeHtmlEditMode && (
                                 <button
                                   type="button"
+                                  data-html2canvas-ignore="true"
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     openHtmlModalForKey(
@@ -2205,30 +2245,39 @@ export function PublicPage({
                           )}
 
                           <div className="mt-3 grid grid-cols-1 gap-x-8 gap-y-1.5 sm:grid-cols-2">
-                            {summary.items.map(({ revisionPart, part, lineTotal }) => {
+                            {summary.items.map(({ revisionPart, part, lineTotal, oilMeta }) => {
                               const dimmedOptional = part.is_optional && !includeOptionals;
                               const translatedDesc = translatePartDescription(
                                 part.description,
                                 language
                               );
+                              const oilSubtext = oilMeta?.isEngineOil
+                                ? oilMeta.saleMode === 'closed_bottle_1l'
+                                  ? oilMeta.surplusMl > 0
+                                    ? `${dict.codePrefix} ${part.code} • ${oilMeta.bottles} ${oilMeta.bottles === 1 ? 'frasco' : 'frascos'} de 1L (${formatLitersPT(oilMeta.oilLiters)}L no motor + ${oilMeta.surplusMl}ml de sobra entregue ao cliente)`
+                                    : `${dict.codePrefix} ${part.code} • ${oilMeta.bottles} ${oilMeta.bottles === 1 ? 'frasco' : 'frascos'} de 1L (${formatLitersPT(oilMeta.oilLiters)}L)`
+                                  : `${dict.codePrefix} ${part.code} · ${formatExactOilQuantity(oilMeta.oilLiters)}`
+                                : `(${part.code})`;
                               return (
                                 <div
                                   key={`${revisionPart.id}-${part.code}`}
-                                  className={`flex items-center justify-between border-b border-border py-1.5 text-xs ${
+                                  className={`flex items-start justify-between gap-3 border-b border-border py-1.5 text-xs ${
                                     dimmedOptional ? 'opacity-45 line-through' : ''
                                   }`}
                                 >
-                                  <span className="truncate pr-2 text-ink">
-                                    {translatedDesc}
-                                    {part.is_optional &&
-                                    !translatedDesc.includes('[Opcional]') &&
-                                    !translatedDesc.includes('[Optional]')
-                                      ? ` ${dict.optionalTag}`
-                                      : ''}
-                                    <span className="ml-1.5 font-mono text-[10px] text-ink-muted">
-                                      ({part.code})
-                                    </span>
-                                  </span>
+                                  <div className="min-w-0 pr-2 text-ink">
+                                    <p className="truncate">
+                                      {translatedDesc}
+                                      {part.is_optional &&
+                                      !translatedDesc.includes('[Opcional]') &&
+                                      !translatedDesc.includes('[Optional]')
+                                        ? ` ${dict.optionalTag}`
+                                        : ''}
+                                    </p>
+                                    <p className="font-mono text-[10px] leading-snug text-ink-muted">
+                                      {oilSubtext}
+                                    </p>
+                                  </div>
                                   <span className="shrink-0 font-semibold text-ink tabular-nums">
                                     {formatBRL(lineTotal)}
                                   </span>
@@ -2246,9 +2295,20 @@ export function PublicPage({
                               </div>
                             )}
                           </div>
+
+                          {summary.oilSurplusNotice && summary.oilSurplusNotice.surplusMl > 0 && (
+                            <p className="mt-3 rounded-lg border border-border bg-surface/75 px-3 py-2 text-[11px] leading-snug text-ink-muted">
+                              Óleo comercializado apenas em frascos fechados de 1L. O excedente (
+                              {summary.oilSurplusNotice.surplusMl}ml) é entregue ao cliente para
+                              reposição.
+                            </p>
+                          )}
                         </div>
 
-                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gradient-to-r from-brand to-brand-hover px-4 py-3 text-on-brand">
+                        <div
+                          data-capture-footer-gradient="true"
+                          className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl bg-gradient-to-r from-brand to-brand-hover px-4 py-3 text-on-brand"
+                        >
                           <div>
                             <span className="text-xs font-bold uppercase tracking-wider">
                               {dict.totalOfPrefix} {revisionLabel.toUpperCase()}
@@ -3336,6 +3396,7 @@ export function PublicPage({
             initialIncludeOptionals={scheduleTarget.includeOptionals}
             units={data.seo?.units || []}
             language={language}
+            darkMode={darkMode}
             onClose={() => setScheduleTarget(null)}
             onTrackLead={(unitName) =>
               trackAllPixelsLeadContact(

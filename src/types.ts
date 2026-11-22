@@ -51,6 +51,8 @@ export interface RevisionPart {
   quantity: number;
 }
 
+export type OilSaleMode = 'exact' | 'closed_bottle_1l';
+
 export interface MotoModel {
   id: number;
   name: string;
@@ -59,6 +61,8 @@ export interface MotoModel {
   hidden: boolean;
   sort_order: number;
   labor_price?: number | null;
+  oil_liters?: number | null;
+  oil_sale_mode?: OilSaleMode;
 }
 
 export interface FaqItem {

@@ -42,6 +42,8 @@ export const models = pgTable('models', {
   hidden: integer('hidden').notNull().default(0),
   sortOrder: integer('sort_order').notNull().default(0),
   laborPrice: doublePrecision('labor_price'),
+  oilLiters: doublePrecision('oil_liters'),
+  oilSaleMode: text('oil_sale_mode').notNull().default('exact'),
 });
 
 export const parts = pgTable('parts', {

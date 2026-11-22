@@ -206,6 +206,8 @@ export interface UiDictionary {
   withoutOptionals: string;
   bookModelWhatsApp: string;
   bookWhatsAppShort: string;
+  generatingImage: string;
+  generatingQuote: string;
   collapseModels: string;
   viewAllModels: (count: number) => string;
   lightTheme: string;
@@ -294,6 +296,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     withoutOptionals: 'Sem opcionais',
     bookModelWhatsApp: 'Agendar esta revisão no WhatsApp',
     bookWhatsAppShort: 'Agendar no WhatsApp',
+    generatingImage: 'Gerando imagem...',
+    generatingQuote: 'Gerando orçamento...',
     collapseModels: 'Recolher lista (mostrar 9 principais)',
     viewAllModels: (count) => `Ver todos os modelos (${count})`,
     lightTheme: 'Tema claro',
@@ -381,6 +385,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     withoutOptionals: 'Without optionals',
     bookModelWhatsApp: 'Book this service on WhatsApp',
     bookWhatsAppShort: 'Book on WhatsApp',
+    generatingImage: 'Generating image...',
+    generatingQuote: 'Generating quote...',
     collapseModels: 'Collapse list (show top 9)',
     viewAllModels: (count) => `View all models (${count})`,
     lightTheme: 'Light theme',
@@ -468,6 +474,8 @@ export const UI_TRANSLATIONS: Record<SiteLanguage, UiDictionary> = {
     withoutOptionals: 'Sin opcionales',
     bookModelWhatsApp: 'Agendar esta revisión por WhatsApp',
     bookWhatsAppShort: 'Agendar por WhatsApp',
+    generatingImage: 'Generando imagen...',
+    generatingQuote: 'Generando presupuesto...',
     collapseModels: 'Contraer lista (mostrar 9 principales)',
     viewAllModels: (count) => `Ver todos los modelos (${count})`,
     lightTheme: 'Tema claro',
