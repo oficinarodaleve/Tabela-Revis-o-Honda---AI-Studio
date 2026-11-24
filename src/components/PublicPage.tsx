@@ -24,6 +24,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  CalculatorContextForWhatsApp,
   CustomBlockVariant,
   EditableTextEntry,
   MotoModel,
@@ -51,6 +52,12 @@ import {
   isFreeLaborRevision,
 } from '../utils/pricing';
 import {
+  formatKmPT,
+  getTargetKmForRevision,
+  getTargetMonthsForRevision,
+  normalizeCalculatorSettings,
+} from '../utils/revisionCalculator';
+import {
   CURRENT_SECTIONS_VERSION,
   DEFAULT_SITE_CONTENT,
   clearLocalVisualConfig,
@@ -69,6 +76,7 @@ import {
 import { ErrorBoundary } from './ErrorBoundary';
 import { FloatingWhatsApp } from './FloatingWhatsApp';
 import { LanguageSelector } from './LanguageSelector';
+import { RevisionCalculatorSection } from './RevisionCalculatorSection';
 import { SafeHtml } from './SafeHtml';
 import {
   WhatsAppIcon,
@@ -172,14 +180,75 @@ function FooterClock() {
   );
 }
 
+const FALLBACK_EDITORIAL_FAQS = [
+  {
+    id: 1,
+    sort_order: 1,
+    question: 'Quando devo fazer a primeira revisão?',
+    answer:
+      'A 1ª revisão programada deve ser realizada ao atingir 1.000 km rodados ou 6 meses após a data da compra da motocicleta (o que ocorrer primeiro), garantindo a preservação da garantia Honda.',
+  },
+  {
+    id: 2,
+    sort_order: 2,
+    question: 'Existe tolerância de quilometragem ou de data?',
+    answer:
+      'Sim. Conforme o manual do proprietário da rede autorizada Honda, há uma tolerância padrão de quilometragem e prazo prevista para cada modelo. Recomendamos agendar com antecedência na Rodaleve para não comprometer a cobertura da garantia.',
+  },
+  {
+    id: 3,
+    sort_order: 3,
+    question: 'Posso fazer a revisão em outra oficina?',
+    answer:
+      'Para manter a garantia de fábrica Honda e o histórico oficial de revisões válido no sistema da montadora, todas as revisões periódicas devem ser realizadas exclusivamente em uma concessionária autorizada Honda, como a Rodaleve.',
+  },
+  {
+    id: 4,
+    sort_order: 4,
+    question: 'Perco a garantia se atrasar uma revisão?',
+    answer:
+      'Realizar a revisão fora dos prazos ou limites de quilometragem previstos no manual pode impactar a garantia do conjunto afetado. Caso tenha ocorrido algum atraso, consulte a equipe técnica da Rodaleve para avaliação individual do seu caso.',
+  },
+  {
+    id: 5,
+    sort_order: 5,
+    question: 'Qual o prazo da garantia da minha moto?',
+    answer:
+      'A garantia padrão Honda é de 3 anos sem limite de quilometragem para a maioria dos modelos urbanos e de alta cilindrada, variando conforme a linha da motocicleta. Consulte sempre o manual do proprietário e o termo de garantia do seu modelo.',
+  },
+  {
+    id: 6,
+    sort_order: 6,
+    question: 'A revisão é gratuita?',
+    answer:
+      'Na 1ª e na 2ª revisão programada, a mão de obra é gratuita (custeada pela Honda), havendo cobrança apenas das peças, lubrificantes e itens de desgaste natural substituídos. A partir da 3ª revisão aplicam-se peças e mão de obra conforme tabela vigente.',
+  },
+];
+
 type ActiveImageModalTarget =
   | { kind: 'logo'; title: string; currentUrl: string }
   | { kind: 'favicon'; title: string; currentUrl: string }
   | { kind: 'model'; modelId: number; title: string; currentUrl: string }
   | { kind: 'custom_block'; blockId: string; title: string; currentUrl: string };
 
-function getOptimizedMotoImageSources(rawUrl: string): { webpSrc?: string; fallbackSrc: string } {
-  const clean = (rawUrl || '').trim();
+function getFallbackMotoImage(segmentSlug: string): string {
+  switch (segmentSlug) {
+    case 'street_trail':
+      return '/src/assets/images/moto_trail_adventure_1795147025806.jpg';
+    case 'off_road':
+      return '/src/assets/images/moto_offroad_crf_1795147026744.jpg';
+    default:
+      return '/src/assets/images/moto_street_cg_1795147025649.jpg';
+  }
+}
+
+function getOptimizedMotoImageSources(
+  rawUrl: string,
+  forceFallbackSegment?: string
+): { webpSrc?: string; fallbackSrc: string } {
+  const clean = forceFallbackSegment
+    ? getFallbackMotoImage(forceFallbackSegment)
+    : (rawUrl || '').trim();
   if (!clean) return { fallbackSrc: '' };
   if (/^\/src\/assets\/images\/moto_[^/?#]+\.jpe?g$/i.test(clean)) {
     return {
@@ -209,8 +278,10 @@ export function PublicPage({
 }: PublicPageProps) {
   const activeHtmlEditMode = Boolean(isHtmlEditMode && isAdminLoggedIn && !isEditMode);
   const dict = UI_TRANSLATIONS[language];
-  const [activeNav, setActiveNav] = useState<'revisoes' | 'faq' | 'unidades'>('revisoes');
-  const [heroTab, setHeroTab] = useState<'tabela' | 'faq'>('tabela');
+  const [activeNav, setActiveNav] = useState<'revisoes' | 'calculadora' | 'faq' | 'unidades'>(
+    'revisoes'
+  );
+  const [heroTab, setHeroTab] = useState<'tabela' | 'calculadora' | 'faq'>('tabela');
   const [selectedRevision, setSelectedRevision] = useState<number>(
     data.revision_tabs?.[0]?.revision_number ?? 1
   );
@@ -222,8 +293,15 @@ export function PublicPage({
     model: MotoModel;
     summary: ComputedRevisionSummary;
     includeOptionals: boolean;
+    revisionNumber?: number;
+    revisionLabel?: string;
+    revisionSubtitle?: string;
+    calculatorContext?: CalculatorContextForWhatsApp;
   } | null>(null);
-  const [openFaqId, setOpenFaqId] = useState<number | null>(data.faqs?.[0]?.id ?? null);
+  const [openFaqId, setOpenFaqId] = useState<number | null>(
+    data.faqs?.[0]?.id ?? FALLBACK_EDITORIAL_FAQS[0].id
+  );
+  const faqButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const railRef = useRef<HTMLDivElement | null>(null);
@@ -239,6 +317,8 @@ export function PublicPage({
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
   const [shouldMountUnits, setShouldMountUnits] = useState(isEditMode);
+  const [logoLoadFailed, setLogoLoadFailed] = useState(false);
+  const [failedModelImageIds, setFailedModelImageIds] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (isEditMode) {
@@ -318,13 +398,17 @@ export function PublicPage({
 
       const unitsEl = document.getElementById('unidades');
       const faqEl = document.getElementById('perguntas-frequentes');
+      const calcEl = document.getElementById('calculadora-revisoes');
       const unitsTop = unitsEl ? unitsEl.getBoundingClientRect().top : Infinity;
       const faqTop = faqEl ? faqEl.getBoundingClientRect().top : Infinity;
+      const calcTop = calcEl ? calcEl.getBoundingClientRect().top : Infinity;
 
       if (unitsTop <= 190) {
         setActiveNav('unidades');
       } else if (faqTop <= 190 || heroTab === 'faq') {
         setActiveNav('faq');
+      } else if (calcTop <= 190 || heroTab === 'calculadora') {
+        setActiveNav('calculadora');
       } else {
         setActiveNav('revisoes');
       }
@@ -909,6 +993,10 @@ export function PublicPage({
         ? vbConfig.imageOverrides['site_logo']
         : data.seo?.logo_url || '';
 
+  useEffect(() => {
+    setLogoLoadFailed(false);
+  }, [effectiveLogoUrl]);
+
   const effectiveFaviconUrl =
     pendingFaviconUrl !== undefined
       ? pendingFaviconUrl
@@ -1241,11 +1329,14 @@ export function PublicPage({
     [orderedModels, data.seo, data.tracking_config, segmentNameMap, scheduleRailScrollUpdate]
   );
 
-  const handleNavClick = (target: 'revisoes' | 'faq' | 'unidades') => {
+  const handleNavClick = (target: 'revisoes' | 'calculadora' | 'faq' | 'unidades') => {
     setActiveNav(target);
     if (target === 'revisoes') {
       setHeroTab('tabela');
       window.scrollTo({ top: 0, behavior: 'smooth' });
+    } else if (target === 'calculadora') {
+      setHeroTab('calculadora');
+      setTimeout(() => scrollToSection('calculadora-revisoes'), 40);
     } else if (target === 'faq') {
       setHeroTab('tabela');
       setTimeout(() => scrollToSection('perguntas-frequentes'), 40);
@@ -1254,6 +1345,38 @@ export function PublicPage({
     }
   };
 
+  const handleFaqKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLButtonElement>, index: number, total: number) => {
+      const targetEl = e.target as HTMLElement | null;
+      if (
+        targetEl &&
+        (targetEl.tagName === 'INPUT' ||
+          targetEl.tagName === 'TEXTAREA' ||
+          targetEl.isContentEditable)
+      ) {
+        return;
+      }
+      if (total <= 0) return;
+
+      let nextIndex: number | null = null;
+      if (e.key === 'ArrowDown') {
+        nextIndex = (index + 1) % total;
+      } else if (e.key === 'ArrowUp') {
+        nextIndex = (index - 1 + total) % total;
+      } else if (e.key === 'Home') {
+        nextIndex = 0;
+      } else if (e.key === 'End') {
+        nextIndex = total - 1;
+      }
+
+      if (nextIndex !== null) {
+        e.preventDefault();
+        faqButtonRefs.current[nextIndex]?.focus();
+      }
+    },
+    []
+  );
+
   const renderSectionContent = (block: PageSectionBlock) => {
     switch (block.type) {
       case 'hero': {
@@ -1261,6 +1384,7 @@ export function PublicPage({
         const heroTitle = getLocalizedContent('hero_title');
         const heroSubtitle = getLocalizedContent('hero_subtitle');
         const heroTabTable = getLocalizedContent('hero_tab_table');
+        const heroTabCalculator = getLocalizedContent('hero_tab_calculator');
         const heroTabFaq = getLocalizedContent('hero_tab_faq');
         return (
           <section
@@ -1299,15 +1423,15 @@ export function PublicPage({
                   />
                 </div>
 
-                {/* Seletor em pílula com duas abas */}
-                <div className="inline-flex self-start rounded-full border border-border bg-surface p-1 lg:self-end">
+                {/* Seletor em pílula com três abas */}
+                <div className="inline-flex max-w-full flex-wrap items-center gap-1 self-start rounded-2xl border border-border bg-surface p-1 sm:flex-nowrap sm:rounded-full lg:self-end">
                   <button
                     type="button"
                     onClick={() => {
                       setHeroTab('tabela');
                       setActiveNav('revisoes');
                     }}
-                    className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
+                    className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-semibold transition-colors sm:px-4 sm:text-sm ${
                       heroTab === 'tabela'
                         ? 'bg-brand-soft text-brand-text shadow-xs'
                         : 'text-ink-muted hover:text-ink'
@@ -1324,10 +1448,30 @@ export function PublicPage({
                   <button
                     type="button"
                     onClick={() => {
+                      setHeroTab('calculadora');
+                      setActiveNav('calculadora');
+                    }}
+                    className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-semibold transition-colors sm:px-4 sm:text-sm ${
+                      heroTab === 'calculadora'
+                        ? 'bg-brand-soft text-brand-text shadow-xs'
+                        : 'text-ink-muted hover:text-ink'
+                    }`}
+                  >
+                    <EditableText
+                      textKey="hero_tab_calculator"
+                      defaultText={heroTabCalculator.defaultText}
+                      entry={heroTabCalculator.entry}
+                      isEditMode={isEditMode}
+                      onCommit={handleCommitText}
+                    />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
                       setHeroTab('faq');
                       setActiveNav('faq');
                     }}
-                    className={`whitespace-nowrap rounded-full px-4 py-2 text-xs font-semibold transition-colors sm:text-sm ${
+                    className={`whitespace-nowrap rounded-full px-3.5 py-2 text-xs font-semibold transition-colors sm:px-4 sm:text-sm ${
                       heroTab === 'faq'
                         ? 'bg-brand-soft text-brand-text shadow-xs'
                         : 'text-ink-muted hover:text-ink'
@@ -1732,7 +1876,12 @@ export function PublicPage({
                     const includeOptionals = true;
                     const activeTotal = summary.totalWithOptionals;
                     const isHighlighted = highlightedModelId === model.id;
-                    const imgSources = getOptimizedMotoImageSources(model.image_url);
+                    const failedUrl = failedModelImageIds[model.id];
+                    const useFallbackImg = Boolean(failedUrl && failedUrl === model.image_url);
+                    const imgSources = getOptimizedMotoImageSources(
+                      model.image_url,
+                      useFallbackImg ? model.segment_slug : undefined
+                    );
 
                     return (
                       <article
@@ -1758,12 +1907,12 @@ export function PublicPage({
                           setDragModelId(null);
                           setDragOverModelId(null);
                         }}
-                        className={`relative flex w-[285px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl border bg-card shadow-[0_1px_3px_rgba(17,24,39,0.04)] transition-all duration-200 sm:w-[318px] md:w-[336px] ${
+                        className={`moto-card-animated-border relative flex w-[285px] shrink-0 snap-start flex-col overflow-hidden rounded-2xl shadow-[0_2px_10px_rgba(17,24,39,0.05)] transition-all duration-200 sm:w-[318px] md:w-[336px] ${
                           isEditMode && dragOverModelId === model.id
-                            ? 'border-brand ring-2 ring-brand'
+                            ? 'ring-2 ring-brand'
                             : isHighlighted
-                              ? 'border-brand ring-2 ring-brand/50 shadow-lg'
-                              : 'border-border hover:-translate-y-0.5 hover:shadow-md'
+                              ? 'ring-2 ring-brand/60 shadow-lg'
+                              : 'hover:-translate-y-0.5'
                         } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                       >
                         {isEditMode && (
@@ -1820,9 +1969,17 @@ export function PublicPage({
                                 alt={`Honda ${model.name}`}
                                 width={440}
                                 height={330}
-                                loading={modelIdx === 0 ? 'eager' : 'lazy'}
+                                loading={modelIdx < 4 ? 'eager' : 'lazy'}
                                 decoding="async"
                                 referrerPolicy="no-referrer"
+                                onError={() => {
+                                  if (!useFallbackImg && model.image_url) {
+                                    setFailedModelImageIds((prev) => ({
+                                      ...prev,
+                                      [model.id]: model.image_url,
+                                    }));
+                                  }
+                                }}
                                 className="h-full w-full object-contain"
                               />
                             </picture>
@@ -2113,16 +2270,21 @@ export function PublicPage({
                   const includeOptionals = true;
                   const activeTotal = summary.totalWithOptionals;
                   const isHighlighted = highlightedModelId === model.id;
-                  const imgSources = getOptimizedMotoImageSources(model.image_url);
+                  const failedUrl = failedModelImageIds[model.id];
+                  const useFallbackImg = Boolean(failedUrl && failedUrl === model.image_url);
+                  const imgSources = getOptimizedMotoImageSources(
+                    model.image_url,
+                    useFallbackImg ? model.segment_slug : undefined
+                  );
 
                   return (
                     <article
                       id={`model-card-${model.id}`}
                       key={model.id}
-                      className={`flex flex-col overflow-hidden rounded-2xl border bg-card md:flex-row ${
+                      className={`moto-card-animated-border flex flex-col overflow-hidden rounded-2xl shadow-[0_2px_10px_rgba(17,24,39,0.05)] transition-all duration-200 md:flex-row ${
                         isHighlighted
-                          ? 'border-brand ring-2 ring-brand/50 shadow-lg'
-                          : 'border-border'
+                          ? 'ring-2 ring-brand/60 shadow-lg'
+                          : 'hover:-translate-y-0.5'
                       } ${isVisuallyHidden ? 'opacity-45 grayscale' : ''}`}
                     >
                       <div className="relative flex w-full shrink-0 items-center justify-center bg-white p-5 md:w-60 md:border-r md:border-border">
@@ -2136,9 +2298,17 @@ export function PublicPage({
                               alt={`Honda ${model.name}`}
                               width={440}
                               height={330}
-                              loading={modelIdx === 0 ? 'eager' : 'lazy'}
+                              loading={modelIdx < 4 ? 'eager' : 'lazy'}
                               decoding="async"
                               referrerPolicy="no-referrer"
+                              onError={() => {
+                                if (!useFallbackImg && model.image_url) {
+                                  setFailedModelImageIds((prev) => ({
+                                    ...prev,
+                                    [model.id]: model.image_url,
+                                  }));
+                                }
+                              }}
                               className="h-40 w-full object-contain"
                             />
                           </picture>
@@ -2358,16 +2528,76 @@ export function PublicPage({
         );
       }
 
+      case 'revision_calculator': {
+        if (heroTab === 'faq' && !isEditMode) return null;
+        const normalizedCalcSettings = normalizeCalculatorSettings(data.calculator_settings);
+        return (
+          <RevisionCalculatorSection
+            models={quickJumpModels}
+            segments={data.segments || []}
+            revisionTabs={data.revision_tabs || []}
+            partsMap={partsMap}
+            revisionParts={data.revision_parts || []}
+            units={data.seo?.units || []}
+            language={language}
+            calculatorSettings={normalizedCalcSettings}
+            onOpenScheduleModal={(model, revNum, summary, calculatorContext) => {
+              const matched = (data.revision_tabs || []).find((t) => t.revision_number === revNum);
+              const revLab = translateRevisionLabel(
+                revNum,
+                matched?.label || `${revNum}ª Revisão`,
+                language
+              );
+              const fallbackSub = `${formatKmPT(
+                getTargetKmForRevision(revNum, normalizedCalcSettings)
+              )} km ou ${getTargetMonthsForRevision(revNum, normalizedCalcSettings)} meses`;
+              const revSub = translateRevisionSubtitle(
+                calculatorContext?.revisionSubtitle || matched?.subtitle || fallbackSub,
+                language
+              );
+              setScheduleTarget({
+                model,
+                summary,
+                includeOptionals: true,
+                revisionNumber: revNum,
+                revisionLabel: revLab,
+                revisionSubtitle: revSub,
+                calculatorContext,
+              });
+            }}
+            onViewModelInTable={(modelId, revNum) => {
+              if ((data.revision_tabs || []).some((t) => t.revision_number === revNum)) {
+                setSelectedRevision(revNum);
+              }
+              handleQuickSelectModel(String(modelId));
+            }}
+            onTrackLead={(name, cat) =>
+              trackAllPixelsLeadContact(
+                data.seo,
+                {
+                  content_name: name,
+                  content_category: cat || 'Calculadora de Revisões',
+                },
+                data.tracking_config
+              )
+            }
+          />
+        );
+      }
+
       case 'faq_section': {
         const faqTitleContent = getLocalizedContent('faq_title');
         const faqSubtitleContent = getLocalizedContent('faq_subtitle');
+        const faqItems =
+          data.faqs && data.faqs.length > 0 ? data.faqs : FALLBACK_EDITORIAL_FAQS;
         return (
           <section
             id="perguntas-frequentes"
-            className="mx-auto max-w-[920px] scroll-mt-24 px-4 py-10 sm:px-6 sm:py-12"
+            aria-labelledby="faq-section-heading"
+            className="mx-auto max-w-[920px] scroll-mt-24 px-4 py-10 sm:px-6 sm:py-14"
           >
-            <div className="mb-6 flex items-center justify-between">
-              <div>
+            <div className="mb-7 flex items-end justify-between gap-4 border-b border-border/80 pb-5">
+              <div id="faq-section-heading">
                 <EditableText
                   as="h2"
                   textKey="faq_title"
@@ -2375,7 +2605,7 @@ export function PublicPage({
                   entry={faqTitleContent.entry}
                   isEditMode={isEditMode}
                   onCommit={handleCommitText}
-                  className="font-display text-2xl font-bold text-ink"
+                  className="block font-display text-2xl font-extrabold tracking-tight text-ink sm:text-3xl"
                 />
                 <EditableText
                   as="p"
@@ -2384,14 +2614,17 @@ export function PublicPage({
                   entry={faqSubtitleContent.entry}
                   isEditMode={isEditMode}
                   onCommit={handleCommitText}
-                  className="mt-1 block text-sm text-ink-muted"
+                  className="mt-1.5 block text-sm leading-relaxed text-ink-muted sm:text-base"
                 />
               </div>
             </div>
 
-            <div className="space-y-3">
-              {(data.faqs || []).map((faq) => {
+            <div className="space-y-3.5" role="presentation">
+              {faqItems.map((faq, faqIdx) => {
                 const isOpen = openFaqId === faq.id;
+                const itemNumber = String(faqIdx + 1).padStart(2, '0');
+                const triggerId = `faq-trigger-${faq.id}`;
+                const panelId = `faq-panel-${faq.id}`;
                 const translatedFaq = translateFaqItem(faq.question, faq.answer, language);
                 const savedFaqQ = vbConfig.siteContent[`faq_q_${faq.id}`];
                 const savedFaqA = vbConfig.siteContent[`faq_a_${faq.id}`];
@@ -2408,42 +2641,90 @@ export function PublicPage({
                       ? savedFaqA
                       : undefined;
                 return (
-                  <div
+                  <article
                     key={faq.id}
-                    className="overflow-hidden rounded-2xl border border-border bg-card"
+                    className={`rounded-2xl border transition-all duration-200 ${
+                      isOpen
+                        ? 'faq-item-active bg-card'
+                        : 'border-border bg-card hover:border-brand/45 hover:bg-[#FAF8F5] dark:hover:bg-[#1D212B]'
+                    }`}
                   >
-                    <button
-                      type="button"
-                      onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
-                      className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left"
+                    <h3 className="m-0">
+                      <button
+                        ref={(el) => {
+                          faqButtonRefs.current[faqIdx] = el;
+                        }}
+                        id={triggerId}
+                        type="button"
+                        aria-expanded={isOpen}
+                        aria-controls={panelId}
+                        onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
+                        onKeyDown={(e) => handleFaqKeyDown(e, faqIdx, faqItems.length)}
+                        className="group flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl px-4 py-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-card sm:gap-5 sm:px-6 sm:py-5"
+                      >
+                        <div className="flex min-w-0 flex-1 items-center gap-3.5 sm:gap-5">
+                          <span
+                            aria-hidden="true"
+                            className={`shrink-0 font-display text-2xl font-extrabold leading-none tracking-tight tabular-nums transition-all duration-200 sm:min-w-[2.75rem] sm:text-[28px] ${
+                              isOpen
+                                ? 'translate-x-0.5 text-brand-text'
+                                : 'text-ink-muted/65 group-hover:translate-x-0.5 group-hover:text-brand-text group-focus-visible:translate-x-0.5 group-focus-visible:text-brand-text'
+                            }`}
+                          >
+                            {itemNumber}
+                          </span>
+                          <EditableText
+                            textKey={`faq_q_${faq.id}`}
+                            defaultText={translatedFaq.question}
+                            entry={qEntry}
+                            isEditMode={isEditMode}
+                            onCommit={handleCommitText}
+                            className={`flex-1 text-sm font-bold leading-snug transition-colors sm:text-base ${
+                              isOpen
+                                ? 'text-brand-text'
+                                : 'text-ink group-hover:text-brand-text group-focus-visible:text-brand-text'
+                            }`}
+                          />
+                        </div>
+                        <span
+                          aria-hidden="true"
+                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-all duration-200 ${
+                            isOpen
+                              ? 'border-brand/35 bg-brand-soft text-brand-text'
+                              : 'border-border bg-surface text-ink-muted group-hover:border-brand/35 group-hover:bg-brand-soft/60 group-hover:text-brand-text group-focus-visible:border-brand/35 group-focus-visible:text-brand-text'
+                          }`}
+                        >
+                          <ChevronDown
+                            className={`faq-chevron h-4 w-4 transition-transform duration-300 ease-out ${
+                              isOpen ? 'rotate-180' : ''
+                            }`}
+                          />
+                        </span>
+                      </button>
+                    </h3>
+                    <div
+                      id={panelId}
+                      role="region"
+                      aria-labelledby={triggerId}
+                      aria-hidden={!isOpen}
+                      className={`faq-accordion-panel ${
+                        isOpen ? 'faq-accordion-panel--open' : ''
+                      }`}
                     >
-                      <EditableText
-                        textKey={`faq_q_${faq.id}`}
-                        defaultText={translatedFaq.question}
-                        entry={qEntry}
-                        isEditMode={isEditMode}
-                        onCommit={handleCommitText}
-                        className="text-sm font-bold text-ink sm:text-base"
-                      />
-                      <ChevronDown
-                        className={`h-5 w-5 shrink-0 text-ink-muted transition-transform ${
-                          isOpen ? 'rotate-180 text-brand-text' : ''
-                        }`}
-                      />
-                    </button>
-                    {isOpen && (
-                      <div className="border-t border-border px-5 py-4 text-sm leading-relaxed text-ink-muted">
-                        <EditableText
-                          as="p"
-                          textKey={`faq_a_${faq.id}`}
-                          defaultText={translatedFaq.answer}
-                          entry={aEntry}
-                          isEditMode={isEditMode}
-                          onCommit={handleCommitText}
-                        />
+                      <div className="overflow-hidden">
+                        <div className="border-t border-border/75 px-4 pt-3.5 pb-5 text-sm leading-relaxed text-ink-muted sm:px-6 sm:pl-[5.5rem] sm:pb-6">
+                          <EditableText
+                            as="p"
+                            textKey={`faq_a_${faq.id}`}
+                            defaultText={translatedFaq.answer}
+                            entry={aEntry}
+                            isEditMode={isEditMode}
+                            onCommit={handleCommitText}
+                          />
+                        </div>
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  </article>
                 );
               })}
             </div>
@@ -2544,7 +2825,7 @@ export function PublicPage({
                 {/* Coluna 1: Logo + Redes + Tema escuro */}
                 <div>
                   <div className="inline-flex items-center gap-3">
-                    {effectiveLogoUrl ? (
+                    {effectiveLogoUrl && !logoLoadFailed ? (
                       <img
                         src={effectiveLogoUrl}
                         alt={data.seo.logo_alt || 'RODALEVE'}
@@ -2552,6 +2833,7 @@ export function PublicPage({
                         height={36}
                         loading="lazy"
                         decoding="async"
+                        onError={() => setLogoLoadFailed(true)}
                         className="h-9 w-auto object-contain"
                         referrerPolicy="no-referrer"
                       />
@@ -3092,7 +3374,7 @@ export function PublicPage({
                 }}
                 className="flex items-center gap-2"
               >
-                {effectiveLogoUrl ? (
+                {effectiveLogoUrl && !logoLoadFailed ? (
                   <img
                     src={effectiveLogoUrl}
                     alt={data.seo.logo_alt || 'RODALEVE'}
@@ -3101,6 +3383,7 @@ export function PublicPage({
                     loading="eager"
                     decoding="async"
                     fetchPriority="high"
+                    onError={() => setLogoLoadFailed(true)}
                     className="h-8 w-auto object-contain"
                     referrerPolicy="no-referrer"
                   />
@@ -3133,9 +3416,10 @@ export function PublicPage({
               )}
             </div>
 
-            <nav className="hidden items-center gap-7 md:flex">
+            <nav className="hidden items-center gap-6 md:flex">
               {(() => {
                 const navRev = getLocalizedContent('nav_revisions');
+                const navCalc = getLocalizedContent('nav_calculator');
                 const navFaq = getLocalizedContent('nav_faq');
                 const navUnits = getLocalizedContent('nav_units');
                 return (
@@ -3153,6 +3437,23 @@ export function PublicPage({
                         textKey="nav_revisions"
                         defaultText={navRev.defaultText}
                         entry={navRev.entry}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleNavClick('calculadora')}
+                      className={`whitespace-nowrap border-b-2 py-5 text-sm font-semibold transition-colors ${
+                        activeNav === 'calculadora' || heroTab === 'calculadora'
+                          ? 'border-brand text-ink'
+                          : 'border-transparent text-ink-muted hover:text-ink'
+                      }`}
+                    >
+                      <EditableText
+                        textKey="nav_calculator"
+                        defaultText={navCalc.defaultText}
+                        entry={navCalc.entry}
                         isEditMode={isEditMode}
                         onCommit={handleCommitText}
                       />
@@ -3235,11 +3536,11 @@ export function PublicPage({
           </div>
 
           {/* Navegação mobile compacta dentro do header glass */}
-          <nav className="flex items-center justify-around border-t border-border px-3 md:hidden">
+          <nav className="flex items-center justify-around border-t border-border px-2 md:hidden">
             <button
               type="button"
               onClick={() => handleNavClick('revisoes')}
-              className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
+              className={`whitespace-nowrap border-b-2 px-1.5 py-2 text-xs font-semibold transition-colors ${
                 activeNav === 'revisoes' && heroTab === 'tabela'
                   ? 'border-brand text-ink'
                   : 'border-transparent text-ink-muted'
@@ -3250,8 +3551,20 @@ export function PublicPage({
             </button>
             <button
               type="button"
+              onClick={() => handleNavClick('calculadora')}
+              className={`whitespace-nowrap border-b-2 px-1.5 py-2 text-xs font-semibold transition-colors ${
+                activeNav === 'calculadora' || heroTab === 'calculadora'
+                  ? 'border-brand text-ink'
+                  : 'border-transparent text-ink-muted'
+              }`}
+            >
+              {getLocalizedContent('nav_calculator').entry?.text ||
+                getLocalizedContent('nav_calculator').defaultText}
+            </button>
+            <button
+              type="button"
               onClick={() => handleNavClick('faq')}
-              className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
+              className={`whitespace-nowrap border-b-2 px-1.5 py-2 text-xs font-semibold transition-colors ${
                 activeNav === 'faq' || heroTab === 'faq'
                   ? 'border-brand text-ink'
                   : 'border-transparent text-ink-muted'
@@ -3263,7 +3576,7 @@ export function PublicPage({
             <button
               type="button"
               onClick={() => handleNavClick('unidades')}
-              className={`border-b-2 px-2 py-2 text-xs font-semibold transition-colors ${
+              className={`whitespace-nowrap border-b-2 px-1.5 py-2 text-xs font-semibold transition-colors ${
                 activeNav === 'unidades'
                   ? 'border-brand text-ink'
                   : 'border-transparent text-ink-muted'
@@ -3389,20 +3702,23 @@ export function PublicPage({
         <Suspense fallback={null}>
           <WhatsAppScheduleModal
             model={scheduleTarget.model}
-            revisionNumber={selectedRevision}
-            revisionLabel={revisionLabel}
-            revisionSubtitle={revisionSubtitle}
+            revisionNumber={scheduleTarget.revisionNumber ?? selectedRevision}
+            revisionLabel={scheduleTarget.revisionLabel ?? revisionLabel}
+            revisionSubtitle={scheduleTarget.revisionSubtitle ?? revisionSubtitle}
             summary={scheduleTarget.summary}
             initialIncludeOptionals={scheduleTarget.includeOptionals}
             units={data.seo?.units || []}
             language={language}
             darkMode={darkMode}
+            calculatorContext={scheduleTarget.calculatorContext}
             onClose={() => setScheduleTarget(null)}
             onTrackLead={(unitName) =>
               trackAllPixelsLeadContact(
                 data.seo,
                 {
-                  content_name: `${scheduleTarget.model.name} - ${revisionLabel}`,
+                  content_name: `${
+                    scheduleTarget.calculatorContext?.modelLabel || scheduleTarget.model.name
+                  } - ${scheduleTarget.revisionLabel ?? revisionLabel}`,
                   content_category: unitName,
                 },
                 data.tracking_config

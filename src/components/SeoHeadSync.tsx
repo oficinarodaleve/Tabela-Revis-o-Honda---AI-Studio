@@ -13,7 +13,7 @@ function resolveAbsoluteMediaUrl(rawUrl: string | undefined, canonicalBase?: str
         : fallbackOrigin;
 
   if (!rawUrl || !rawUrl.trim()) {
-    return `${origin}/og-image.jpg`;
+    return `${origin}/assets/aistudio/open-graph_0af5280d.webp`;
   }
   const trimmed = rawUrl.trim();
   if (
@@ -25,7 +25,7 @@ function resolveAbsoluteMediaUrl(rawUrl: string | undefined, canonicalBase?: str
   }
   const normalizedPath = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
   if (normalizedPath.includes('rodaleve_og_banner')) {
-    return `${origin}/og-image.jpg`;
+    return `${origin}/assets/aistudio/open-graph_0af5280d.webp`;
   }
   return `${origin}${normalizedPath}`;
 }
@@ -143,8 +143,25 @@ export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?
       if (resolvedOgImage) {
         upsertMeta('property', 'og:image', resolvedOgImage);
         upsertMeta('property', 'og:image:secure_url', resolvedOgImage);
-        upsertMeta('property', 'og:image:width', '1200');
-        upsertMeta('property', 'og:image:height', '670');
+        const cleanImgPath = resolvedOgImage.split('?')[0].toLowerCase();
+        const ogMime = cleanImgPath.endsWith('.webp')
+          ? 'image/webp'
+          : cleanImgPath.endsWith('.png')
+            ? 'image/png'
+            : cleanImgPath.endsWith('.svg')
+              ? 'image/svg+xml'
+              : 'image/jpeg';
+        upsertMeta('property', 'og:image:type', ogMime);
+        if (cleanImgPath.includes('open-graph_0af5280d.webp')) {
+          upsertMeta('property', 'og:image:width', '1678');
+          upsertMeta('property', 'og:image:height', '937');
+        } else if (cleanImgPath.endsWith('/og-image.jpg')) {
+          upsertMeta('property', 'og:image:width', '1200');
+          upsertMeta('property', 'og:image:height', '670');
+        } else {
+          removeMeta('property', 'og:image:width');
+          removeMeta('property', 'og:image:height');
+        }
       } else {
         removeMeta('property', 'og:image');
       }
@@ -167,8 +184,11 @@ export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?
       }
       canonicalLink.href = canonicalUrl;
 
-      // Favicon
+      // Favicon & Apple Touch Icon
       let iconLink = document.head.querySelector('link[rel="icon"]') as HTMLLinkElement | null;
+      let appleIconLink = document.head.querySelector(
+        'link[rel="apple-touch-icon"]'
+      ) as HTMLLinkElement | null;
       const resolvedFavicon = seo.favicon_url?.trim()
         ? seo.favicon_url.trim().startsWith('uploads/')
           ? `/${seo.favicon_url.trim()}`
@@ -181,8 +201,16 @@ export function SeoHeadSync({ seo, faqs = [] }: { seo: SeoSettings | null; faqs?
           document.head.appendChild(iconLink);
         }
         iconLink.href = resolvedFavicon;
-      } else if (iconLink) {
-        iconLink.remove();
+
+        if (!appleIconLink) {
+          appleIconLink = document.createElement('link');
+          appleIconLink.rel = 'apple-touch-icon';
+          document.head.appendChild(appleIconLink);
+        }
+        appleIconLink.href = resolvedFavicon;
+      } else {
+        if (iconLink) iconLink.remove();
+        if (appleIconLink) appleIconLink.remove();
       }
 
       // JSON-LD Schema.org (Organization + MotorcycleDealer + FAQPage)

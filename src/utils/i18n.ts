@@ -106,6 +106,7 @@ export function persistLanguage(lang: SiteLanguage): void {
 export const SITE_CONTENT_TRANSLATIONS: Record<Exclude<SiteLanguage, 'pt'>, Record<string, string>> = {
   en: {
     nav_revisions: 'Services',
+    nav_calculator: 'Calculator',
     nav_faq: 'FAQ',
     nav_units: 'Locations',
     header_cta: 'Book service',
@@ -114,6 +115,7 @@ export const SITE_CONTENT_TRANSLATIONS: Record<Exclude<SiteLanguage, 'pt'>, Reco
     hero_subtitle:
       'Check genuine Honda parts and estimated values by model for each scheduled service.',
     hero_tab_table: 'Table by Model',
+    hero_tab_calculator: 'Service Calculator',
     hero_tab_faq: 'Frequently Asked Questions',
     revisions_prompt_above: 'Choose the desired service',
     revisions_prompt_below: 'Choose your Honda motorcycle model',
@@ -141,6 +143,7 @@ export const SITE_CONTENT_TRANSLATIONS: Record<Exclude<SiteLanguage, 'pt'>, Reco
   },
   es: {
     nav_revisions: 'Revisiones',
+    nav_calculator: 'Calculadora',
     nav_faq: 'Preguntas Frecuentes',
     nav_units: 'Sucursales',
     header_cta: 'Agendar revisión',
@@ -149,6 +152,7 @@ export const SITE_CONTENT_TRANSLATIONS: Record<Exclude<SiteLanguage, 'pt'>, Reco
     hero_subtitle:
       'Consulta piezas genuinas y valores estimados por modelo para cada revisión programada.',
     hero_tab_table: 'Tabla por Modelo',
+    hero_tab_calculator: 'Calculadora de Revisiones',
     hero_tab_faq: 'Preguntas Frecuentes',
     revisions_prompt_above: 'Elige la revisión deseada',
     revisions_prompt_below: 'Elige el modelo de tu motocicleta Honda',

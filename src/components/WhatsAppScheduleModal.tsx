@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, MapPin, Phone, X } from 'lucide-react';
-import { MotoModel, UnitLocation } from '../types';
+import { CalculatorContextForWhatsApp, MotoModel, UnitLocation } from '../types';
 import { SiteLanguage, UI_TRANSLATIONS, translatePartDescription } from '../utils/i18n';
 import {
   ComputedRevisionSummary,
@@ -11,6 +11,7 @@ import {
   getLaborBadgeText,
   isFreeLaborRevision,
 } from '../utils/pricing';
+import { formatKmPT } from '../utils/revisionCalculator';
 import {
   buildRodaleveApiWhatsAppUrl,
   buildWhatsAppScheduleMessage,
@@ -30,6 +31,7 @@ interface WhatsAppScheduleModalProps {
   units: UnitLocation[];
   language?: SiteLanguage;
   darkMode?: boolean;
+  calculatorContext?: CalculatorContextForWhatsApp;
   onClose: () => void;
   onTrackLead?: (unitName: string) => void;
 }
@@ -44,6 +46,7 @@ export function WhatsAppScheduleModal({
   units,
   language = 'pt',
   darkMode = false,
+  calculatorContext,
   onClose,
   onTrackLead,
 }: WhatsAppScheduleModalProps) {
@@ -107,6 +110,7 @@ export function WhatsAppScheduleModal({
         summary,
         includeOptionals,
         unit: unitSnapshot,
+        calculatorContext,
       });
     } catch {
       const fallbackMessage = buildWhatsAppScheduleMessage({
@@ -118,6 +122,7 @@ export function WhatsAppScheduleModal({
         includeOptionals,
         unit: unitSnapshot,
         includeDownloadedImageNote: false,
+        calculatorContext,
       });
       openExternalLink(
         buildRodaleveApiWhatsAppUrl(fallbackMessage, getUnitWhatsAppNumber(unitSnapshot))
@@ -146,7 +151,8 @@ export function WhatsAppScheduleModal({
               {dict.modalEyebrow}
             </p>
             <h3 className="mt-0.5 font-display text-lg font-extrabold text-ink">
-              Honda {model.name} · {revisionLabel}
+              {calculatorContext ? calculatorContext.modelLabel : `Honda ${model.name}`} ·{' '}
+              {revisionLabel}
             </h3>
             {revisionSubtitle && (
               <p className="text-xs text-ink-muted">
@@ -222,6 +228,56 @@ export function WhatsAppScheduleModal({
             </div>
           </div>
 
+          {/* Dados preenchidos da Calculadora de Revisões */}
+          {calculatorContext && (
+            <div
+              className={`rounded-xl border p-3.5 text-xs ${
+                calculatorContext.warrantyState === 'overdue'
+                  ? 'border-brand/50 bg-brand-soft/60'
+                  : calculatorContext.warrantyState === 'warning'
+                    ? 'border-amber-500/45 bg-amber-500/10'
+                    : 'border-emerald-500/40 bg-emerald-500/10'
+              }`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-bold uppercase tracking-wider text-ink">
+                  Simulação da Calculadora
+                </span>
+                <span
+                  className={`rounded-md px-2 py-0.5 text-[11px] font-bold ${
+                    calculatorContext.warrantyState === 'overdue'
+                      ? 'bg-brand text-on-brand'
+                      : calculatorContext.warrantyState === 'warning'
+                        ? 'bg-amber-600 text-white'
+                        : 'bg-emerald-600 text-white'
+                  }`}
+                >
+                  {calculatorContext.warrantyStatusTitle}
+                </span>
+              </div>
+              <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-[11px] text-ink-muted tabular-nums">
+                <span>
+                  <strong className="text-ink">KM atual:</strong>{' '}
+                  {formatKmPT(calculatorContext.currentKm)} km
+                </span>
+                <span>
+                  <strong className="text-ink">Data venda:</strong> {calculatorContext.saleDateBR}
+                </span>
+                <span>
+                  <strong className="text-ink">Critério:</strong>{' '}
+                  {calculatorContext.criterionLabel}
+                </span>
+                <span>
+                  <strong className="text-ink">Prazo tempo:</strong>{' '}
+                  {calculatorContext.targetDateBR}
+                </span>
+              </div>
+              <p className="mt-2 text-[11px] leading-snug text-ink-muted">
+                {calculatorContext.warrantyNotice}
+              </p>
+            </div>
+          )}
+
           {/* Resumo das Peças + Checkbox Opcionais */}
           <div className="rounded-xl border border-border bg-surface p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -244,7 +300,11 @@ export function WhatsAppScheduleModal({
             </div>
 
             {activeItems.length === 0 ? (
-              <p className="mt-3 text-xs text-ink-muted">{dict.modalNoParts}</p>
+              <p className="mt-3 text-xs text-ink-muted">
+                {calculatorContext && !calculatorContext.hasCatalogEstimate
+                  ? 'Modelo genérico ou revisão fora da tabela base: nossa equipe confirmará peças e orçamento personalizado no WhatsApp.'
+                  : dict.modalNoParts}
+              </p>
             ) : (
               <ul
                 data-capture-scroll-list="true"
@@ -310,7 +370,7 @@ export function WhatsAppScheduleModal({
                 </p>
               </div>
               <p className="font-display text-2xl font-extrabold text-brand-text tabular-nums">
-                {formatBRL(estimatedTotal)}
+                {estimatedTotal > 0 ? formatBRL(estimatedTotal) : 'Sob consulta'}
               </p>
             </div>
           </div>

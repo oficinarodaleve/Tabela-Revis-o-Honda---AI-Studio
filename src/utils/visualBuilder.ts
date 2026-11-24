@@ -3,7 +3,7 @@ import { CustomBlockVariant, PageSectionBlock, VisualBuilderConfig } from '../ty
 const VISUAL_BUILDER_STORAGE_KEY = 'rodaleve_visual_builder_v1';
 let memoryVisualConfig: string | null = null;
 
-export const CURRENT_SECTIONS_VERSION = 2;
+export const CURRENT_SECTIONS_VERSION = 3;
 
 export const DEFAULT_SECTIONS: PageSectionBlock[] = [
   { id: 'hero', type: 'hero', label: 'Hero / Banner Principal', visible: true },
@@ -25,6 +25,12 @@ export const DEFAULT_SECTIONS: PageSectionBlock[] = [
     label: 'Seleção e Tabela de Modelos Honda',
     visible: true,
   },
+  {
+    id: 'revision_calculator',
+    type: 'revision_calculator',
+    label: 'Calculadora de Revisões',
+    visible: true,
+  },
   { id: 'faq_section', type: 'faq_section', label: 'Perguntas Frequentes', visible: true },
   { id: 'units_map', type: 'units_map', label: 'Unidades e Mapa', visible: true },
   { id: 'footer', type: 'footer', label: 'Rodapé', visible: true },
@@ -33,6 +39,7 @@ export const DEFAULT_SECTIONS: PageSectionBlock[] = [
 export const DEFAULT_SITE_CONTENT: Record<string, string> = {
   header_brand_text: 'RODALEVE',
   nav_revisions: 'Revisões',
+  nav_calculator: 'Calculadora',
   nav_faq: 'Dúvidas Frequentes',
   nav_units: 'Unidades',
   header_cta: 'Agendar revisão',
@@ -41,6 +48,7 @@ export const DEFAULT_SITE_CONTENT: Record<string, string> = {
   hero_subtitle:
     'Consulte peças genuínas e valores estimados por modelo de cada revisão programada.',
   hero_tab_table: 'Tabela por Modelo',
+  hero_tab_calculator: 'Calculadora de Revisões',
   hero_tab_faq: 'Perguntas Frequentes',
   revisions_prompt_above: 'Escolha a revisão desejada',
   revisions_prompt_below: 'Escolha o modelo da sua motocicleta Honda',
@@ -105,13 +113,30 @@ export function mergeWithDefaultVisualConfig(
   }));
 
   const existingIds = new Set(rawSavedSections.map((s) => s.id));
-  let mergedSections: PageSectionBlock[] = [
-    ...rawSavedSections,
-    ...DEFAULT_SECTIONS.filter((def) => !existingIds.has(def.id)).map((def) => ({ ...def })),
-  ];
+  const missingDefaults = DEFAULT_SECTIONS.filter((def) => !existingIds.has(def.id)).map((def) => ({
+    ...def,
+  }));
+  let mergedSections: PageSectionBlock[] = [...rawSavedSections];
+  for (const missing of missingDefaults) {
+    if (missing.id === 'revision_calculator') {
+      const anchorIdx = mergedSections.findIndex(
+        (s) => s.id === 'faq_section' || s.id === 'units_map' || s.id === 'footer'
+      );
+      if (anchorIdx !== -1) {
+        mergedSections.splice(anchorIdx, 0, missing);
+        continue;
+      }
+    }
+    const footerIdx = mergedSections.findIndex((s) => s.id === 'footer');
+    if (footerIdx !== -1) {
+      mergedSections.splice(footerIdx, 0, missing);
+    } else {
+      mergedSections.push(missing);
+    }
+  }
 
   // Upgrade v1 saved configs where revisions_selector was adjacent right before notice_box
-  if (!saved.sectionsVersion || saved.sectionsVersion < CURRENT_SECTIONS_VERSION) {
+  if (!saved.sectionsVersion || saved.sectionsVersion < 2) {
     const revIdx = mergedSections.findIndex((s) => s.id === 'revisions_selector');
     const noticeIdx = mergedSections.findIndex((s) => s.id === 'notice_box');
     if (revIdx !== -1 && noticeIdx === revIdx + 1) {

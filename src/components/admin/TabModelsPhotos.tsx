@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Droplets, Image as ImageIcon, Plus, Trash2 } from 'lucide-react';
 import { MotoModel, OilSaleMode, Segment } from '../../types';
-import { adminFetch } from '../../utils/adminAuth';
+import { adminFetch, uploadAdminImageFile } from '../../utils/adminAuth';
 import { saveGestorDraftCache } from '../../utils/gestorBackup';
 import { formatLitersPT } from '../../utils/pricing';
 
@@ -168,25 +168,25 @@ export function TabModelsPhotos({
   const handleUploadPhoto = async (id: number, file: File) => {
     setUploadingId(id);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await adminFetch('/api/upload', {
-        method: 'POST',
-        body: formData,
+      const uploadedUrl = await uploadAdminImageFile(file, {
+        convertWebpToPng: true,
+        maxDimension: 1000,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro no upload.');
-      const nextModel = { ...drafts[id], image_url: data.url };
-      updateDraft(id, { image_url: data.url });
+      const nextModel = { ...drafts[id], image_url: uploadedUrl };
+      updateDraft(id, { image_url: uploadedUrl });
 
       // Persist immediately so it reflects on the public site
-      await adminFetch(`/api/admin/models/${id}`, {
+      const saveRes = await adminFetch(`/api/admin/models/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(nextModel),
       });
+      if (!saveRes.ok) {
+        const errBody = (await saveRes.json().catch(() => ({}))) as { error?: string };
+        throw new Error(errBody.error || 'Imagem enviada, mas falhou ao vincular no modelo.');
+      }
       await onSaved();
-      onToast('success', 'Foto enviada e vinculada ao modelo.');
+      onToast('success', 'Foto enviada e salva no modelo.');
     } catch (e) {
       onToast('error', e instanceof Error ? e.message : 'Erro ao enviar foto.');
     } finally {
@@ -334,6 +334,7 @@ export function TabModelsPhotos({
                     className="hidden"
                     onChange={(e) => {
                       const f = e.target.files?.[0];
+                      e.target.value = '';
                       if (f) void handleUploadPhoto(m.id, f);
                     }}
                   />

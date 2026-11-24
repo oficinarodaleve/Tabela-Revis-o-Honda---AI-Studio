@@ -269,6 +269,7 @@ export type BuiltInSectionType =
   | 'revisions_selector'
   | 'notice_box'
   | 'filters_catalog'
+  | 'revision_calculator'
   | 'faq_section'
   | 'units_map'
   | 'footer';
@@ -304,6 +305,41 @@ export interface VisualBuilderConfig {
   htmlOverrides?: Record<string, string>;
 }
 
+export type WarrantyStatusState = 'on_track' | 'warning' | 'overdue';
+
+export interface CalculatorSettings {
+  first_revision_km: number;
+  first_revision_months: number;
+  subsequent_km_step: number;
+  subsequent_months_step: number;
+  warning_km_window: number;
+  warning_days_window: number;
+  eyebrow_text: string;
+  title_text: string;
+  subtitle_text: string;
+  rule_badge_text: string;
+  sale_date_help_text: string;
+  warranty_ok_text: string;
+  warranty_warning_text: string;
+  warranty_overdue_text: string;
+}
+
+export interface CalculatorContextForWhatsApp {
+  modelLabel: string;
+  isGenericModel: boolean;
+  currentKm: number;
+  saleDateBR: string;
+  revisionNumber: number;
+  revisionSubtitle: string;
+  warrantyState: WarrantyStatusState;
+  warrantyStatusTitle: string;
+  warrantyNotice: string;
+  criterionLabel: string;
+  targetDateBR: string;
+  targetKm: number;
+  hasCatalogEstimate: boolean;
+}
+
 export interface PublicBootstrapData {
   models: MotoModel[];
   segments: Segment[];
@@ -320,6 +356,7 @@ export interface PublicBootstrapData {
   public_integrations: CustomIntegration[];
   tracking_config?: PublicTrackingConfig;
   visual_builder?: VisualBuilderConfig | null;
+  calculator_settings?: CalculatorSettings | null;
 }
 
 export interface AdminUser {

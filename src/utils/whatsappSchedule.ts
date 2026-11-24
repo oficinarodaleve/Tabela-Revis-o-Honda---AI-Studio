@@ -1,4 +1,4 @@
-import { MotoModel, UnitLocation } from '../types';
+import { CalculatorContextForWhatsApp, MotoModel, UnitLocation } from '../types';
 import { getUnitWhatsAppNumber, sanitizeWhatsAppDigits } from '../components/WhatsAppIcon';
 import {
   ComputedRevisionSummary,
@@ -9,6 +9,7 @@ import {
   formatPartQuantity,
   isFreeLaborRevision,
 } from './pricing';
+import { formatKmPT } from './revisionCalculator';
 
 export interface BuildWhatsAppMessageParams {
   model: MotoModel;
@@ -19,6 +20,7 @@ export interface BuildWhatsAppMessageParams {
   includeOptionals: boolean;
   unit?: UnitLocation;
   includeDownloadedImageNote?: boolean;
+  calculatorContext?: CalculatorContextForWhatsApp;
 }
 
 function formatUnitAddress(unit?: UnitLocation): string {
@@ -40,12 +42,14 @@ export function buildWhatsAppScheduleMessage({
   includeOptionals,
   unit,
   includeDownloadedImageNote = false,
+  calculatorContext,
 }: BuildWhatsAppMessageParams): string {
   const unitCity = unit?.city || unit?.name || 'Vitória da Conquista';
   const unitAddress = formatUnitAddress(unit);
   const revDisplay = revisionSubtitle
     ? `${revisionLabel} (${revisionSubtitle})`
     : revisionLabel;
+  const displayModelName = calculatorContext?.modelLabel || model.name;
 
   const activeItems = [...summary.items]
     .filter(({ part }) => (includeOptionals ? true : !part.is_optional))
@@ -62,12 +66,27 @@ export function buildWhatsAppScheduleMessage({
   const isFreeLabor = isFreeLaborRevision(revisionNumber);
 
   const lines: string[] = [
-    `Olá, Rodaleve! Gostaria de agendar a *${revDisplay}* da minha *${model.name.toUpperCase()}* na unidade de *${unitCity}*.`,
+    `Olá, Rodaleve! Gostaria de agendar a *${revDisplay}* da minha *${displayModelName.toUpperCase()}* na unidade de *${unitCity}*.`,
   ];
 
   if (unitAddress) {
     lines.push(`📍 *Endereço:* ${unitAddress}`);
   }
+
+  if (calculatorContext) {
+    lines.push('');
+    lines.push('*Dados da Calculadora de Revisões:*');
+    lines.push(`• *Modelo:* ${calculatorContext.modelLabel}`);
+    lines.push(`• *Quilometragem atual:* ${formatKmPT(calculatorContext.currentKm)} km`);
+    lines.push(`• *Data de venda (manual/NF):* ${calculatorContext.saleDateBR}`);
+    lines.push(
+      `• *Revisão identificada:* ${revisionLabel} (${calculatorContext.revisionSubtitle})`
+    );
+    lines.push(`• *Critério principal:* ${calculatorContext.criterionLabel}`);
+    lines.push(`• *Limite por tempo:* ${calculatorContext.targetDateBR}`);
+    lines.push(`• *Status prazo/garantia:* ${calculatorContext.warrantyStatusTitle}`);
+  }
+
   lines.push('');
 
   if (activeItems.length > 0) {
@@ -95,6 +114,11 @@ export function buildWhatsAppScheduleMessage({
       lines.push(`• ${rawDescription}${optTag}${qtySuffix}: ${formatBRL(lineTotal)}`);
     }
     lines.push('');
+  } else if (calculatorContext && !calculatorContext.hasCatalogEstimate) {
+    lines.push(
+      '_Solicito orçamento personalizado de peças e mão de obra para esta revisão._'
+    );
+    lines.push('');
   }
 
   if (!isFreeLabor && summary.laborCost > 0) {
@@ -110,10 +134,12 @@ export function buildWhatsAppScheduleMessage({
     );
   }
 
-  lines.push(`*Valor total estimado:* ${formatBRL(estimatedTotal)}`);
+  if (estimatedTotal > 0) {
+    lines.push(`*Valor total estimado:* ${formatBRL(estimatedTotal)}`);
+  }
   lines.push(
     isFreeLabor
-      ? '_Mão de obra gratuita: 1.ª e 2.ª revisão (conforme manual). Atendimento por ordem de chegada._'
+      ? '_Mão de obra gratuita: 1.ª e 2.ª revisão (conforme manual)._'
       : '_Mão de obra cobrada conforme tabela / manual. Solicito confirmação de horário para agendamento prévio._'
   );
 

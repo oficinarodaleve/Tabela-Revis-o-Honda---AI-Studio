@@ -5,7 +5,7 @@ import {
   SeoSettings,
   UnitLocation,
 } from '../../types';
-import { adminFetch } from '../../utils/adminAuth';
+import { adminFetch, uploadAdminImageFile } from '../../utils/adminAuth';
 import { saveGestorDraftCache } from '../../utils/gestorBackup';
 import { buildJsonLd } from '../SeoHeadSync';
 
@@ -339,26 +339,10 @@ export function TabSeoIdentity({
 
     setUploadingField(field);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await adminFetch('/api/upload', { method: 'POST', body: formData });
-      const rawText = await res.text();
-      let data: { url?: string; error?: string } = {};
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        data = {};
-      }
-      if (!res.ok || !data.url) {
-        throw new Error(
-          data.error ||
-            (res.status === 413
-              ? 'Arquivo muito grande para envio. Reduza a imagem para até 8 MB.'
-              : `Falha ao enviar arquivo (HTTP ${res.status}).`)
-        );
-      }
-
-      const uploadedUrl = data.url;
+      const uploadedUrl = await uploadAdminImageFile(file, {
+        convertWebpToPng: field === 'favicon' || field === 'logo' || field === 'gestor_logo',
+        maxDimension: field === 'favicon' ? 512 : 900,
+      });
       const patch: Partial<SeoSettings> =
         field === 'favicon'
           ? { favicon_url: uploadedUrl }
@@ -379,13 +363,10 @@ export function TabSeoIdentity({
       });
       URL.revokeObjectURL(tempObjectUrl);
 
-      if (autoSaveEnabled) {
-        if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-        await persistSeoNow(nextDraftSnapshot, true);
-        onToast('success', 'Imagem enviada e salva automaticamente!');
-      } else {
-        onToast('success', 'Imagem enviada! Clique em "Salvar Configurações" para publicar.');
-      }
+      // Sempre persiste no banco de dados imediatamente ao concluir o upload
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      await persistSeoNow(nextDraftSnapshot, autoSaveEnabled);
+      onToast('success', 'Imagem enviada e salva no servidor!');
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : 'Erro ao enviar imagem.';
       setLocalPreviews((prev) => {

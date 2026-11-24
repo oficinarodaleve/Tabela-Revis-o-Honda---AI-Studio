@@ -90,3 +90,102 @@
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+@property --border-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes borderSpin {
+  to {
+    --border-angle: 360deg;
+  }
+}
+
+.moto-card-animated-border {
+  border: 2px solid transparent;
+  background-image:
+    linear-gradient(var(--card), var(--card)),
+    conic-gradient(
+      from var(--border-angle),
+      #E5E7EB 0deg,
+      #D1D5DB 110deg,
+      #E5E7EB 220deg,
+      #C8102E 290deg,
+      #FF4D6A 325deg,
+      #FFFFFF 345deg,
+      #A50D24 353deg,
+      #C8102E 360deg
+    );
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  animation: borderSpin 4s linear infinite;
+}
+
+.dark .moto-card-animated-border {
+  background-image:
+    linear-gradient(var(--card), var(--card)),
+    conic-gradient(
+      from var(--border-angle),
+      #2A2F3A 0deg,
+      #374151 110deg,
+      #2A2F3A 220deg,
+      #C8102E 290deg,
+      #FF4D6A 325deg,
+      #FFFFFF 345deg,
+      #A50D24 353deg,
+      #C8102E 360deg
+    );
+}
+
+.moto-card-animated-border:hover {
+  box-shadow:
+    0 12px 28px -8px rgba(200, 16, 46, 0.24),
+    0 0 18px -3px rgba(255, 77, 106, 0.28);
+}
+
+.faq-item-active {
+  border-color: rgba(200, 16, 46, 0.65);
+  box-shadow:
+    0 0 0 1px rgba(200, 16, 46, 0.22),
+    0 0 24px -6px rgba(200, 16, 46, 0.24),
+    0 10px 24px -12px rgba(255, 77, 106, 0.35);
+}
+
+.dark .faq-item-active {
+  border-color: rgba(255, 77, 106, 0.65);
+  box-shadow:
+    0 0 0 1px rgba(255, 77, 106, 0.26),
+    0 0 26px -6px rgba(255, 77, 106, 0.32),
+    0 12px 28px -12px rgba(200, 16, 46, 0.4);
+}
+
+.faq-accordion-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 240ms ease,
+    visibility 320ms ease;
+}
+
+.faq-accordion-panel--open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .moto-card-animated-border {
+    animation: none;
+  }
+
+  .faq-accordion-panel,
+  .faq-chevron {
+    transition: none !important;
+  }
+}
+

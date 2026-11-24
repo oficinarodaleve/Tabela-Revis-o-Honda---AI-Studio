@@ -13,6 +13,7 @@ import {
   deleteSettingKey,
   ensureDatabaseSeeded,
   getAdminTrackingPixelsConfig,
+  getCalculatorSettings,
   getIntegrationRow,
   getLastPriceSync,
   getPublicTrackingConfig,
@@ -28,6 +29,7 @@ import {
   maskSecret,
   upsertSettingValue,
 } from './src/db/repository.ts';
+import { normalizeCalculatorSettings } from './src/utils/revisionCalculator.ts';
 import {
   faqs,
   integrations,
@@ -38,6 +40,7 @@ import {
   revisionTabs,
   segments,
   siteSettings,
+  uploadedFiles,
 } from './src/db/schema.ts';
 import { type AuthRequest, requireAuth } from './src/middleware/auth.ts';
 import { startWeeklySyncScheduler, syncMicroWorkPrices } from './src/server/microwork.ts';
@@ -64,27 +67,136 @@ const MIME_TO_EXT: Record<string, string> = {
   'image/gif': '.gif',
 };
 
+const EXT_TO_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.gif': 'image/gif',
+};
+
 const ALLOWED_UPLOAD_EXTS = new Set(['.png', '.svg', '.webp', '.jpg', '.jpeg', '.ico', '.gif']);
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
+async function persistUploadedFile(
+  buffer: Buffer,
+  originalName: string,
+  incomingMime: string,
+  forcedFilename?: string
+): Promise<{ filename: string; mimeType: string; url: string }> {
+  const rawExt = path.extname(String(forcedFilename || originalName || '')).toLowerCase();
+  const cleanMime = String(incomingMime || '').split(';')[0].trim().toLowerCase();
+  const mimeExt = MIME_TO_EXT[cleanMime] || '';
+  const ext = ALLOWED_UPLOAD_EXTS.has(rawExt)
+    ? rawExt
+    : ALLOWED_UPLOAD_EXTS.has(mimeExt)
+      ? mimeExt
+      : '.png';
+  const safeName = forcedFilename
+    ? path.basename(forcedFilename).replace(/[^a-zA-Z0-9._-]/g, '_')
+    : `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
+  const canonicalMime = EXT_TO_MIME[ext] || (cleanMime.startsWith('image/') ? cleanMime : 'image/png');
+  const nowIso = new Date().toISOString();
+
+  await db
+    .insert(uploadedFiles)
+    .values({
+      filename: safeName,
+      mimeType: canonicalMime,
+      dataBase64: buffer.toString('base64'),
+      sizeBytes: buffer.length,
+      createdAt: nowIso,
+    })
+    .onConflictDoUpdate({
+      target: uploadedFiles.filename,
+      set: {
+        mimeType: canonicalMime,
+        dataBase64: buffer.toString('base64'),
+        sizeBytes: buffer.length,
+        createdAt: nowIso,
+      },
+    });
+
+  // Warm local disk cache (best effort; DB is the persistent source of truth)
+  try {
     if (!fs.existsSync(UPLOADS_DIR)) {
       fs.mkdirSync(UPLOADS_DIR, { recursive: true });
     }
-    cb(null, UPLOADS_DIR);
-  },
-  filename: (_req, file, cb) => {
-    const rawExt = path.extname(file.originalname || '').toLowerCase();
-    const ext = ALLOWED_UPLOAD_EXTS.has(rawExt)
-      ? rawExt
-      : MIME_TO_EXT[(file.mimetype || '').toLowerCase()] || '.png';
-    const safeName = `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${ext}`;
-    cb(null, safeName);
-  },
-});
+    const targetPath = path.resolve(UPLOADS_DIR, safeName);
+    if (targetPath.startsWith(UPLOADS_DIR + path.sep)) {
+      fs.writeFileSync(targetPath, buffer);
+    }
+  } catch {
+    // Ignore disk cache write errors
+  }
+
+  return { filename: safeName, mimeType: canonicalMime, url: `/uploads/${safeName}` };
+}
+
+async function readUploadedFile(
+  rawFilename: string
+): Promise<{ buffer: Buffer; mimeType: string } | null> {
+  const safeName = path.basename(rawFilename || '');
+  if (!safeName || !/^[a-zA-Z0-9._-]+$/.test(safeName)) {
+    return null;
+  }
+  const ext = path.extname(safeName).toLowerCase();
+  if (!ALLOWED_UPLOAD_EXTS.has(ext)) {
+    return null;
+  }
+
+  const localPath = path.resolve(UPLOADS_DIR, safeName);
+  if (localPath.startsWith(UPLOADS_DIR + path.sep) && fs.existsSync(localPath)) {
+    try {
+      const buffer = fs.readFileSync(localPath);
+      if (buffer.length > 0) {
+        return { buffer, mimeType: EXT_TO_MIME[ext] || 'application/octet-stream' };
+      }
+    } catch {
+      // Fallback to Cloud SQL
+    }
+  }
+
+  try {
+    const rows = await db
+      .select({
+        mimeType: uploadedFiles.mimeType,
+        dataBase64: uploadedFiles.dataBase64,
+      })
+      .from(uploadedFiles)
+      .where(eq(uploadedFiles.filename, safeName));
+
+    const row = rows[0];
+    if (!row?.dataBase64) return null;
+
+    const buffer = Buffer.from(row.dataBase64, 'base64');
+    if (buffer.length === 0) return null;
+
+    // Warm local disk cache asynchronously for subsequent requests
+    try {
+      if (!fs.existsSync(UPLOADS_DIR)) {
+        fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+      }
+      if (localPath.startsWith(UPLOADS_DIR + path.sep)) {
+        fs.writeFileSync(localPath, buffer);
+      }
+    } catch {
+      // Ignore cache warming failures
+    }
+
+    return {
+      buffer,
+      mimeType: row.mimeType || EXT_TO_MIME[ext] || 'application/octet-stream',
+    };
+  } catch (err) {
+    console.error(`Failed reading uploaded file ${safeName} from Cloud SQL:`, err);
+    return null;
+  }
+}
 
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: { fileSize: 8 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname || '').toLowerCase();
@@ -104,18 +216,20 @@ app.use(
   })
 );
 app.use(express.json({ limit: '25mb' }));
-app.use('/uploads', (_req, res, next) => {
+app.get('/uploads/:filename', async (req, res) => {
+  const file = await readUploadedFile(req.params.filename);
+  if (!file) {
+    res.status(404).end();
+    return;
+  }
+  res.setHeader('Content-Type', file.mimeType);
+  res.setHeader('Content-Length', String(file.buffer.length));
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-  next();
+  res.setHeader('Cache-Control', 'public, max-age=2592000, stale-while-revalidate=86400');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.send(file.buffer);
 });
-app.use(
-  '/uploads',
-  express.static(UPLOADS_DIR, {
-    maxAge: '30d',
-    etag: true,
-  })
-);
 
 function parseOptionalLaborPrice(raw: unknown): number | null {
   if (raw === null || raw === undefined || raw === '') return null;
@@ -274,6 +388,7 @@ async function buildPublicBootstrapPayload() {
     customRow,
     trackingConfig,
     visualBuilder,
+    calculatorSettings,
   ] = await Promise.all([
     listVisibleModelsOrdered(),
     listSegmentsOrdered(true),
@@ -287,6 +402,7 @@ async function buildPublicBootstrapPayload() {
     getIntegrationRow('custom_integrations'),
     getPublicTrackingConfig(),
     getVisualBuilderConfig(),
+    getCalculatorSettings(),
   ]);
 
   const mapsCfg = mapsRow ? JSON.parse(mapsRow.configJson) : { custom_api_key: '' };
@@ -324,6 +440,7 @@ async function buildPublicBootstrapPayload() {
     public_integrations: publicIntegrations,
     tracking_config: trackingConfig,
     visual_builder: visualBuilder,
+    calculator_settings: calculatorSettings,
   };
 }
 
@@ -331,7 +448,7 @@ async function buildPublicBootstrapPayload() {
 app.get('/api/public/bootstrap', async (_req, res) => {
   try {
     const payload = await buildPublicBootstrapPayload();
-    res.setHeader('Cache-Control', 'public, max-age=30, stale-while-revalidate=60');
+    res.setHeader('Cache-Control', 'no-cache, must-revalidate');
     res.json(payload);
   } catch (err) {
     console.error('Error in /api/public/bootstrap:', err);
@@ -355,6 +472,7 @@ app.get('/api/admin/bootstrap', requireAuth, async (_req: AuthRequest, res: Resp
       mwRow,
       customRow,
       trackingPixels,
+      calculatorSettings,
     ] = await Promise.all([
       listAllModelsOrdered(),
       listSegmentsOrdered(false),
@@ -368,6 +486,7 @@ app.get('/api/admin/bootstrap', requireAuth, async (_req: AuthRequest, res: Resp
       getIntegrationRow('microwork'),
       getIntegrationRow('custom_integrations'),
       getAdminTrackingPixelsConfig(),
+      getCalculatorSettings(),
     ]);
 
     const mapsCfg = mapsRow ? JSON.parse(mapsRow.configJson) : { custom_api_key: '' };
@@ -384,6 +503,7 @@ app.get('/api/admin/bootstrap', requireAuth, async (_req: AuthRequest, res: Resp
       faqs: faqRows.map(formatFaqRow),
       seo,
       last_price_sync: lastPriceSync,
+      calculator_settings: calculatorSettings,
       integrations: {
         google_maps: {
           active: mapsRow ? Boolean(mapsRow.active) : true,
@@ -1061,9 +1181,6 @@ app.post('/api/admin/backup/restore', requireAuth, async (req: AuthRequest, res:
 
   const restoredUploadNames = new Set<string>();
   if (payload.embedded_uploads && typeof payload.embedded_uploads === 'object') {
-    if (!fs.existsSync(UPLOADS_DIR)) {
-      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-    }
     for (const [rawName, dataUrl] of Object.entries(
       payload.embedded_uploads as Record<string, unknown>
     )) {
@@ -1076,13 +1193,12 @@ app.post('/api/admin/backup/restore', requireAuth, async (req: AuthRequest, res:
       const utf8Match = /^data:([^,]+),(.+)$/i.exec(dataUrl.trim());
       try {
         if (b64Match) {
-          fs.writeFileSync(path.join(UPLOADS_DIR, safeFile), Buffer.from(b64Match[2], 'base64'));
+          const buf = Buffer.from(b64Match[2], 'base64');
+          await persistUploadedFile(buf, safeFile, b64Match[1], safeFile);
           restoredUploadNames.add(safeFile);
         } else if (utf8Match) {
-          fs.writeFileSync(
-            path.join(UPLOADS_DIR, safeFile),
-            Buffer.from(decodeURIComponent(utf8Match[2]), 'utf8')
-          );
+          const buf = Buffer.from(decodeURIComponent(utf8Match[2]), 'utf8');
+          await persistUploadedFile(buf, safeFile, utf8Match[1], safeFile);
           restoredUploadNames.add(safeFile);
         }
       } catch {
@@ -1294,6 +1410,17 @@ app.post('/api/admin/backup/restore', requireAuth, async (req: AuthRequest, res:
           .onConflictDoUpdate({
             target: siteSettings.key,
             set: { value: JSON.stringify(vb) },
+          });
+      }
+
+      if (payload.calculator_settings && typeof payload.calculator_settings === 'object') {
+        const normalizedCalc = normalizeCalculatorSettings(payload.calculator_settings);
+        await tx
+          .insert(siteSettings)
+          .values({ key: 'calculator_settings', value: JSON.stringify(normalizedCalc) })
+          .onConflictDoUpdate({
+            target: siteSettings.key,
+            set: { value: JSON.stringify(normalizedCalc) },
           });
       }
 
@@ -1513,6 +1640,16 @@ app.post('/api/admin/export-site-zip', requireAuth, async (req: AuthRequest, res
   try {
     addWorkspaceDirToZip(zip, rootDir, rootDir);
 
+    // Garante inclusão de todos os uploads persistidos no Cloud SQL
+    const dbUploadRows = await db
+      .select({ filename: uploadedFiles.filename, dataBase64: uploadedFiles.dataBase64 })
+      .from(uploadedFiles);
+    for (const row of dbUploadRows) {
+      if (row.filename && row.dataBase64) {
+        zip.file(`data/uploads/${row.filename}`, Buffer.from(row.dataBase64, 'base64'));
+      }
+    }
+
     // Snapshot consistente dos dados atuais do Cloud SQL (PostgreSQL)
     const [
       modelRows,
@@ -1655,6 +1792,37 @@ app.delete('/api/admin/visual-builder', requireAuth, async (_req: AuthRequest, r
     res.status(500).json({ error: 'Falha ao restaurar editor visual.' });
   }
 });
+
+// Calculator settings persistence
+app.put('/api/admin/calculator-settings', requireAuth, async (req: AuthRequest, res: Response) => {
+  const payload = req.body as Record<string, unknown>;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    res.status(400).json({ error: 'Configurações da calculadora inválidas.' });
+    return;
+  }
+  try {
+    const normalized = normalizeCalculatorSettings(payload);
+    await upsertSettingValue('calculator_settings', JSON.stringify(normalized));
+    res.json({ ok: true, calculator_settings: normalized });
+  } catch (err) {
+    console.error('Error saving calculator settings:', err);
+    res.status(500).json({ error: 'Falha ao salvar parâmetros da calculadora.' });
+  }
+});
+
+app.delete(
+  '/api/admin/calculator-settings',
+  requireAuth,
+  async (_req: AuthRequest, res: Response) => {
+    try {
+      await deleteSettingKey('calculator_settings');
+      res.json({ ok: true, calculator_settings: normalizeCalculatorSettings(null) });
+    } catch (err) {
+      console.error('Error resetting calculator settings:', err);
+      res.status(500).json({ error: 'Falha ao restaurar configurações da calculadora.' });
+    }
+  }
+);
 
 // Aba 7: Integrações & APIs
 app.put('/api/admin/integrations', requireAuth, async (req: AuthRequest, res: Response) => {
@@ -1937,7 +2105,7 @@ app.post('/api/admin/integrations/test', requireAuth, async (req: AuthRequest, r
   }
 });
 
-// File upload for model photos, favicon, logo, og:image, gestor logo
+// File upload for model photos, favicon, logo, og:image, gestor logo (persisted in Cloud SQL + disk cache)
 app.post('/api/upload', requireAuth, (req: AuthRequest, res: Response) => {
   upload.single('file')(req, res, (err: unknown) => {
     if (err) {
@@ -1958,12 +2126,64 @@ app.post('/api/upload', requireAuth, (req: AuthRequest, res: Response) => {
       });
       return;
     }
-    if (!req.file) {
+    if (!req.file || !req.file.buffer || req.file.buffer.length === 0) {
       res.status(400).json({ error: 'Nenhum arquivo de imagem foi recebido.' });
       return;
     }
-    res.json({ url: `/uploads/${req.file.filename}` });
+    void persistUploadedFile(req.file.buffer, req.file.originalname, req.file.mimetype)
+      .then((saved) => res.json({ url: saved.url }))
+      .catch((saveErr) => {
+        console.error('Error persisting uploaded file to Cloud SQL:', saveErr);
+        res.status(500).json({ error: 'Falha ao salvar imagem no banco de dados.' });
+      });
   });
+});
+
+// Fallback JSON base64 upload when multipart/form-data is interrupted by proxy/browser
+app.post('/api/upload-base64', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const { filename, mimeType, dataBase64 } = req.body as {
+      filename?: string;
+      mimeType?: string;
+      dataBase64?: string;
+    };
+
+    if (typeof dataBase64 !== 'string' || !dataBase64.trim()) {
+      res.status(400).json({ error: 'Nenhum dado de imagem foi recebido.' });
+      return;
+    }
+
+    const rawExt = path.extname(String(filename || '')).toLowerCase();
+    const cleanMime = String(mimeType || '').split(';')[0].trim().toLowerCase();
+    const mimeExt = MIME_TO_EXT[cleanMime] || '';
+    const ext = ALLOWED_UPLOAD_EXTS.has(rawExt) ? rawExt : ALLOWED_UPLOAD_EXTS.has(mimeExt) ? mimeExt : '';
+
+    if (!ext && !cleanMime.startsWith('image/')) {
+      res.status(400).json({
+        error: 'Formato inválido. Envie apenas imagens PNG, JPG, WEBP, SVG ou ICO.',
+      });
+      return;
+    }
+
+    const cleanB64 = dataBase64.replace(/^data:[^;]+;base64,/i, '').replace(/\s+/g, '');
+    const buffer = Buffer.from(cleanB64, 'base64');
+    if (buffer.length === 0) {
+      res.status(400).json({ error: 'O arquivo de imagem está vazio.' });
+      return;
+    }
+    if (buffer.length > 8 * 1024 * 1024) {
+      res.status(400).json({
+        error: 'Arquivo muito grande. O limite máximo permitido é de 8 MB.',
+      });
+      return;
+    }
+
+    const saved = await persistUploadedFile(buffer, String(filename || `upload${ext || '.png'}`), cleanMime);
+    res.json({ url: saved.url });
+  } catch (err) {
+    console.error('Error in /api/upload-base64:', err);
+    res.status(500).json({ error: 'Falha ao salvar arquivo de imagem no servidor.' });
+  }
 });
 
 function escapeHtmlAttr(value: string): string {
@@ -1989,6 +2209,11 @@ function upsertHtmlMeta(
   return html.replace(/<\/head>/i, `    ${tag}\n  </head>`);
 }
 
+function removeHtmlMeta(html: string, attr: 'name' | 'property', key: string): string {
+  const regex = new RegExp(`\\s*<meta\\s+[^>]*${attr}=["']${key}["'][^>]*>\\s*`, 'gi');
+  return html.replace(regex, '\n    ');
+}
+
 function resolvePublicOrigin(canonicalUrl: string | undefined, hostHeader: string | undefined): string {
   if (canonicalUrl) {
     try {
@@ -2006,15 +2231,32 @@ function resolvePublicOrigin(canonicalUrl: string | undefined, hostHeader: strin
   return 'https://oficinarodaleve.ai.studio';
 }
 
-function resolvePublicOgImageUrl(
+function getKnownOgDimensions(urlOrPath: string): { width?: string; height?: string } {
+  const clean = urlOrPath.split('?')[0].toLowerCase();
+  if (clean.includes('open-graph_0af5280d.webp')) {
+    return { width: '1678', height: '937' };
+  }
+  if (clean.endsWith('/og-image.jpg')) {
+    return { width: '1200', height: '670' };
+  }
+  return {};
+}
+
+async function resolvePublicOgImageUrl(
   rawOgImage: string | undefined,
   publicOrigin: string,
   distDir: string
-): { url: string; mime: string } {
-  const defaultUrl = `${publicOrigin}/og-image.jpg`;
+): Promise<{ url: string; mime: string; width?: string; height?: string }> {
+  const defaultUrl = `${publicOrigin}/assets/aistudio/open-graph_0af5280d.webp`;
+  const defaultMeta = {
+    url: defaultUrl,
+    mime: 'image/webp',
+    width: '1678',
+    height: '937',
+  };
   const raw = (rawOgImage || '').trim();
   if (!raw || raw.startsWith('data:')) {
-    return { url: defaultUrl, mime: 'image/jpeg' };
+    return defaultMeta;
   }
   if (raw.startsWith('https://') || raw.startsWith('http://')) {
     const ext = raw.split('?')[0].split('.').pop()?.toLowerCase() || 'jpg';
@@ -2023,31 +2265,55 @@ function resolvePublicOgImageUrl(
         ? 'image/png'
         : ext === 'webp'
           ? 'image/webp'
-          : 'image/jpeg';
-    return { url: raw, mime };
+          : ext === 'svg'
+            ? 'image/svg+xml'
+            : 'image/jpeg';
+    return { url: raw, mime, ...getKnownOgDimensions(raw) };
   }
   const normalized = raw.startsWith('/') ? raw : `/${raw}`;
   if (normalized.startsWith('/uploads/')) {
     const filename = path.basename(normalized);
-    if (!filename || !fs.existsSync(path.join(UPLOADS_DIR, filename))) {
-      return { url: defaultUrl, mime: 'image/jpeg' };
+    const existingFile = filename ? await readUploadedFile(filename) : null;
+    if (!filename || !existingFile) {
+      return defaultMeta;
     }
     const ext = path.extname(filename).toLowerCase();
     const mime =
-      ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      existingFile.mimeType ||
+      (ext === '.png'
+        ? 'image/png'
+        : ext === '.webp'
+          ? 'image/webp'
+          : ext === '.svg'
+            ? 'image/svg+xml'
+            : 'image/jpeg');
     return { url: `${publicOrigin}/uploads/${filename}`, mime };
   }
   if (normalized.includes('rodaleve_og_banner')) {
-    return { url: defaultUrl, mime: 'image/jpeg' };
+    return defaultMeta;
   }
-  const diskCandidate = path.join(distDir, normalized.replace(/^\/+/, ''));
-  if (fs.existsSync(diskCandidate)) {
-    const ext = path.extname(diskCandidate).toLowerCase();
+  const relPath = normalized.replace(/^\/+/, '');
+  const distCandidate = path.join(distDir, relPath);
+  const publicCandidate = path.join(process.cwd(), 'public', relPath);
+  const resolvedDisk = fs.existsSync(distCandidate)
+    ? distCandidate
+    : fs.existsSync(publicCandidate)
+      ? publicCandidate
+      : null;
+  if (resolvedDisk) {
+    const ext = path.extname(resolvedDisk).toLowerCase();
     const mime =
-      ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
-    return { url: `${publicOrigin}${normalized}`, mime };
+      ext === '.png'
+        ? 'image/png'
+        : ext === '.webp'
+          ? 'image/webp'
+          : ext === '.svg'
+            ? 'image/svg+xml'
+            : 'image/jpeg';
+    const finalUrl = `${publicOrigin}${normalized}`;
+    return { url: finalUrl, mime, ...getKnownOgDimensions(finalUrl) };
   }
-  return { url: defaultUrl, mime: 'image/jpeg' };
+  return defaultMeta;
 }
 
 async function startServer() {
@@ -2060,6 +2326,7 @@ async function startServer() {
     app.use(vite.middlewares);
   } else {
     const distDir = path.resolve(process.cwd(), 'dist');
+    const publicAssetsDir = path.resolve(process.cwd(), 'public', 'assets');
     app.use(
       '/assets',
       express.static(path.join(distDir, 'assets'), {
@@ -2067,6 +2334,14 @@ async function startServer() {
         immutable: true,
       })
     );
+    if (fs.existsSync(publicAssetsDir)) {
+      app.use(
+        '/assets',
+        express.static(publicAssetsDir, {
+          maxAge: '30d',
+        })
+      );
+    }
     app.use(
       '/src/assets',
       express.static(path.join(distDir, 'src/assets'), {
@@ -2100,11 +2375,8 @@ async function startServer() {
           const ogTitle = seo.og_same_title ? pageTitle : seo.og_title || pageTitle;
           const ogDesc = seo.og_same_description ? pageDesc : seo.og_description || pageDesc;
           const ogUrl = seo.canonical_url?.trim() || `${publicOrigin}/`;
-          const { url: ogImageUrl, mime: ogImageMime } = resolvePublicOgImageUrl(
-            seo.og_image,
-            publicOrigin,
-            distDir
-          );
+          const { url: ogImageUrl, mime: ogImageMime, width: ogWidth, height: ogHeight } =
+            await resolvePublicOgImageUrl(seo.og_image, publicOrigin, distDir);
 
           html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtmlAttr(pageTitle)}</title>`);
           html = upsertHtmlMeta(html, 'name', 'description', pageDesc);
@@ -2121,8 +2393,13 @@ async function startServer() {
           html = upsertHtmlMeta(html, 'property', 'og:image', ogImageUrl);
           html = upsertHtmlMeta(html, 'property', 'og:image:secure_url', ogImageUrl);
           html = upsertHtmlMeta(html, 'property', 'og:image:type', ogImageMime);
-          html = upsertHtmlMeta(html, 'property', 'og:image:width', '1200');
-          html = upsertHtmlMeta(html, 'property', 'og:image:height', '670');
+          if (ogWidth && ogHeight) {
+            html = upsertHtmlMeta(html, 'property', 'og:image:width', ogWidth);
+            html = upsertHtmlMeta(html, 'property', 'og:image:height', ogHeight);
+          } else {
+            html = removeHtmlMeta(html, 'property', 'og:image:width');
+            html = removeHtmlMeta(html, 'property', 'og:image:height');
+          }
           html = upsertHtmlMeta(html, 'name', 'twitter:card', seo.twitter_card || 'summary_large_image');
           html = upsertHtmlMeta(html, 'name', 'twitter:title', ogTitle);
           html = upsertHtmlMeta(html, 'name', 'twitter:description', ogDesc);

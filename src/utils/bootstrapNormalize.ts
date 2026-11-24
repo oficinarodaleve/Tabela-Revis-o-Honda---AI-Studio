@@ -12,6 +12,7 @@ import {
   TrackingPixelsAdminConfig,
   UnitLocation,
 } from '../types';
+import { normalizeCalculatorSettings } from './revisionCalculator';
 
 export const DEFAULT_SEO_FALLBACK: SeoSettings = {
   meta_title: 'Rodaleve Honda – Tabela de Manutenção e Revisões',
@@ -280,6 +281,7 @@ export function normalizePublicBootstrapData(raw: unknown): PublicBootstrapData 
     },
     visual_builder:
       r.visual_builder && typeof r.visual_builder === 'object' ? r.visual_builder : null,
+    calculator_settings: normalizeCalculatorSettings(r.calculator_settings),
   };
 }
 

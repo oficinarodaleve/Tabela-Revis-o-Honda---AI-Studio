@@ -13,6 +13,12 @@ export interface AuthRequest extends Request {
   };
 }
 
+function drainIncomingBody(req: AuthRequest) {
+  if (req.readable && !req.readableEnded) {
+    req.resume();
+  }
+}
+
 export const requireAuth = async (
   req: AuthRequest,
   res: Response,
@@ -20,12 +26,14 @@ export const requireAuth = async (
 ) => {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    drainIncomingBody(req);
     res.status(401).json({ error: 'Não autorizado. Faça login para continuar.' });
     return;
   }
 
   const token = authHeader.split('Bearer ')[1]?.trim();
   if (!token) {
+    drainIncomingBody(req);
     res.status(401).json({ error: 'Não autorizado. Token de acesso ausente.' });
     return;
   }
@@ -41,6 +49,7 @@ export const requireAuth = async (
 
     const adminRecord = await findAuthorizedAdminByEmail(email);
     if (!adminRecord) {
+      drainIncomingBody(req);
       res.status(403).json({
         error: 'Acesso restrito: este e-mail Google não possui permissão administrativa.',
       });
@@ -57,6 +66,7 @@ export const requireAuth = async (
     next();
   } catch (error) {
     console.error('Error verifying Firebase ID token:', error);
+    drainIncomingBody(req);
     res.status(401).json({ error: 'Sessão expirada ou inválida. Entre novamente com Google.' });
   }
 };

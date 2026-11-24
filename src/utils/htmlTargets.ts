@@ -142,6 +142,7 @@ export function buildHtmlEditableTargets({
   pushTextTarget('hero_title', 'Título Principal (H1)', 'hero_textos', 'Título principal exibido no topo da página.');
   pushTextTarget('hero_subtitle', 'Subtítulo do Hero', 'hero_textos', 'Descrição logo abaixo do título principal.');
   pushTextTarget('hero_tab_table', 'Botão Aba "Tabela por Modelo"', 'hero_textos', 'Texto da aba principal do seletor do Hero.');
+  pushTextTarget('hero_tab_calculator', 'Botão Aba "Calculadora de Revisões"', 'hero_textos', 'Texto da aba da calculadora no seletor do Hero.');
   pushTextTarget('hero_tab_faq', 'Botão Aba "Perguntas Frequentes"', 'hero_textos', 'Texto da aba de FAQ no seletor do Hero.');
   pushTextTarget('revisions_prompt_above', 'Chamada: Escolha a revisão', 'hero_textos', 'Texto exibido acima das abas de 1ª a 7ª revisão.');
   pushTextTarget('revisions_prompt_below', 'Chamada: Escolha o modelo', 'hero_textos', 'Texto exibido acima da barra de busca e filtros.');

@@ -11,6 +11,7 @@ import {
   INITIAL_SEO_SETTINGS,
   buildRevisionPartsForProfile,
 } from '../server/seedData.ts';
+import { normalizeCalculatorSettings } from '../utils/revisionCalculator.ts';
 import { db } from './index.ts';
 import {
   admins,
@@ -570,6 +571,16 @@ export async function getVisualBuilderConfig() {
     return JSON.parse(raw);
   } catch {
     return null;
+  }
+}
+
+export async function getCalculatorSettings() {
+  const raw = await getSettingValue('calculator_settings');
+  if (!raw) return normalizeCalculatorSettings(null);
+  try {
+    return normalizeCalculatorSettings(JSON.parse(raw));
+  } catch {
+    return normalizeCalculatorSettings(null);
   }
 }
 

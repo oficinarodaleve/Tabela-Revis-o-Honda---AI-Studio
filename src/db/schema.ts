@@ -109,6 +109,14 @@ export const admins = pgTable('admins', {
   createdAt: text('created_at').notNull(),
 });
 
+export const uploadedFiles = pgTable('uploaded_files', {
+  filename: text('filename').primaryKey(),
+  mimeType: text('mime_type').notNull(),
+  dataBase64: text('data_base64').notNull(),
+  sizeBytes: integer('size_bytes').notNull(),
+  createdAt: text('created_at').notNull(),
+});
+
 export const modelsRelations = relations(models, ({ many }) => ({
   revisionParts: many(revisionParts),
 }));

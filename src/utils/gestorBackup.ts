@@ -1,5 +1,6 @@
 import type JSZipType from 'jszip';
 import {
+  CalculatorSettings,
   FaqItem,
   IntegrationsData,
   MotoModel,
@@ -63,6 +64,7 @@ export interface GestorExportSource {
   seo: SeoSettings;
   last_price_sync: string;
   integrations: IntegrationsData;
+  calculator_settings?: CalculatorSettings | null;
   visual_builder?: Partial<VisualBuilderConfig> | null;
   embedded_uploads?: Record<string, string>;
 }
@@ -81,6 +83,7 @@ export interface BackupRestorePayload {
     gestor_subtitle?: string;
   };
   integrations?: Partial<IntegrationsData>;
+  calculator_settings?: Partial<CalculatorSettings> | null;
   visual_builder?: Partial<VisualBuilderConfig> | null;
   embedded_uploads?: Record<string, string>;
 }
@@ -289,6 +292,7 @@ export function buildGestorBackupFiles(source: GestorExportSource): Record<strin
     faqs: source.faqs,
     seo: source.seo,
     integrations: integracoesSeguras,
+    calculator_settings: source.calculator_settings ?? undefined,
     visual_builder: visualBuilderData,
   };
 
@@ -302,6 +306,7 @@ export function buildGestorBackupFiles(source: GestorExportSource): Record<strin
     },
     seo: source.seo,
     integrations: integracoesSeguras,
+    calculator_settings: source.calculator_settings ?? undefined,
     segments: source.segments,
     revision_tabs: source.revision_tabs,
     parts: source.parts,
@@ -490,6 +495,10 @@ function validateAndSummarizePayload(
         : undefined,
     integrations:
       raw.integrations && typeof raw.integrations === 'object' ? raw.integrations : undefined,
+    calculator_settings:
+      raw.calculator_settings && typeof raw.calculator_settings === 'object'
+        ? raw.calculator_settings
+        : undefined,
     visual_builder: mergedVisualBuilder,
     embedded_uploads:
       raw.embedded_uploads && typeof raw.embedded_uploads === 'object'
@@ -506,6 +515,7 @@ function validateAndSummarizePayload(
   if (payload.faqs?.length) sections.push(`Perguntas Frequentes (${payload.faqs.length})`);
   if (payload.seo) sections.push('SEO, Logo & Unidades');
   if (payload.integrations) sections.push('Integrações, APIs & Pixels');
+  if (payload.calculator_settings) sections.push('Calculadora de Revisões');
   if (payload.visual_builder) sections.push('Ordem dos Blocos, Layout e Editor HTML');
   const embeddedCount = payload.embedded_uploads
     ? Object.keys(payload.embedded_uploads).length

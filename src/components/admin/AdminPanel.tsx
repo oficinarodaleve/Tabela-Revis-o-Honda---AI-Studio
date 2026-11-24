@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import {
   AdminUser,
+  CalculatorSettings,
   FaqItem,
   IntegrationsData,
   MotoModel,
@@ -28,7 +29,7 @@ import {
 } from '../../types';
 import { signOut } from 'firebase/auth';
 import { auth } from '../../lib/firebase';
-import { adminFetch, clearAdminToken } from '../../utils/adminAuth';
+import { adminFetch, clearAdminToken, uploadAdminImageFile } from '../../utils/adminAuth';
 import {
   ParsedBackupResult,
   collectEmbeddedUploads,
@@ -48,8 +49,10 @@ import {
   normalizeIntegrationsData,
   normalizeSeoSettings,
 } from '../../utils/bootstrapNormalize';
+import { normalizeCalculatorSettings } from '../../utils/revisionCalculator';
 import { ErrorBoundary } from '../ErrorBoundary';
 import { AdminLogin } from './AdminLogin';
+import { TabCalculator } from './TabCalculator';
 import { TabCategoriesTabs } from './TabCategoriesTabs';
 import { TabFaqs } from './TabFaqs';
 import { TabHtmlEditor } from './TabHtmlEditor';
@@ -62,6 +65,7 @@ import { TabSeoIdentity } from './TabSeoIdentity';
 
 type GestorTab =
   | 'revisoes'
+  | 'calculadora'
   | 'mao_de_obra'
   | 'precos'
   | 'modelos'
@@ -81,6 +85,7 @@ interface AdminBootstrap {
   seo: SeoSettings;
   last_price_sync: string;
   integrations: IntegrationsData;
+  calculator_settings: CalculatorSettings;
 }
 
 interface AdminPanelProps {
@@ -97,6 +102,7 @@ const DEFAULT_GESTOR_SUBTITLE = 'Tabela de manutenção e revisões';
 
 const TABS: Array<{ id: GestorTab; label: string }> = [
   { id: 'revisoes', label: 'Revisões' },
+  { id: 'calculadora', label: 'Calculadora' },
   { id: 'mao_de_obra', label: 'Mão de Obra' },
   { id: 'precos', label: 'Preços e Peças' },
   { id: 'modelos', label: 'Modelos e fotos' },
@@ -286,6 +292,7 @@ export function AdminPanel({
         seo: normalizeSeoSettings(raw?.seo),
         last_price_sync: String(raw?.last_price_sync || ''),
         integrations: normalizeIntegrationsData(raw?.integrations),
+        calculator_settings: normalizeCalculatorSettings(raw?.calculator_settings),
       };
       setAdminData(normalized);
     } catch (err) {
@@ -436,20 +443,11 @@ export function AdminPanel({
     }
     setUploadingBrandingLogo(true);
     try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const res = await adminFetch('/api/upload', { method: 'POST', body: formData });
-      const rawText = await res.text();
-      let data: { url?: string; error?: string } = {};
-      try {
-        data = JSON.parse(rawText);
-      } catch {
-        data = {};
-      }
-      if (!res.ok || !data.url) {
-        throw new Error(data.error || `Erro ao enviar logo (HTTP ${res.status}).`);
-      }
-      setBrandingLogoUrl(data.url);
+      const uploadedUrl = await uploadAdminImageFile(file, {
+        convertWebpToPng: true,
+        maxDimension: 900,
+      });
+      setBrandingLogoUrl(uploadedUrl);
       showToast('success', 'Logo enviada! Clique em Salvar para aplicar no topo do Gestor.');
     } catch (e) {
       showToast('error', e instanceof Error ? e.message : 'Erro ao enviar logo.');
@@ -898,6 +896,18 @@ export function AdminPanel({
                   revisionTabs={adminData.revision_tabs}
                   parts={adminData.parts}
                   revisionParts={adminData.revision_parts}
+                  onSaved={handleSavedAndRefresh}
+                  onToast={showToast}
+                  autoSaveEnabled={autoSaveEnabled}
+                  onDirtyChange={setTabDirty}
+                  onAutoSaveStart={handleAutoSaveStart}
+                  onAutoSaveComplete={handleAutoSaveComplete}
+                  onAutoSaveError={handleAutoSaveError}
+                />
+              )}
+              {activeTab === 'calculadora' && (
+                <TabCalculator
+                  calculatorSettings={adminData.calculator_settings}
                   onSaved={handleSavedAndRefresh}
                   onToast={showToast}
                   autoSaveEnabled={autoSaveEnabled}
