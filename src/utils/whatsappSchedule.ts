@@ -266,6 +266,9 @@ export async function downloadElementAsPng(
       logging: false,
       ignoreElements: (el) => el.getAttribute('data-html2canvas-ignore') === 'true',
       onclone: (clonedDoc, clonedEl) => {
+        clonedEl.style.position = 'static';
+        clonedEl.style.left = 'auto';
+        clonedEl.style.top = 'auto';
         clonedEl.style.transform = 'none';
         clonedEl.style.transition = 'none';
         clonedEl.style.boxShadow = '0 4px 16px rgba(17, 24, 39, 0.08)';

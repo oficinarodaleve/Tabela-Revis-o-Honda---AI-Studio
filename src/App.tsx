@@ -67,7 +67,7 @@ function PublicLoadingSkeleton() {
   return (
     <div className="min-h-screen bg-surface" aria-busy="true">
       <header className="sticky top-0 z-50 w-full border-b border-border bg-card/90">
-        <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between px-4 sm:px-6">
+        <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
           <div className="h-8 w-32 rounded-lg bg-surface-neutral" />
           <div className="flex items-center gap-2">
             <div className="h-9 w-24 rounded-full bg-surface-neutral" />
@@ -75,14 +75,14 @@ function PublicLoadingSkeleton() {
           </div>
         </div>
       </header>
-      <section className="border-b border-border bg-card py-10 sm:py-12">
-        <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+      <section className="w-full border-b border-border bg-card py-10 sm:py-12">
+        <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="h-3.5 w-44 rounded bg-brand-soft" />
           <div className="mt-3 h-9 w-4/5 max-w-xl rounded-lg bg-surface-neutral" />
           <div className="mt-3 h-5 w-3/4 max-w-lg rounded bg-surface" />
         </div>
       </section>
-      <div className="mx-auto max-w-[1180px] px-4 py-6 sm:px-6">
+      <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <div className="flex gap-2 overflow-hidden">
           {[1, 2, 3, 4, 5].map((i) => (
             <div

@@ -102,7 +102,7 @@ export function SectionEditorWrapper({
     >
       {/* Indicador de soltura ACIMA do bloco */}
       {dropPosition === 'before' && !isDraggingSelf && (
-        <div className="pointer-events-none relative z-40 mx-auto max-w-[1180px] px-4 sm:px-6">
+        <div className="pointer-events-none relative z-40 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2 py-1">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand shadow-sm" />
             <div className="h-1 flex-1 rounded-full bg-brand shadow-sm" />
@@ -116,7 +116,7 @@ export function SectionEditorWrapper({
       )}
 
       {/* Barra discreta de controles do bloco (visível apenas no Modo Edição Visual) */}
-      <div className="sticky top-[52px] z-30 mx-auto flex max-w-[1180px] flex-wrap items-center justify-between gap-2 rounded-b-lg border-x border-b border-white/15 bg-[#111827]/95 px-3 py-1.5 text-[11px] text-white shadow-sm backdrop-blur">
+      <div className="sticky top-[52px] z-30 mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-2 rounded-b-lg border-x border-b border-white/15 bg-[#111827]/95 px-3 py-1.5 text-[11px] text-white shadow-sm backdrop-blur">
         <div className="flex items-center gap-2">
           <span
             onMouseEnter={() => setDragArmed(true)}
@@ -203,7 +203,7 @@ export function SectionEditorWrapper({
 
       {/* Indicador de soltura ABAIXO do bloco */}
       {dropPosition === 'after' && !isDraggingSelf && (
-        <div className="pointer-events-none relative z-40 mx-auto max-w-[1180px] px-4 sm:px-6">
+        <div className="pointer-events-none relative z-40 mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex items-center gap-2 py-1">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full bg-brand shadow-sm" />
             <div className="h-1 flex-1 rounded-full bg-brand shadow-sm" />

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowRight,
@@ -7,7 +7,9 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
+  Download,
   Gauge,
+  Loader2,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -50,6 +52,7 @@ import {
   validateCalculatorInputs,
 } from '../utils/revisionCalculator';
 import { WhatsAppIcon } from './WhatsAppIcon';
+import { downloadElementAsPng } from '../utils/whatsappSchedule';
 
 interface RevisionCalculatorSectionProps {
   models: MotoModel[];
@@ -60,6 +63,8 @@ interface RevisionCalculatorSectionProps {
   units: UnitLocation[];
   language: SiteLanguage;
   calculatorSettings?: CalculatorSettings | null;
+  logoUrl?: string;
+  logoAlt?: string;
   onOpenScheduleModal: (
     model: MotoModel,
     revisionNumber: number,
@@ -143,6 +148,8 @@ const CALC_TEXTS = {
       `+ ${count} ${count === 1 ? 'outro item' : 'outros itens'} incluídos no orçamento`,
     sinceSaleLabel: (km: number, m: number, d: number) =>
       `Uso informado: ${formatKmPT(km)} km rodados em ${m} ${m === 1 ? 'mês' : 'meses'} e ${d} ${d === 1 ? 'dia' : 'dias'} desde a venda.`,
+    downloadInfoBtn: 'Baixar informações',
+    downloadingInfoBtn: 'Gerando imagem...',
   },
   en: {
     formTitle: 'Motorcycle details',
@@ -204,6 +211,8 @@ const CALC_TEXTS = {
     moreItemsLabel: (count: number) => `+ ${count} more ${count === 1 ? 'item' : 'items'} included`,
     sinceSaleLabel: (km: number, m: number, d: number) =>
       `Usage: ${formatKmPT(km)} km in ${m} ${m === 1 ? 'month' : 'months'} and ${d} ${d === 1 ? 'day' : 'days'} since sale.`,
+    downloadInfoBtn: 'Download summary',
+    downloadingInfoBtn: 'Generating image...',
   },
   es: {
     formTitle: 'Datos de tu motocicleta',
@@ -265,6 +274,8 @@ const CALC_TEXTS = {
     moreItemsLabel: (count: number) => `+ ${count} ${count === 1 ? 'ítem más' : 'ítems más'} incluidos`,
     sinceSaleLabel: (km: number, m: number, d: number) =>
       `Uso: ${formatKmPT(km)} km en ${m} ${m === 1 ? 'mes' : 'meses'} y ${d} ${d === 1 ? 'día' : 'días'} desde la venta.`,
+    downloadInfoBtn: 'Descargar información',
+    downloadingInfoBtn: 'Generando imagen...',
   },
 } as const;
 
@@ -287,6 +298,8 @@ export function RevisionCalculatorSection({
   revisionParts,
   language,
   calculatorSettings,
+  logoUrl,
+  logoAlt,
   onOpenScheduleModal,
   onViewModelInTable,
   onTrackLead,
@@ -303,6 +316,9 @@ export function RevisionCalculatorSection({
   const [saleDateISO, setSaleDateISO] = useState<string>('');
   const [dismissedOverdueRevision, setDismissedOverdueRevision] = useState<number | null>(null);
   const [modelImgFailed, setModelImgFailed] = useState<string>('');
+  const [logoImgFailed, setLogoImgFailed] = useState<string>('');
+  const [isDownloadingInfo, setIsDownloadingInfo] = useState<boolean>(false);
+  const printSheetRef = useRef<HTMLDivElement | null>(null);
 
   const copy = useMemo(() => {
     const firstKm = formatKmPT(settings.first_revision_km);
@@ -710,13 +726,38 @@ export function RevisionCalculatorSection({
     : null;
   const TargetStatusIcon = targetWarrantyMeta?.icon ?? ShieldCheck;
   const laborTexts = LABOR_POLICY_TEXTS[language] || LABOR_POLICY_TEXTS.pt;
+  const canShowDownloadInfoBtn = Boolean(
+    calculation && targetWarrantyMeta && selectedModelValue.trim().length > 0
+  );
+
+  const handleDownloadScheduleImage = async () => {
+    if (!calculation || !printSheetRef.current || isDownloadingInfo) return;
+    setIsDownloadingInfo(true);
+    try {
+      const rawModelSlug = (selectedModel ? selectedModel.name : 'modelo-generico')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '');
+      const filename = `revisoes-honda-${rawModelSlug || 'rodaleve'}.png`;
+      await downloadElementAsPng(printSheetRef.current, false, filename);
+      onTrackLead?.(
+        `${selectedModel ? `Honda ${selectedModel.name}` : t.genericLabel} - Cronograma PNG`,
+        'Calculadora de Revisões'
+      );
+    } finally {
+      setIsDownloadingInfo(false);
+    }
+  };
 
   return (
     <section
       id="calculadora-revisoes"
       aria-labelledby="calculator-section-heading"
-      className="mx-auto max-w-[1180px] scroll-mt-24 px-4 py-10 sm:px-6 sm:py-12"
+      className="w-full scroll-mt-24 border-t border-border/60 bg-surface py-10 sm:py-12"
     >
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
       {/* Editorial Section Header */}
       <div className="mb-7 flex flex-col justify-between gap-4 border-b border-border/80 pb-5 md:flex-row md:items-end">
         <div className="max-w-2xl">
@@ -730,35 +771,38 @@ export function RevisionCalculatorSection({
           >
             {copy.title}
           </h2>
-          <p className="mt-1.5 text-sm leading-relaxed text-ink-muted sm:text-base">
+          <p className="mt-1.5 text-sm font-normal leading-relaxed text-gray-600 dark:text-gray-300 sm:text-[15px]">
             {copy.subtitle}
           </p>
         </div>
 
-        <div className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl border border-border bg-card px-3.5 py-2 text-xs font-semibold text-ink md:self-end">
-          <Clock className="h-3.5 w-3.5 shrink-0 text-brand-text" />
+        <div className="inline-flex shrink-0 items-center gap-2 self-start rounded-xl border border-border bg-card px-3.5 py-2 text-sm font-medium text-ink md:self-end">
+          <Clock className="h-4 w-4 shrink-0 text-brand-text" />
           <span className="tabular-nums">{copy.ruleBadge}</span>
         </div>
       </div>
 
-      {/* Main Split: Inputs (5 cols) + Diagnosis & Timeline (7 cols) */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-start">
-        {/* Left Form */}
-        <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-6 lg:col-span-5">
+      {/* 1. Parte Superior — 2 Colunas Lado a Lado (5 + 7 = 12 colunas no lg+, coluna única < 1024px) */}
+      <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
+        {/* Coluna 1 (Esquerda — lg:col-span-5): Dados da sua motocicleta + Botão Baixar informações */}
+        <div className="space-y-3 lg:col-span-5">
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-6">
           <div className="flex items-center justify-between gap-2 border-b border-border pb-3.5">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex h-8 w-8 items-center justify-center rounded-xl bg-brand-soft text-brand-text">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <span className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-text">
                 <Calculator className="h-4 w-4" />
               </span>
-              <h3 className="font-display text-base font-bold text-ink">{t.formTitle}</h3>
+              <h3 className="truncate font-display text-base font-bold text-ink">
+                {t.formTitle}
+              </h3>
             </div>
             {hasAnyTypedInput && (
               <button
                 type="button"
                 onClick={handleClear}
-                className="inline-flex items-center gap-1 rounded-lg px-2.5 py-1 text-xs font-semibold text-ink-muted transition-colors hover:bg-surface hover:text-ink"
+                className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm font-medium text-gray-600 transition-colors hover:bg-surface hover:text-ink dark:text-gray-300"
               >
-                <RotateCcw className="h-3 w-3" />
+                <RotateCcw className="h-3.5 w-3.5" />
                 {t.clearBtn}
               </button>
             )}
@@ -769,7 +813,7 @@ export function RevisionCalculatorSection({
             <div>
               <label
                 htmlFor="calc-model-select"
-                className="mb-1.5 block text-xs font-semibold text-ink"
+                className="mb-1.5 block text-sm font-semibold text-ink"
               >
                 {t.modelLabel}
               </label>
@@ -813,7 +857,7 @@ export function RevisionCalculatorSection({
                     <p className="truncate font-display text-sm font-bold text-ink">
                       Honda {selectedModel.name}
                     </p>
-                    <p className="text-xs text-ink-muted">
+                    <p className="text-sm font-normal text-gray-600 dark:text-gray-300">
                       {segments.find((s) => s.slug === selectedModel.segment_slug)?.name || 'Honda'}
                     </p>
                   </div>
@@ -825,12 +869,12 @@ export function RevisionCalculatorSection({
             <div>
               <label
                 htmlFor="calc-current-km"
-                className="mb-1.5 block text-xs font-semibold text-ink"
+                className="mb-1.5 block text-sm font-semibold text-ink"
               >
                 {t.kmLabel} <span className="text-brand-text">*</span>
               </label>
               <div className="relative">
-                <Gauge className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+                <Gauge className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600 dark:text-gray-300" />
                 <input
                   id="calc-current-km"
                   type="text"
@@ -840,18 +884,18 @@ export function RevisionCalculatorSection({
                   onChange={(e) => handleKmChange(e.target.value)}
                   placeholder={t.kmPlaceholder}
                   aria-invalid={Boolean(validation.kmError)}
-                  className={`w-full rounded-xl border bg-surface py-2.5 pl-10 pr-12 font-mono text-sm font-semibold text-ink tabular-nums placeholder:font-sans placeholder:font-normal placeholder:text-ink-muted focus:bg-card focus:outline-none ${
+                  className={`w-full rounded-xl border bg-surface py-2.5 pl-10 pr-12 font-mono text-sm font-semibold text-ink tabular-nums placeholder:font-sans placeholder:font-normal placeholder:text-gray-600 dark:placeholder:text-gray-300 focus:bg-card focus:outline-none ${
                     validation.kmError
                       ? 'border-brand ring-1 ring-brand/30'
                       : 'border-border focus:border-brand'
                   }`}
                 />
-                <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold uppercase text-ink-muted">
+                <span className="pointer-events-none absolute right-3.5 top-1/2 -translate-y-1/2 text-xs font-bold uppercase text-gray-600 dark:text-gray-300">
                   km
                 </span>
               </div>
               {validation.kmError && (
-                <p role="alert" className="mt-1.5 text-xs font-semibold text-brand-text">
+                <p role="alert" className="mt-1.5 text-sm font-semibold text-brand-text">
                   {validation.kmError}
                 </p>
               )}
@@ -861,12 +905,12 @@ export function RevisionCalculatorSection({
             <div>
               <label
                 htmlFor="calc-sale-date"
-                className="mb-1.5 block text-xs font-semibold text-ink"
+                className="mb-1.5 block text-sm font-semibold text-ink"
               >
                 {t.saleDateLabel} <span className="text-brand-text">*</span>
               </label>
               <div className="relative">
-                <Calendar className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
+                <Calendar className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-600 dark:text-gray-300" />
                 <input
                   id="calc-sale-date"
                   type="date"
@@ -881,9 +925,11 @@ export function RevisionCalculatorSection({
                   }`}
                 />
               </div>
-              <p className="mt-1.5 text-[11px] leading-snug text-ink-muted">{copy.saleDateHelp}</p>
+              <p className="mt-1.5 text-sm font-normal leading-relaxed text-gray-600 dark:text-gray-300">
+                {copy.saleDateHelp}
+              </p>
               {validation.dateError && (
-                <p role="alert" className="mt-1 text-xs font-semibold text-brand-text">
+                <p role="alert" className="mt-1 text-sm font-semibold text-brand-text">
                   {validation.dateError}
                 </p>
               )}
@@ -891,471 +937,674 @@ export function RevisionCalculatorSection({
           </div>
         </div>
 
-        {/* Right Diagnosis & Timeline */}
-        <div className="space-y-5 lg:col-span-7">
-          {!calculation || !targetWarrantyMeta ? (
-            <div className="rounded-2xl border border-border bg-card p-6 sm:p-8">
-              <div className="flex items-start gap-3.5">
-                <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-text">
-                  <Wrench className="h-5 w-5" />
-                </span>
-                <div>
-                  <h3 className="font-display text-lg font-bold text-ink">{t.emptyTitle}</h3>
-                  <p className="mt-1 text-sm leading-relaxed text-ink-muted">{t.emptyDesc}</p>
+        {canShowDownloadInfoBtn && (
+          <button
+            type="button"
+            onClick={handleDownloadScheduleImage}
+            disabled={isDownloadingInfo}
+            className="inline-flex w-full items-center justify-center gap-2.5 whitespace-nowrap rounded-2xl border border-brand/25 bg-brand px-5 py-3.5 text-sm font-bold text-on-brand shadow-[0_2px_10px_rgba(200,16,46,0.18)] transition-all hover:bg-brand-hover disabled:cursor-wait disabled:opacity-75"
+          >
+            {isDownloadingInfo ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            <span>{isDownloadingInfo ? t.downloadingInfoBtn : t.downloadInfoBtn}</span>
+          </button>
+        )}
+        </div>
+
+        {/* Coluna 2 (Direita — lg:col-span-7): Linha do tempo das revisões Honda (ou estado inicial) */}
+        {!calculation || !targetWarrantyMeta ? (
+          <div className="rounded-2xl border border-border bg-card p-6 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-8 lg:col-span-7">
+            <div className="flex items-start gap-3.5">
+              <span className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-text">
+                <Wrench className="h-5 w-5" />
+              </span>
+              <div>
+                <h3 className="font-display text-lg font-bold text-ink">{t.emptyTitle}</h3>
+                <p className="mt-1 text-sm font-normal leading-relaxed text-gray-600 dark:text-gray-300 sm:text-[15px]">
+                  {t.emptyDesc}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <div className="rounded-xl border border-border bg-surface p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
+                  {t.ruleCard1Title}
+                </p>
+                <p className="mt-1 font-display text-sm font-bold text-ink tabular-nums sm:text-[15px]">
+                  {copy.rule1Desc}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-surface p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
+                  {t.ruleCard2Title}
+                </p>
+                <p className="mt-1 font-display text-sm font-bold text-ink tabular-nums sm:text-[15px]">
+                  {copy.rule2Desc}
+                </p>
+              </div>
+              <div className="rounded-xl border border-border bg-surface p-4">
+                <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
+                  {t.ruleCardNTitle}
+                </p>
+                <p className="mt-1 font-display text-sm font-bold text-ink tabular-nums sm:text-[15px]">
+                  {copy.ruleNDesc}
+                </p>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-6 lg:col-span-7">
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3.5">
+              <div>
+                <h4 className="font-display text-base font-bold text-ink sm:text-lg">
+                  {t.timelineTitle}
+                </h4>
+                <p className="mt-1 text-sm font-normal leading-relaxed text-gray-600 dark:text-gray-300">
+                  {copy.timelineHint}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 divide-y divide-border">
+              {calculation.timeline.map((item) => {
+                const isCurrentTarget =
+                  item.revisionNumber === calculation.targetRevision.revisionNumber;
+                const localizedLabel = translateRevisionLabel(
+                  item.revisionNumber,
+                  `${item.revisionNumber}ª Revisão`,
+                  language
+                );
+                return (
+                  <div
+                    key={item.revisionNumber}
+                    className={`flex flex-col justify-between gap-2.5 py-3 sm:flex-row sm:items-center ${
+                      isCurrentTarget ? 'my-1 rounded-xl bg-brand-soft/45 px-3' : 'px-1'
+                    }`}
+                  >
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span
+                        className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-display text-xs font-extrabold tabular-nums ${
+                          item.status === 'completed'
+                            ? 'bg-surface-neutral text-gray-600 dark:text-gray-300'
+                            : isCurrentTarget || item.status === 'overdue'
+                              ? 'bg-brand text-on-brand'
+                              : item.warrantyState === 'warning'
+                                ? 'bg-amber-600 text-white'
+                                : 'border border-border bg-surface text-ink'
+                        }`}
+                      >
+                        {item.revisionNumber}ª
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-display text-sm font-bold text-ink sm:text-[15px] tabular-nums">
+                          {localizedLabel} · {formatKmPT(item.targetKm)} km
+                        </p>
+                        <p className="mt-0.5 text-sm font-normal leading-snug text-gray-600 dark:text-gray-300 tabular-nums">
+                          {t.dueDateLabel} {item.targetDateBR} ·{' '}
+                          {item.kmToleranceExceeded
+                            ? `+${formatKmPT(item.kmExceededMaxTolerance)} km`
+                            : item.toleranceZone === 'tolerance_grace'
+                              ? `+${formatKmPT(item.kmExceeded)} km (${t.badgeTolerance})`
+                              : `${t.remainingPrefix} ${formatKmPT(item.kmRemaining)} km`}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2 pl-11 sm:pl-0">
+                      <span
+                        className={`inline-flex shrink-0 items-center whitespace-nowrap rounded-md px-2.5 py-1 text-[13.5px] font-medium sm:text-sm ${
+                          item.status === 'completed'
+                            ? 'bg-surface-neutral text-gray-600 dark:text-gray-300'
+                            : item.status === 'overdue'
+                              ? 'bg-brand-soft font-semibold text-brand-text'
+                              : item.toleranceZone === 'tolerance_grace' ||
+                                  item.warrantyState === 'warning'
+                                ? 'bg-amber-500/15 font-semibold text-amber-800 dark:text-amber-300'
+                                : item.toleranceZone === 'ideal_window' ||
+                                    isCurrentTarget ||
+                                    item.status === 'upcoming'
+                                  ? 'bg-emerald-500/15 font-semibold text-emerald-800 dark:text-emerald-300'
+                                  : 'border border-border bg-surface text-gray-600 dark:text-gray-300'
+                        }`}
+                      >
+                        {item.status === 'completed'
+                          ? t.badgeDone
+                          : item.status === 'overdue'
+                            ? `${t.badgeOverdue} (${getCriterionLabel(item.firstCriterion)})`
+                            : item.toleranceZone === 'tolerance_grace'
+                              ? t.badgeTolerance
+                              : item.toleranceZone === 'ideal_window'
+                                ? t.badgeIdeal
+                                : item.warrantyState === 'warning'
+                                  ? `${t.badgeWarning} · ${t.badgeNext}`
+                                  : isCurrentTarget || item.status === 'upcoming'
+                                    ? t.badgeNext
+                                    : t.badgeFuture}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 2. Parte Inferior (Abaixo das 2 colunas) — Informações sobre a moto e revisão */}
+      {calculation && targetWarrantyMeta && (
+        <div className="mt-6 w-full space-y-5">
+          {/* Card de alerta de revisão vencida / fora do prazo */}
+          {calculation.pendingAlertRevision && (
+            <div className="rounded-2xl border border-brand/55 bg-brand-soft/65 p-5 sm:p-6">
+              <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
+                <div className="flex items-start gap-3">
+                  <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-brand-text" />
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center rounded-md bg-brand px-2.5 py-0.5 text-xs font-bold text-on-brand">
+                        {t.statusOverdue}
+                      </span>
+                      <span className="text-sm font-medium text-gray-600 dark:text-gray-300">
+                        {getCriterionLabel(calculation.pendingAlertRevision.firstCriterion)}
+                      </span>
+                    </div>
+                    <p className="mt-2 font-display text-base font-extrabold text-ink sm:text-lg">
+                      {t.alertTitle(calculation.pendingAlertRevision.revisionNumber)}
+                    </p>
+                    <p className="mt-1 text-sm font-normal leading-relaxed text-ink sm:text-[15px]">
+                      {renderCriterionSummaryText(calculation.pendingAlertRevision)}
+                    </p>
+                    <p className="mt-2 text-sm font-semibold leading-relaxed text-brand-text">
+                      {copy.warrantyOverdue}
+                    </p>
+                  </div>
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
-                <div className="rounded-xl border border-border bg-surface p-3.5">
-                  <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
-                    {t.ruleCard1Title}
-                  </p>
-                  <p className="mt-1 font-display text-sm font-bold text-ink tabular-nums">
-                    {copy.rule1Desc}
-                  </p>
+              <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-brand/20 pt-3.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    handleOpenWhatsAppModalForSnapshot(calculation.pendingAlertRevision!)
+                  }
+                  className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-whatsapp px-4 py-2.5 text-sm font-bold text-on-whatsapp shadow-xs transition-colors hover:bg-whatsapp-hover"
+                >
+                  <WhatsAppIcon className="h-4 w-4" />
+                  {t.bookOverdueWhatsAppBtn(calculation.pendingAlertRevision.revisionNumber)}
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setDismissedOverdueRevision(calculation.pendingAlertRevision!.revisionNumber)
+                  }
+                  className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-brand/40 bg-card px-4 py-2.5 text-sm font-bold text-ink transition-colors hover:border-brand hover:text-brand-text"
+                >
+                  <CheckCircle2 className="h-4 w-4 text-brand-text" />
+                  {t.alertConfirmBtn(calculation.pendingAlertRevision.revisionNumber)}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Card principal da próxima revisão */}
+          <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="inline-flex items-center rounded-md bg-brand px-2.5 py-1 font-display text-xs font-extrabold uppercase tracking-wider text-on-brand">
+                    {calculation.targetRevision.revisionNumber}ª Revisão
+                  </span>
+                  <span
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold sm:text-[13px] ${targetWarrantyMeta.badgeClass}`}
+                  >
+                    <TargetStatusIcon className="h-3.5 w-3.5" />
+                    {targetWarrantyMeta.title}
+                  </span>
                 </div>
-                <div className="rounded-xl border border-border bg-surface p-3.5">
-                  <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
-                    {t.ruleCard2Title}
-                  </p>
-                  <p className="mt-1 font-display text-sm font-bold text-ink tabular-nums">
-                    {copy.rule2Desc}
-                  </p>
+
+                <h3 className="mt-2.5 font-display text-xl font-extrabold tracking-tight text-ink sm:text-2xl tabular-nums">
+                  {formatKmPT(calculation.targetRevision.targetKm)} km ou{' '}
+                  {calculation.targetRevision.targetMonths} meses
+                </h3>
+                <p className="mt-1.5 text-sm font-normal leading-relaxed text-gray-600 dark:text-gray-300 sm:text-[15px] tabular-nums">
+                  {t.sinceSaleLabel(
+                    calculation.currentKm,
+                    calculation.monthsSinceSale.months,
+                    calculation.monthsSinceSale.days
+                  )}
+                </p>
+              </div>
+
+              <div className="w-full rounded-xl border border-border bg-surface px-4 py-2.5 text-left sm:w-auto sm:text-right">
+                <p className="text-xs font-semibold uppercase tracking-wider text-gray-600 dark:text-gray-300">
+                  {t.decisivePrefix}
+                </p>
+                <p className="mt-0.5 font-display text-sm font-extrabold text-brand-text sm:text-[15px]">
+                  {getCriterionLabel(calculation.targetRevision.firstCriterion)}
+                </p>
+              </div>
+            </div>
+
+            {/* Aviso de Garantia e Tolerância por Estado */}
+            <div
+              className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${targetWarrantyMeta.cardClass}`}
+            >
+              <TargetStatusIcon
+                className={`mt-0.5 h-5 w-5 shrink-0 ${targetWarrantyMeta.iconClass}`}
+              />
+              <div className="space-y-1.5 text-sm leading-relaxed text-ink sm:text-[15px]">
+                <p className="font-semibold">
+                  {renderCriterionSummaryText(calculation.targetRevision)}
+                </p>
+                <p className="font-normal text-gray-600 dark:text-gray-300">
+                  {targetWarrantyMeta.notice}
+                </p>
+              </div>
+            </div>
+
+            {/* Dual Comparison: Marco por Quilometragem vs Marco por Tempo */}
+            <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
+              {/* Marco por Quilometragem */}
+              <div
+                className={`rounded-xl border p-4 transition-colors ${
+                  calculation.targetRevision.firstCriterion === 'km' ||
+                  calculation.targetRevision.firstCriterion === 'both'
+                    ? 'border-brand/60 bg-brand-soft/30'
+                    : 'border-border bg-surface'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-ink">
+                    <Gauge className="h-4 w-4 text-brand-text" />
+                    {t.kmCardTitle}
+                  </span>
+                  <span className="font-mono text-sm font-bold text-ink tabular-nums">
+                    {Math.min(100, calculation.targetRevision.kmCyclePercent).toFixed(0)}%
+                  </span>
                 </div>
-                <div className="rounded-xl border border-border bg-surface p-3.5">
-                  <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
-                    {t.ruleCardNTitle}
-                  </p>
-                  <p className="mt-1 font-display text-sm font-bold text-ink tabular-nums">
-                    {copy.ruleNDesc}
-                  </p>
+
+                <p className="mt-2.5 font-display text-lg font-extrabold text-ink tabular-nums">
+                  {calculation.targetRevision.kmToleranceExceeded
+                    ? `${t.exceededPrefix} ${formatKmPT(calculation.targetRevision.kmExceededMaxTolerance)} km do teto`
+                    : calculation.targetRevision.toleranceZone === 'tolerance_grace'
+                      ? `Restam ${formatKmPT(calculation.targetRevision.kmUntilMaxTolerance)} km (tolerância)`
+                      : `${t.remainingPrefix} ${formatKmPT(calculation.targetRevision.kmRemaining)} km`}
+                </p>
+
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-border">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      calculation.targetRevision.kmToleranceExceeded
+                        ? 'bg-brand'
+                        : calculation.targetRevision.toleranceZone === 'tolerance_grace'
+                          ? 'bg-amber-600'
+                          : calculation.targetRevision.firstCriterion === 'km'
+                            ? 'bg-brand'
+                            : 'bg-ink/70'
+                    }`}
+                    style={{
+                      width: `${Math.min(100, Math.max(4, calculation.targetRevision.kmCyclePercent))}%`,
+                    }}
+                  />
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-normal text-gray-600 dark:text-gray-300 tabular-nums">
+                  <span>
+                    {t.currentKmLabel} {formatKmPT(calculation.currentKm)} km
+                  </span>
+                  <span>
+                    Janela: {formatKmPT(calculation.targetRevision.minIdealKm)}–
+                    {formatKmPT(calculation.targetRevision.maxToleranceKm)} km
+                  </span>
+                </div>
+              </div>
+
+              {/* Marco por Tempo */}
+              <div
+                className={`rounded-xl border p-4 transition-colors ${
+                  calculation.targetRevision.firstCriterion === 'time' ||
+                  calculation.targetRevision.firstCriterion === 'both'
+                    ? 'border-brand/60 bg-brand-soft/30'
+                    : 'border-border bg-surface'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-ink">
+                    <Calendar className="h-4 w-4 text-brand-text" />
+                    {t.timeCardTitle}
+                  </span>
+                  <span className="font-mono text-sm font-bold text-ink tabular-nums">
+                    {Math.min(100, calculation.targetRevision.timeCyclePercent).toFixed(0)}%
+                  </span>
+                </div>
+
+                <p className="mt-2.5 font-display text-lg font-extrabold text-ink tabular-nums">
+                  {calculation.targetRevision.timeExpired
+                    ? `${t.overdueTimePrefix} ${formatDurationBreakdown(
+                        calculation.targetRevision.timeExceededBreakdown
+                      )}`
+                    : calculation.targetRevision.timeReached
+                      ? t.todayDue
+                      : `${t.remainingPrefix} ${formatDurationBreakdown(
+                          calculation.targetRevision.timeRemainingBreakdown
+                        )}`}
+                </p>
+
+                <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-border">
+                  <div
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      calculation.targetRevision.timeExpired ||
+                      calculation.targetRevision.firstCriterion === 'time'
+                        ? 'bg-brand'
+                        : 'bg-ink/70'
+                    }`}
+                    style={{
+                      width: `${Math.min(100, Math.max(4, calculation.targetRevision.timeCyclePercent))}%`,
+                    }}
+                  />
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-sm font-normal text-gray-600 dark:text-gray-300 tabular-nums">
+                  <span>
+                    {t.saleLabel} {calculation.saleDateBR}
+                  </span>
+                  <span>
+                    {t.dueDateLabel} {calculation.targetRevision.targetDateBR}
+                  </span>
                 </div>
               </div>
             </div>
-          ) : (
-            <>
-              {/* Estado 3 proeminente quando ciclo anterior teve teto ou data ultrapassados */}
-              {calculation.pendingAlertRevision && (
-                <div className="rounded-2xl border border-brand/55 bg-brand-soft/65 p-4 sm:p-5">
-                  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-start">
-                    <div className="flex items-start gap-3">
-                      <ShieldAlert className="mt-0.5 h-5 w-5 shrink-0 text-brand-text" />
-                      <div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="inline-flex items-center rounded-md bg-brand px-2.5 py-0.5 text-[11px] font-bold text-on-brand">
-                            {t.statusOverdue}
-                          </span>
-                          <span className="text-xs font-semibold text-ink-muted">
-                            {getCriterionLabel(calculation.pendingAlertRevision.firstCriterion)}
-                          </span>
-                        </div>
-                        <p className="mt-1.5 font-display text-base font-extrabold text-ink">
-                          {t.alertTitle(calculation.pendingAlertRevision.revisionNumber)}
-                        </p>
-                        <p className="mt-1 text-xs leading-relaxed text-ink">
-                          {renderCriterionSummaryText(calculation.pendingAlertRevision)}
-                        </p>
-                        <p className="mt-2 text-xs font-semibold leading-relaxed text-brand-text">
-                          {copy.warrantyOverdue}
-                        </p>
+
+            {/* Itens e Estimativa + Botões WhatsApp / Tabela */}
+            <div className="mt-5 rounded-xl border border-border bg-surface p-4 sm:p-5">
+              {selectedModel && modelEstimate && targetRevisionNumber ? (
+                <div className="space-y-4">
+                  <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                    <div>
+                      <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
+                        {t.estimateTitle(targetRevisionNumber, selectedModel.name)}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-baseline gap-2.5">
+                        <span className="font-display text-2xl font-extrabold text-ink tabular-nums">
+                          {formatBRL(modelEstimate.totalWithOptionals)}
+                        </span>
+                        <span className="text-sm font-normal text-gray-600 dark:text-gray-300 tabular-nums">
+                          ({modelEstimate.items.length}{' '}
+                          {modelEstimate.items.length === 1 ? 'item' : 'itens'} ·{' '}
+                          {isFreeLaborRevision(targetRevisionNumber)
+                            ? laborTexts.freeBadge
+                            : `${laborTexts.laborItemLabel}: ${formatBRL(modelEstimate.laborCost)}`}
+                          )
+                        </span>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="mt-4 flex flex-wrap items-center gap-2.5 border-t border-brand/20 pt-3.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleOpenWhatsAppModalForSnapshot(calculation.pendingAlertRevision!)
-                      }
-                      className="inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-whatsapp px-4 py-2 text-xs font-bold text-on-whatsapp shadow-xs transition-colors hover:bg-whatsapp-hover"
-                    >
-                      <WhatsAppIcon className="h-3.5 w-3.5" />
-                      {t.bookOverdueWhatsAppBtn(calculation.pendingAlertRevision.revisionNumber)}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setDismissedOverdueRevision(
-                          calculation.pendingAlertRevision!.revisionNumber
-                        )
-                      }
-                      className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-xl border border-brand/40 bg-card px-3.5 py-2 text-xs font-bold text-ink transition-colors hover:border-brand hover:text-brand-text"
-                    >
-                      <CheckCircle2 className="h-3.5 w-3.5 text-brand-text" />
-                      {t.alertConfirmBtn(calculation.pendingAlertRevision.revisionNumber)}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Primary Target Revision Card */}
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border pb-4">
-                  <div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="inline-flex items-center rounded-md bg-brand px-2.5 py-1 font-display text-xs font-extrabold uppercase tracking-wider text-on-brand">
-                        {calculation.targetRevision.revisionNumber}ª Revisão
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold ${targetWarrantyMeta.badgeClass}`}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          onViewModelInTable(selectedModel.id, targetRevisionNumber)
+                        }
+                        className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-card px-3.5 py-2.5 text-sm font-bold text-ink transition-colors hover:border-brand hover:text-brand-text"
                       >
-                        <TargetStatusIcon className="h-3.5 w-3.5" />
-                        {targetWarrantyMeta.title}
-                      </span>
-                    </div>
-
-                    <h3 className="mt-2.5 font-display text-xl font-extrabold tracking-tight text-ink sm:text-2xl tabular-nums">
-                      {formatKmPT(calculation.targetRevision.targetKm)} km ou{' '}
-                      {calculation.targetRevision.targetMonths} meses
-                    </h3>
-                    <p className="mt-1 text-xs text-ink-muted tabular-nums">
-                      {t.sinceSaleLabel(
-                        calculation.currentKm,
-                        calculation.monthsSinceSale.months,
-                        calculation.monthsSinceSale.days
-                      )}
-                    </p>
-                  </div>
-
-                  <div className="rounded-xl border border-border bg-surface px-3.5 py-2.5 text-left sm:text-right">
-                    <p className="text-[11px] font-bold uppercase tracking-wider text-ink-muted">
-                      {t.decisivePrefix}
-                    </p>
-                    <p className="mt-0.5 font-display text-sm font-extrabold text-brand-text">
-                      {getCriterionLabel(calculation.targetRevision.firstCriterion)}
-                    </p>
-                  </div>
-                </div>
-
-                {/* Aviso de Garantia e Tolerância por Estado */}
-                <div
-                  className={`mt-4 flex items-start gap-2.5 rounded-xl border p-3.5 ${targetWarrantyMeta.cardClass}`}
-                >
-                  <TargetStatusIcon
-                    className={`mt-0.5 h-4 w-4 shrink-0 ${targetWarrantyMeta.iconClass}`}
-                  />
-                  <div className="space-y-1 text-xs leading-relaxed text-ink">
-                    <p className="font-semibold">
-                      {renderCriterionSummaryText(calculation.targetRevision)}
-                    </p>
-                    <p className="text-ink-muted">{targetWarrantyMeta.notice}</p>
-                  </div>
-                </div>
-
-                {/* Dual Comparison: KM vs Tempo */}
-                <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                  {/* Marco por Quilometragem */}
-                  <div
-                    className={`rounded-xl border p-4 transition-colors ${
-                      calculation.targetRevision.firstCriterion === 'km' ||
-                      calculation.targetRevision.firstCriterion === 'both'
-                        ? 'border-brand/60 bg-brand-soft/30'
-                        : 'border-border bg-surface'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-ink">
-                        <Gauge className="h-3.5 w-3.5 text-brand-text" />
-                        {t.kmCardTitle}
-                      </span>
-                      <span className="font-mono text-xs font-bold text-ink tabular-nums">
-                        {Math.min(100, calculation.targetRevision.kmCyclePercent).toFixed(0)}%
-                      </span>
-                    </div>
-
-                    <p className="mt-2.5 font-display text-lg font-extrabold text-ink tabular-nums">
-                      {calculation.targetRevision.kmToleranceExceeded
-                        ? `${t.exceededPrefix} ${formatKmPT(calculation.targetRevision.kmExceededMaxTolerance)} km do teto`
-                        : calculation.targetRevision.toleranceZone === 'tolerance_grace'
-                          ? `Restam ${formatKmPT(calculation.targetRevision.kmUntilMaxTolerance)} km (tolerância)`
-                          : `${t.remainingPrefix} ${formatKmPT(calculation.targetRevision.kmRemaining)} km`}
-                    </p>
-
-                    <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-border">
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          calculation.targetRevision.kmToleranceExceeded
-                            ? 'bg-brand'
-                            : calculation.targetRevision.toleranceZone === 'tolerance_grace'
-                              ? 'bg-amber-600'
-                              : calculation.targetRevision.firstCriterion === 'km'
-                                ? 'bg-brand'
-                                : 'bg-ink/70'
-                        }`}
-                        style={{
-                          width: `${Math.min(100, Math.max(4, calculation.targetRevision.kmCyclePercent))}%`,
-                        }}
-                      />
-                    </div>
-
-                    <div className="mt-2.5 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-[11px] text-ink-muted tabular-nums">
-                      <span>
-                        {t.currentKmLabel} {formatKmPT(calculation.currentKm)} km
-                      </span>
-                      <span>
-                        Janela: {formatKmPT(calculation.targetRevision.minIdealKm)}–
-                        {formatKmPT(calculation.targetRevision.maxToleranceKm)} km
-                      </span>
-                    </div>
-                  </div>
-
-                  {/* Marco por Tempo */}
-                  <div
-                    className={`rounded-xl border p-4 transition-colors ${
-                      calculation.targetRevision.firstCriterion === 'time' ||
-                      calculation.targetRevision.firstCriterion === 'both'
-                        ? 'border-brand/60 bg-brand-soft/30'
-                        : 'border-border bg-surface'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-ink">
-                        <Calendar className="h-3.5 w-3.5 text-brand-text" />
-                        {t.timeCardTitle}
-                      </span>
-                      <span className="font-mono text-xs font-bold text-ink tabular-nums">
-                        {Math.min(100, calculation.targetRevision.timeCyclePercent).toFixed(0)}%
-                      </span>
-                    </div>
-
-                    <p className="mt-2.5 font-display text-lg font-extrabold text-ink tabular-nums">
-                      {calculation.targetRevision.timeExpired
-                        ? `${t.overdueTimePrefix} ${formatDurationBreakdown(
-                            calculation.targetRevision.timeExceededBreakdown
-                          )}`
-                        : calculation.targetRevision.timeReached
-                          ? t.todayDue
-                          : `${t.remainingPrefix} ${formatDurationBreakdown(
-                              calculation.targetRevision.timeRemainingBreakdown
-                            )}`}
-                    </p>
-
-                    <div className="mt-2.5 h-2 w-full overflow-hidden rounded-full bg-border">
-                      <div
-                        className={`h-full rounded-full transition-all duration-300 ${
-                          calculation.targetRevision.timeExpired ||
-                          calculation.targetRevision.firstCriterion === 'time'
-                            ? 'bg-brand'
-                            : 'bg-ink/70'
-                        }`}
-                        style={{
-                          width: `${Math.min(100, Math.max(4, calculation.targetRevision.timeCyclePercent))}%`,
-                        }}
-                      />
-                    </div>
-
-                    <div className="mt-2.5 flex items-center justify-between text-[11px] text-ink-muted tabular-nums">
-                      <span>
-                        {t.saleLabel} {calculation.saleDateBR}
-                      </span>
-                      <span>
-                        {t.dueDateLabel} {calculation.targetRevision.targetDateBR}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Integrated Model Parts Breakdown + WhatsApp Schedule Modal */}
-                <div className="mt-5 rounded-xl border border-border bg-surface p-4">
-                  {selectedModel && modelEstimate && targetRevisionNumber ? (
-                    <div className="space-y-3.5">
-                      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                        <div>
-                          <p className="text-xs font-bold uppercase tracking-wider text-brand-text">
-                            {t.estimateTitle(targetRevisionNumber, selectedModel.name)}
-                          </p>
-                          <div className="mt-1 flex flex-wrap items-baseline gap-2.5">
-                            <span className="font-display text-2xl font-extrabold text-ink tabular-nums">
-                              {formatBRL(modelEstimate.totalWithOptionals)}
-                            </span>
-                            <span className="text-xs text-ink-muted tabular-nums">
-                              ({modelEstimate.items.length}{' '}
-                              {modelEstimate.items.length === 1 ? 'item' : 'itens'} ·{' '}
-                              {isFreeLaborRevision(targetRevisionNumber)
-                                ? laborTexts.freeBadge
-                                : `${laborTexts.laborItemLabel}: ${formatBRL(modelEstimate.laborCost)}`}
-                              )
-                            </span>
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onViewModelInTable(selectedModel.id, targetRevisionNumber)
-                            }
-                            className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-xl border border-border bg-card px-3.5 py-2.5 text-xs font-bold text-ink transition-colors hover:border-brand hover:text-brand-text"
-                          >
-                            {t.viewTableBtn}
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleOpenWhatsAppModalForSnapshot(calculation.targetRevision)
-                            }
-                            className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-whatsapp px-4 py-2.5 text-xs font-bold text-on-whatsapp shadow-xs transition-colors hover:bg-whatsapp-hover"
-                          >
-                            <WhatsAppIcon className="h-3.5 w-3.5" />
-                            {t.bookWhatsAppBtn}
-                          </button>
-                        </div>
-                      </div>
-
-                      {sortedPreviewItems.length > 0 && (
-                        <ul className="divide-y divide-border/70 border-t border-border pt-2 text-xs">
-                          {sortedPreviewItems.slice(0, 5).map(({ revisionPart, part, lineTotal }) => {
-                            const desc = translatePartDescription(part.description, language);
-                            return (
-                              <li
-                                key={`${revisionPart.id}-${part.code}`}
-                                className="flex items-center justify-between gap-3 py-1.5 text-ink-muted"
-                              >
-                                <span className="min-w-0 truncate">
-                                  {desc}
-                                  {part.is_optional && !/\[opcional\]|\[optional\]/i.test(desc)
-                                    ? ' [Opcional]'
-                                    : ''}
-                                </span>
-                                <span className="shrink-0 font-semibold text-ink tabular-nums">
-                                  {formatBRL(lineTotal)}
-                                </span>
-                              </li>
-                            );
-                          })}
-                          {sortedPreviewItems.length > 5 && (
-                            <li className="pt-1.5 text-[11px] font-medium text-ink-muted">
-                              {t.moreItemsLabel(sortedPreviewItems.length - 5)}
-                            </li>
-                          )}
-                        </ul>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
-                      <div>
-                        <p className="text-xs font-bold uppercase tracking-wider text-ink">
-                          {t.estimateGenericTitle(calculation.targetRevision.revisionNumber)}
-                          {selectedModel ? ` · Honda ${selectedModel.name}` : ''}
-                        </p>
-                        <p className="mt-1 text-xs leading-relaxed text-ink-muted">
-                          {t.estimateGenericDesc}
-                        </p>
-                      </div>
+                        {t.viewTableBtn}
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
                       <button
                         type="button"
                         onClick={() =>
                           handleOpenWhatsAppModalForSnapshot(calculation.targetRevision)
                         }
-                        className="inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-whatsapp px-4 py-2.5 text-xs font-bold text-on-whatsapp shadow-xs transition-colors hover:bg-whatsapp-hover"
+                        className="inline-flex items-center gap-2 whitespace-nowrap rounded-xl bg-whatsapp px-4 py-2.5 text-sm font-bold text-on-whatsapp shadow-xs transition-colors hover:bg-whatsapp-hover"
                       >
-                        <WhatsAppIcon className="h-3.5 w-3.5" />
+                        <WhatsAppIcon className="h-4 w-4" />
                         {t.bookWhatsAppBtn}
-                        <ArrowRight className="h-3.5 w-3.5" />
                       </button>
                     </div>
+                  </div>
+
+                  {sortedPreviewItems.length > 0 && (
+                    <ul className="divide-y divide-border/70 border-t border-border pt-2">
+                      {sortedPreviewItems.slice(0, 5).map(({ revisionPart, part, lineTotal }) => {
+                        const desc = translatePartDescription(part.description, language);
+                        return (
+                          <li
+                            key={`${revisionPart.id}-${part.code}`}
+                            className="flex items-start justify-between gap-3 py-2.5 text-sm font-normal text-gray-600 dark:text-gray-300 sm:text-[15px]"
+                          >
+                            <span className="min-w-0 leading-snug">
+                              {desc}
+                              {part.is_optional && !/\[opcional\]|\[optional\]/i.test(desc)
+                                ? ' [Opcional]'
+                                : ''}
+                            </span>
+                            <span className="shrink-0 font-semibold text-ink tabular-nums">
+                              {formatBRL(lineTotal)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                      {sortedPreviewItems.length > 5 && (
+                        <li className="pt-2.5 text-sm font-normal text-gray-600 dark:text-gray-300">
+                          {t.moreItemsLabel(sortedPreviewItems.length - 5)}
+                        </li>
+                      )}
+                    </ul>
                   )}
                 </div>
+              ) : (
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                  <div>
+                    <p className="text-xs font-bold uppercase tracking-wider text-ink">
+                      {t.estimateGenericTitle(calculation.targetRevision.revisionNumber)}
+                      {selectedModel ? ` · Honda ${selectedModel.name}` : ''}
+                    </p>
+                    <p className="mt-1.5 text-sm font-normal leading-relaxed text-gray-600 dark:text-gray-300">
+                      {t.estimateGenericDesc}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      handleOpenWhatsAppModalForSnapshot(calculation.targetRevision)
+                    }
+                    className="inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-xl bg-whatsapp px-4 py-2.5 text-sm font-bold text-on-whatsapp shadow-xs transition-colors hover:bg-whatsapp-hover"
+                  >
+                    <WhatsAppIcon className="h-4 w-4" />
+                    {t.bookWhatsAppBtn}
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Folha isolada fora da tela para exportação PNG limpa (A4 / WhatsApp, fundo branco para economia de tinta) */}
+      {canShowDownloadInfoBtn && calculation && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed left-[-10000px] top-0 z-[-1] overflow-visible"
+        >
+          <div
+            ref={printSheetRef}
+            style={{
+              width: '794px',
+              backgroundColor: '#FFFFFF',
+              color: '#111827',
+              fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+            }}
+            className="border border-[#E5E7EB] p-8"
+          >
+            {/* Cabeçalho com Logo da Empresa */}
+            <div className="border-b-2 border-[#C8102E] pb-5">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  {logoUrl && logoImgFailed !== logoUrl && (
+                    <img
+                      src={logoUrl}
+                      alt={logoAlt || 'RODALEVE'}
+                      referrerPolicy="no-referrer"
+                      onError={() => setLogoImgFailed(logoUrl)}
+                      className="mb-2.5 h-10 w-auto max-w-[220px] object-contain object-left"
+                    />
+                  )}
+                  <p className="text-xs font-bold uppercase tracking-widest text-[#C8102E]">
+                    RODALEVE · CONCESSIONÁRIA AUTORIZADA HONDA
+                  </p>
+                  <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-[#111827]">
+                    Cronograma de Revisões Honda - Rodaleve
+                  </h2>
+                </div>
+                <span className="shrink-0 rounded-lg border border-[#E5E7EB] bg-[#F9FAFB] px-3 py-1.5 text-xs font-semibold text-[#4B5563]">
+                  Emitido em {todayISO.split('-').reverse().join('/')}
+                </span>
               </div>
 
-              {/* Linha do tempo das revisões Honda (1ª até 9ª Revisão, sem / Xm) */}
-              <div className="rounded-2xl border border-border bg-card p-5 shadow-[0_2px_10px_rgba(17,24,39,0.04)] sm:p-6">
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3.5">
+              {/* Quadro de Resumo da Moto com miniatura à esquerda de MODELO */}
+              <div className="mt-4 flex items-center gap-4 rounded-xl border border-[#E5E7EB] bg-[#F9FAFB] p-4">
+                {selectedModel && selectedModelImg && (
+                  <div className="flex h-16 w-24 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[#E5E7EB] bg-[#FFFFFF] p-1.5">
+                    <img
+                      src={selectedModelImg}
+                      alt={`Honda ${selectedModel.name}`}
+                      referrerPolicy="no-referrer"
+                      className="h-full w-full object-contain"
+                    />
+                  </div>
+                )}
+                <div className="grid flex-1 grid-cols-3 gap-4">
                   <div>
-                    <h4 className="font-display text-base font-bold text-ink">
-                      {t.timelineTitle}
-                    </h4>
-                    <p className="text-xs text-ink-muted">{copy.timelineHint}</p>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">
+                      MODELO
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold text-[#111827]">
+                      {selectedModel ? `Honda ${selectedModel.name}` : t.genericLabel}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">
+                      Quilometragem atual
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold text-[#111827] tabular-nums">
+                      {formatKmPT(calculation.currentKm)} km
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">
+                      Data de venda
+                    </p>
+                    <p className="mt-0.5 text-sm font-bold text-[#111827] tabular-nums">
+                      {calculation.saleDateBR}
+                    </p>
                   </div>
                 </div>
+              </div>
+            </div>
 
-                <div className="mt-4 divide-y divide-border">
-                  {calculation.timeline.map((item) => {
-                    const isCurrentTarget =
-                      item.revisionNumber === calculation.targetRevision.revisionNumber;
-                    const localizedLabel = translateRevisionLabel(
-                      item.revisionNumber,
-                      `${item.revisionNumber}ª Revisão`,
-                      language
-                    );
-                    return (
-                      <div
-                        key={item.revisionNumber}
-                        className={`flex flex-col justify-between gap-2 py-3 sm:flex-row sm:items-center ${
-                          isCurrentTarget ? 'my-1 rounded-xl bg-brand-soft/45 px-3' : 'px-1'
-                        }`}
+            {/* Conteúdo Principal: Linha do tempo limpa (1ª à 9ª, apenas quadradinho + título + Data limite) */}
+            <div className="mt-6">
+              <div className="mb-3 flex items-baseline justify-between gap-2">
+                <h3 className="text-lg font-extrabold text-[#111827]">
+                  Linha do tempo das revisões Honda
+                </h3>
+                <p className="text-xs font-medium text-[#4B5563]">{copy.timelineHint}</p>
+              </div>
+
+              <div className="divide-y divide-[#E5E7EB] rounded-xl border border-[#E5E7EB] bg-[#FFFFFF]">
+                {calculation.timeline.map((item) => {
+                  const isCurrentTarget =
+                    item.revisionNumber === calculation.targetRevision.revisionNumber;
+                  const localizedLabel = translateRevisionLabel(
+                    item.revisionNumber,
+                    `${item.revisionNumber}ª Revisão`,
+                    language
+                  );
+
+                  const circleColors =
+                    item.status === 'completed'
+                      ? { bg: '#F3F4F6', text: '#4B5563', border: '#D1D5DB' }
+                      : isCurrentTarget || item.status === 'overdue'
+                        ? { bg: '#C8102E', text: '#FFFFFF', border: '#C8102E' }
+                        : item.warrantyState === 'warning'
+                          ? { bg: '#D97706', text: '#FFFFFF', border: '#D97706' }
+                          : { bg: '#FFFFFF', text: '#111827', border: '#D1D5DB' };
+
+                  return (
+                    <div
+                      key={`print-${item.revisionNumber}`}
+                      style={{
+                        backgroundColor: isCurrentTarget ? '#FEF2F2' : '#FFFFFF',
+                      }}
+                      className="flex items-center gap-3.5 px-4 py-3"
+                    >
+                      <span
+                        style={{
+                          backgroundColor: circleColors.bg,
+                          color: circleColors.text,
+                          borderColor: circleColors.border,
+                        }}
+                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border text-xs font-extrabold tabular-nums"
                       >
-                        <div className="flex items-center gap-3">
-                          <span
-                            className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg font-display text-xs font-extrabold tabular-nums ${
-                              item.status === 'completed'
-                                ? 'bg-surface-neutral text-ink-muted'
-                                : isCurrentTarget || item.status === 'overdue'
-                                  ? 'bg-brand text-on-brand'
-                                  : item.warrantyState === 'warning'
-                                    ? 'bg-amber-600 text-white'
-                                    : 'border border-border bg-surface text-ink'
-                            }`}
-                          >
-                            {item.revisionNumber}ª
-                          </span>
-                          <div>
-                            <p className="font-display text-sm font-bold text-ink tabular-nums">
-                              {localizedLabel} · {formatKmPT(item.targetKm)} km
-                            </p>
-                            <p className="text-xs text-ink-muted tabular-nums">
-                              {t.dueDateLabel} {item.targetDateBR} ·{' '}
-                              {item.kmToleranceExceeded
-                                ? `+${formatKmPT(item.kmExceededMaxTolerance)} km`
-                                : item.toleranceZone === 'tolerance_grace'
-                                  ? `+${formatKmPT(item.kmExceeded)} km (${t.badgeTolerance})`
-                                  : `${t.remainingPrefix} ${formatKmPT(item.kmRemaining)} km`}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 pl-11 sm:pl-0">
-                          <span
-                            className={`inline-flex items-center rounded-md px-2.5 py-1 text-[11px] font-bold ${
-                              item.status === 'completed'
-                                ? 'bg-surface-neutral text-ink-muted'
-                                : item.status === 'overdue'
-                                  ? 'bg-brand-soft text-brand-text'
-                                  : item.toleranceZone === 'tolerance_grace' ||
-                                      item.warrantyState === 'warning'
-                                    ? 'bg-amber-500/15 text-amber-800 dark:text-amber-300'
-                                    : item.toleranceZone === 'ideal_window' ||
-                                        isCurrentTarget ||
-                                        item.status === 'upcoming'
-                                      ? 'bg-emerald-500/15 text-emerald-800 dark:text-emerald-300'
-                                      : 'border border-border bg-surface text-ink-muted'
-                            }`}
-                          >
-                            {item.status === 'completed'
-                              ? t.badgeDone
-                              : item.status === 'overdue'
-                                ? `${t.badgeOverdue} (${getCriterionLabel(item.firstCriterion)})`
-                                : item.toleranceZone === 'tolerance_grace'
-                                  ? t.badgeTolerance
-                                  : item.toleranceZone === 'ideal_window'
-                                    ? t.badgeIdeal
-                                    : item.warrantyState === 'warning'
-                                      ? `${t.badgeWarning} · ${t.badgeNext}`
-                                      : isCurrentTarget || item.status === 'upcoming'
-                                        ? t.badgeNext
-                                        : t.badgeFuture}
-                          </span>
-                        </div>
+                        {item.revisionNumber}ª
+                      </span>
+                      <div className="min-w-0">
+                        <p className="text-sm font-bold text-[#111827] tabular-nums">
+                          {localizedLabel} · {formatKmPT(item.targetKm)} km
+                        </p>
+                        <p className="mt-0.5 text-xs font-medium text-[#4B5563] tabular-nums">
+                          {t.dueDateLabel} {item.targetDateBR}
+                        </p>
                       </div>
-                    );
-                  })}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Rodapé de Agendamento (Visual Profissional + Ícone WhatsApp) */}
+            <div
+              style={{
+                background: 'linear-gradient(90deg, #FFF5F5 0%, #FFFFFF 50%, #F0FDF4 100%)',
+                borderColor: '#E5E7EB',
+              }}
+              className="mt-6 flex items-center justify-between gap-4 rounded-xl border px-6 py-4"
+            >
+              <div className="flex items-center gap-3.5">
+                <span
+                  style={{ backgroundColor: '#25D366', color: '#FFFFFF' }}
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                >
+                  <WhatsAppIcon className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-[#6B7280]">
+                    Agendamento Rápido · Rodaleve Honda
+                  </p>
+                  <p className="mt-0.5 text-base font-extrabold tracking-tight text-[#111827]">
+                    Telefone para Agendamento:{' '}
+                    <span style={{ color: '#C8102E' }}>(77) 2888-0003 - WhatsApp</span>
+                  </p>
                 </div>
               </div>
-            </>
-          )}
+              <span
+                style={{
+                  backgroundColor: '#FEF2F2',
+                  color: '#C8102E',
+                  borderColor: '#FECACA',
+                }}
+                className="shrink-0 rounded-lg border px-3 py-1.5 text-xs font-bold"
+              >
+                Oficina Autorizada Honda
+              </span>
+            </div>
+          </div>
         </div>
+      )}
       </div>
     </section>
   );

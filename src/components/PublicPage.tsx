@@ -301,6 +301,8 @@ export function PublicPage({
   const [openFaqId, setOpenFaqId] = useState<number | null>(
     data.faqs?.[0]?.id ?? FALLBACK_EDITORIAL_FAQS[0].id
   );
+  const [faqSearchQuery, setFaqSearchQuery] = useState('');
+  const [showAllFaqs, setShowAllFaqs] = useState(false);
   const faqButtonRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const [legalModal, setLegalModal] = useState<'privacy' | 'terms' | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
@@ -1389,9 +1391,9 @@ export function PublicPage({
         return (
           <section
             id="hero-tabs"
-            className="border-b border-border bg-card py-10 sm:py-12"
+            className="w-full border-b border-border bg-card py-10 sm:py-12"
           >
-            <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+            <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
               <div className="flex flex-col justify-between gap-6 lg:flex-row lg:items-end">
                 <div className="max-w-2xl">
                   <EditableText
@@ -1424,7 +1426,7 @@ export function PublicPage({
                 </div>
 
                 {/* Seletor em pílula com três abas */}
-                <div className="inline-flex max-w-full flex-wrap items-center gap-1 self-start rounded-2xl border border-border bg-surface p-1 sm:flex-nowrap sm:rounded-full lg:self-end">
+                <div className="inline-flex max-w-full flex-wrap items-center gap-1 self-start rounded-2xl border border-border bg-surface p-1 sm:rounded-full lg:self-end">
                   <button
                     type="button"
                     onClick={() => {
@@ -1496,84 +1498,86 @@ export function PublicPage({
         if (heroTab !== 'tabela' && !isEditMode) return null;
         const promptAbove = getLocalizedContent('revisions_prompt_above');
         return (
-          <div className="mx-auto max-w-[1180px] px-4 pt-5 pb-1 sm:px-6 sm:pt-6 sm:pb-2">
-            <EditableText
-              as="p"
-              textKey="revisions_prompt_above"
-              defaultText={promptAbove.defaultText}
-              entry={promptAbove.entry}
-              isEditMode={isEditMode}
-              onCommit={handleCommitText}
-              className="mb-3 block text-sm font-semibold text-ink"
-            />
-            <div className="no-scrollbar flex flex-nowrap items-stretch gap-2 overflow-x-auto scroll-smooth py-1 lg:gap-1.5 lg:overflow-visible xl:gap-2">
-              {data.revision_tabs.map((tab) => {
-                const isSelected = selectedRevision === tab.revision_number;
-                const localizedTabLabel = translateRevisionLabel(
-                  tab.revision_number,
-                  tab.label,
-                  language
-                );
-                const localizedTabSub = translateRevisionSubtitle(tab.subtitle, language);
-                const savedTabLabel = vbConfig.siteContent[`rev_tab_label_${tab.revision_number}`];
-                const savedTabSub = vbConfig.siteContent[`rev_tab_sub_${tab.revision_number}`];
-                const labelEntry =
-                  language === 'pt'
-                    ? savedTabLabel
-                    : savedTabLabel && savedTabLabel.text.trim() !== tab.label.trim()
+          <section className="w-full bg-surface">
+            <div className="mx-auto w-full max-w-7xl px-4 pt-5 pb-1 sm:px-6 sm:pt-6 sm:pb-2 lg:px-8">
+              <EditableText
+                as="p"
+                textKey="revisions_prompt_above"
+                defaultText={promptAbove.defaultText}
+                entry={promptAbove.entry}
+                isEditMode={isEditMode}
+                onCommit={handleCommitText}
+                className="mb-3 block text-sm font-semibold text-ink"
+              />
+              <div className="no-scrollbar flex flex-nowrap items-stretch gap-2 overflow-x-auto scroll-smooth py-1 xl:overflow-visible">
+                {data.revision_tabs.map((tab) => {
+                  const isSelected = selectedRevision === tab.revision_number;
+                  const localizedTabLabel = translateRevisionLabel(
+                    tab.revision_number,
+                    tab.label,
+                    language
+                  );
+                  const localizedTabSub = translateRevisionSubtitle(tab.subtitle, language);
+                  const savedTabLabel = vbConfig.siteContent[`rev_tab_label_${tab.revision_number}`];
+                  const savedTabSub = vbConfig.siteContent[`rev_tab_sub_${tab.revision_number}`];
+                  const labelEntry =
+                    language === 'pt'
                       ? savedTabLabel
-                      : undefined;
-                const subEntry =
-                  language === 'pt'
-                    ? savedTabSub
-                    : savedTabSub && savedTabSub.text.trim() !== tab.subtitle.trim()
+                      : savedTabLabel && savedTabLabel.text.trim() !== tab.label.trim()
+                        ? savedTabLabel
+                        : undefined;
+                  const subEntry =
+                    language === 'pt'
                       ? savedTabSub
-                      : undefined;
+                      : savedTabSub && savedTabSub.text.trim() !== tab.subtitle.trim()
+                        ? savedTabSub
+                        : undefined;
 
-                return (
-                  <button
-                    key={tab.revision_number}
-                    type="button"
-                    onClick={() => {
-                      setSelectedRevision(tab.revision_number);
-                      trackAllPixelsViewContent(
-                        data.seo,
-                        {
-                          content_name: tab.label,
-                          content_category: 'Revisão Programada',
-                        },
-                        data.tracking_config
-                      );
-                    }}
-                    className={`inline-flex w-fit shrink-0 cursor-pointer flex-col items-start rounded-2xl border px-3 py-2 text-left transition-all duration-150 ease-out lg:min-w-0 lg:flex-1 lg:px-2 lg:py-2 xl:px-3 xl:py-2.5 ${
-                      isSelected
-                        ? 'border-brand bg-brand text-on-brand shadow-sm'
-                        : 'border-border bg-card text-ink hover:-translate-y-0.5 hover:border-brand/70 hover:shadow-sm'
-                    }`}
-                  >
-                    <EditableText
-                      textKey={`rev_tab_label_${tab.revision_number}`}
-                      defaultText={localizedTabLabel}
-                      entry={labelEntry}
-                      isEditMode={isEditMode}
-                      onCommit={handleCommitText}
-                      className="max-w-full truncate whitespace-nowrap font-display text-sm font-bold lg:text-[13px] xl:text-[15px]"
-                    />
-                    <EditableText
-                      textKey={`rev_tab_sub_${tab.revision_number}`}
-                      defaultText={localizedTabSub}
-                      entry={subEntry}
-                      isEditMode={isEditMode}
-                      onCommit={handleCommitText}
-                      className={`mt-0.5 max-w-full truncate whitespace-nowrap text-[11px] lg:text-[10px] xl:text-[11.5px] ${
-                        isSelected ? 'text-on-brand/90' : 'text-ink-muted'
+                  return (
+                    <button
+                      key={tab.revision_number}
+                      type="button"
+                      onClick={() => {
+                        setSelectedRevision(tab.revision_number);
+                        trackAllPixelsViewContent(
+                          data.seo,
+                          {
+                            content_name: tab.label,
+                            content_category: 'Revisão Programada',
+                          },
+                          data.tracking_config
+                        );
+                      }}
+                      className={`inline-flex min-w-[106px] shrink-0 cursor-pointer flex-col items-start rounded-2xl border px-3 py-2 text-left transition-all duration-150 ease-out xl:min-w-0 xl:flex-1 xl:px-3 xl:py-2.5 ${
+                        isSelected
+                          ? 'border-brand bg-brand text-on-brand shadow-sm'
+                          : 'border-border bg-card text-ink hover:-translate-y-0.5 hover:border-brand/70 hover:shadow-sm'
                       }`}
-                    />
-                  </button>
-                );
-              })}
+                    >
+                      <EditableText
+                        textKey={`rev_tab_label_${tab.revision_number}`}
+                        defaultText={localizedTabLabel}
+                        entry={labelEntry}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                        className="max-w-full truncate whitespace-nowrap font-display text-sm font-bold xl:text-[15px]"
+                      />
+                      <EditableText
+                        textKey={`rev_tab_sub_${tab.revision_number}`}
+                        defaultText={localizedTabSub}
+                        entry={subEntry}
+                        isEditMode={isEditMode}
+                        onCommit={handleCommitText}
+                        className={`mt-0.5 max-w-full truncate whitespace-nowrap text-[11px] xl:text-[11.5px] ${
+                          isSelected ? 'text-on-brand/90' : 'text-ink-muted'
+                        }`}
+                      />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          </section>
         );
       }
 
@@ -1581,55 +1585,57 @@ export function PublicPage({
         if (heroTab !== 'tabela' && !isEditMode) return null;
         const noticeSectionHtml = vbConfig.htmlOverrides?.['section_html_notice_box']?.trim();
         return (
-          <div className="mx-auto max-w-[1180px] px-4 pt-6 pb-1 sm:px-6 sm:pt-8 sm:pb-2">
-            <div
-              onClick={
-                activeHtmlEditMode
-                  ? () =>
+          <section className="w-full bg-surface">
+            <div className="mx-auto w-full max-w-7xl px-4 pt-6 pb-1 sm:px-6 sm:pt-8 sm:pb-2 lg:px-8">
+              <div
+                onClick={
+                  activeHtmlEditMode
+                    ? () =>
+                        openHtmlModalForKey(
+                          'section_html_notice_box',
+                          noticeSectionHtml || buildNoticeBoxDefaultHtml(vbConfig)
+                        )
+                    : undefined
+                }
+                className={`relative flex items-start gap-3.5 rounded-2xl border border-border bg-card/85 p-4 sm:p-5 ${
+                  activeHtmlEditMode
+                    ? 'cursor-pointer border-dashed border-brand/60 hover:border-brand hover:bg-brand-soft/25'
+                    : ''
+                }`}
+              >
+                <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-brand-text" />
+                <div className="min-w-0 flex-1 space-y-1.5 text-xs leading-relaxed text-ink-muted sm:text-sm">
+                  {noticeSectionHtml ? (
+                    <SafeHtml
+                      html={noticeSectionHtml}
+                      className="space-y-1.5 [&_a]:text-brand-text [&_a]:underline [&_strong]:font-bold [&_strong]:text-ink"
+                    />
+                  ) : (
+                    <>
+                      {renderNoticeParagraph('notice_line_1')}
+                      {renderNoticeParagraph('notice_line_2')}
+                    </>
+                  )}
+                </div>
+                {activeHtmlEditMode && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       openHtmlModalForKey(
                         'section_html_notice_box',
                         noticeSectionHtml || buildNoticeBoxDefaultHtml(vbConfig)
-                      )
-                  : undefined
-              }
-              className={`relative flex items-start gap-3.5 rounded-2xl border border-border bg-card/85 p-4 sm:p-5 ${
-                activeHtmlEditMode
-                  ? 'cursor-pointer border-dashed border-brand/60 hover:border-brand hover:bg-brand-soft/25'
-                  : ''
-              }`}
-            >
-              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-brand-text" />
-              <div className="min-w-0 flex-1 space-y-1.5 text-xs leading-relaxed text-ink-muted sm:text-sm">
-                {noticeSectionHtml ? (
-                  <SafeHtml
-                    html={noticeSectionHtml}
-                    className="space-y-1.5 [&_a]:text-brand-text [&_a]:underline [&_strong]:font-bold [&_strong]:text-ink"
-                  />
-                ) : (
-                  <>
-                    {renderNoticeParagraph('notice_line_1')}
-                    {renderNoticeParagraph('notice_line_2')}
-                  </>
+                      );
+                    }}
+                    className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-2.5 py-1 text-[10px] font-bold text-on-brand shadow-xs hover:bg-brand-hover"
+                  >
+                    <Code2 className="h-3 w-3" />
+                    HTML do Aviso
+                  </button>
                 )}
               </div>
-              {activeHtmlEditMode && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    openHtmlModalForKey(
-                      'section_html_notice_box',
-                      noticeSectionHtml || buildNoticeBoxDefaultHtml(vbConfig)
-                    );
-                  }}
-                  className="inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand px-2.5 py-1 text-[10px] font-bold text-on-brand shadow-xs hover:bg-brand-hover"
-                >
-                  <Code2 className="h-3 w-3" />
-                  HTML do Aviso
-                </button>
-              )}
             </div>
-          </div>
+          </section>
         );
       }
 
@@ -1643,23 +1649,24 @@ export function PublicPage({
         const filterAllContent = getLocalizedContent('filter_all_label');
         const promptBelow = getLocalizedContent('revisions_prompt_below');
         return (
-          <main className="mx-auto max-w-[1180px] px-4 py-5 sm:px-6 sm:pb-10">
-            <EditableText
-              as="p"
-              textKey="revisions_prompt_below"
-              defaultText={promptBelow.defaultText}
-              entry={promptBelow.entry}
-              isEditMode={isEditMode}
-              onCommit={handleCommitText}
-              className="mb-3 block text-sm font-semibold text-ink"
-            />
-            {/* Barra horizontal compacta de busca, seleção rápida e filtros */}
-            <div
-              className="relative -mx-1 rounded-2xl border border-border bg-card/95 p-2.5 shadow-sm backdrop-blur sm:mx-0 sm:p-3"
-            >
-              {/* Linha 1 horizontal: Busca + Ir direto para a moto + Atalhos */}
-              <div className="flex flex-wrap items-center gap-2 lg:flex-nowrap">
-                <div className="relative min-w-[210px] flex-1">
+          <section className="w-full bg-surface">
+            <main className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 sm:pb-10 lg:px-8">
+              <EditableText
+                as="p"
+                textKey="revisions_prompt_below"
+                defaultText={promptBelow.defaultText}
+                entry={promptBelow.entry}
+                isEditMode={isEditMode}
+                onCommit={handleCommitText}
+                className="mb-3 block text-sm font-semibold text-ink"
+              />
+              {/* Barra horizontal compacta de busca, seleção rápida e filtros */}
+              <div
+                className="relative rounded-2xl border border-border bg-card/95 p-2.5 shadow-sm backdrop-blur sm:p-3"
+              >
+                {/* Linha 1 horizontal: Busca + Ir direto para a moto + Atalhos */}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="relative min-w-[200px] flex-1">
                   <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-muted" />
                   <input
                     type="text"
@@ -1849,7 +1856,7 @@ export function PublicPage({
                   onClick={() => scrollRailBy(-1)}
                   disabled={!canScrollLeft}
                   aria-label={dict.scrollModelsLeft}
-                  className="hidden sm:flex absolute -left-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card/95 text-ink shadow-md backdrop-blur transition-all hover:border-brand hover:text-brand-text disabled:pointer-events-none disabled:opacity-0"
+                  className="hidden sm:flex absolute left-1 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card/95 text-ink shadow-md backdrop-blur transition-all hover:border-brand hover:text-brand-text disabled:pointer-events-none disabled:opacity-0"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
@@ -2257,7 +2264,7 @@ export function PublicPage({
                   onClick={() => scrollRailBy(1)}
                   disabled={!canScrollRight}
                   aria-label={dict.scrollModelsRight}
-                  className="hidden sm:flex absolute -right-3 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card/95 text-ink shadow-md backdrop-blur transition-all hover:border-brand hover:text-brand-text disabled:pointer-events-none disabled:opacity-0"
+                  className="hidden sm:flex absolute right-1 top-1/2 z-20 h-10 w-10 -translate-y-1/2 items-center justify-center rounded-full border border-border bg-card/95 text-ink shadow-md backdrop-blur transition-all hover:border-brand hover:text-brand-text disabled:pointer-events-none disabled:opacity-0"
                 >
                   <ChevronRight className="h-5 w-5" />
                 </button>
@@ -2524,7 +2531,8 @@ export function PublicPage({
                 })}
               </div>
             )}
-          </main>
+            </main>
+          </section>
         );
       }
 
@@ -2541,6 +2549,8 @@ export function PublicPage({
             units={data.seo?.units || []}
             language={language}
             calculatorSettings={normalizedCalcSettings}
+            logoUrl={effectiveLogoUrl}
+            logoAlt={data.seo.logo_alt || 'RODALEVE'}
             onOpenScheduleModal={(model, revNum, summary, calculatorContext) => {
               const matched = (data.revision_tabs || []).find((t) => t.revision_number === revNum);
               const revLab = translateRevisionLabel(
@@ -2590,14 +2600,96 @@ export function PublicPage({
         const faqSubtitleContent = getLocalizedContent('faq_subtitle');
         const faqItems =
           data.faqs && data.faqs.length > 0 ? data.faqs : FALLBACK_EDITORIAL_FAQS;
+        const normalizeFaqText = (value: string) =>
+          (value || '')
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+        const trimmedFaqSearch = normalizeFaqText(faqSearchQuery.trim());
+        const searchTokens = trimmedFaqSearch
+          .split(/[\s,;:.!?/\\|-]+/)
+          .filter(Boolean);
+        const indexedFaqs = faqItems.map((faq, idx) => {
+          const translatedFaq = translateFaqItem(faq.question, faq.answer, language);
+          const savedFaqQ = vbConfig.siteContent[`faq_q_${faq.id}`];
+          const savedFaqA = vbConfig.siteContent[`faq_a_${faq.id}`];
+          const qEntry =
+            language === 'pt'
+              ? savedFaqQ
+              : savedFaqQ && savedFaqQ.text.trim() !== faq.question.trim()
+                ? savedFaqQ
+                : undefined;
+          const aEntry =
+            language === 'pt'
+              ? savedFaqA
+              : savedFaqA && savedFaqA.text.trim() !== faq.answer.trim()
+                ? savedFaqA
+                : undefined;
+          const displayQ = qEntry?.text?.trim() ? qEntry.text : translatedFaq.question;
+          const displayA = aEntry?.text?.trim() ? aEntry.text : translatedFaq.answer;
+          return {
+            faq,
+            originalIndex: idx,
+            translatedFaq,
+            savedFaqQ,
+            savedFaqA,
+            searchHaystack: normalizeFaqText(`${displayQ} ${displayA}`),
+          };
+        });
+        const filteredFaqs =
+          searchTokens.length > 0
+            ? indexedFaqs.filter((item) =>
+                searchTokens.every((token) => item.searchHaystack.includes(token))
+              )
+            : indexedFaqs;
+        const FAQ_INITIAL_LIMIT = 7;
+        const hasMoreThanLimit = !trimmedFaqSearch && !isEditMode && filteredFaqs.length > FAQ_INITIAL_LIMIT;
+        const visibleFaqs =
+          hasMoreThanLimit && !showAllFaqs
+            ? filteredFaqs.slice(0, FAQ_INITIAL_LIMIT)
+            : filteredFaqs;
+        const hiddenFaqCount = Math.max(0, filteredFaqs.length - FAQ_INITIAL_LIMIT);
+
+        const faqSearchPlaceholder =
+          language === 'en'
+            ? 'Search your question (e.g. warranty, mileage, oil...)'
+            : language === 'es'
+              ? 'Buscar tu duda (ej.: garantía, plazo, aceite...)'
+              : 'Pesquisar dúvida (ex.: garantia, prazo, óleo...)';
+        const faqShowMoreLabel =
+          language === 'en'
+            ? `Show more questions (+${hiddenFaqCount})`
+            : language === 'es'
+              ? `Ver más preguntas (+${hiddenFaqCount})`
+              : `Ver mais perguntas (+${hiddenFaqCount})`;
+        const faqShowLessLabel =
+          language === 'en'
+            ? 'Show fewer questions'
+            : language === 'es'
+              ? 'Ver menos preguntas'
+              : 'Ver menos perguntas';
+        const faqEmptyText =
+          language === 'en'
+            ? 'No questions matched your search.'
+            : language === 'es'
+              ? 'No se encontraron preguntas para tu búsqueda.'
+              : 'Nenhuma dúvida encontrada para essa pesquisa.';
+        const faqClearSearchText =
+          language === 'en'
+            ? 'Clear search'
+            : language === 'es'
+              ? 'Limpiar búsqueda'
+              : 'Limpar pesquisa';
+
         return (
           <section
             id="perguntas-frequentes"
             aria-labelledby="faq-section-heading"
-            className="mx-auto max-w-[920px] scroll-mt-24 px-4 py-10 sm:px-6 sm:py-14"
+            className="w-full scroll-mt-24 border-t border-border/60 bg-surface py-10 sm:py-14"
           >
-            <div className="mb-7 flex items-end justify-between gap-4 border-b border-border/80 pb-5">
-              <div id="faq-section-heading">
+            <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="mb-7 flex flex-col gap-4 border-b border-border/80 pb-5 md:flex-row md:items-end md:justify-between">
+              <div id="faq-section-heading" className="min-w-0 flex-1">
                 <EditableText
                   as="h2"
                   textKey="faq_title"
@@ -2617,116 +2709,176 @@ export function PublicPage({
                   className="mt-1.5 block text-sm leading-relaxed text-ink-muted sm:text-base"
                 />
               </div>
+
+              {/* Balão de pesquisa ao lado de Dúvidas Frequentes */}
+              <div className="w-full shrink-0 md:w-80 lg:w-[340px]">
+                <label htmlFor="faq-search-input" className="sr-only">
+                  {faqSearchPlaceholder}
+                </label>
+                <div className="flex items-center gap-2 rounded-full border border-border bg-card px-4 py-2.5 shadow-xs transition-all focus-within:border-brand focus-within:ring-2 focus-within:ring-brand/15">
+                  <Search className="h-4 w-4 shrink-0 text-gray-600 dark:text-gray-300" />
+                  <input
+                    id="faq-search-input"
+                    type="search"
+                    value={faqSearchQuery}
+                    onChange={(e) => setFaqSearchQuery(e.target.value)}
+                    placeholder={faqSearchPlaceholder}
+                    className="w-full min-w-0 bg-transparent text-sm font-normal text-ink placeholder:text-gray-600 dark:placeholder:text-gray-300 focus:outline-none"
+                  />
+                  {faqSearchQuery.trim().length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFaqSearchQuery('')}
+                      aria-label={faqClearSearchText}
+                      className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-gray-600 transition-colors hover:bg-surface hover:text-ink dark:text-gray-300"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
             </div>
 
-            <div className="space-y-3.5" role="presentation">
-              {faqItems.map((faq, faqIdx) => {
-                const isOpen = openFaqId === faq.id;
-                const itemNumber = String(faqIdx + 1).padStart(2, '0');
-                const triggerId = `faq-trigger-${faq.id}`;
-                const panelId = `faq-panel-${faq.id}`;
-                const translatedFaq = translateFaqItem(faq.question, faq.answer, language);
-                const savedFaqQ = vbConfig.siteContent[`faq_q_${faq.id}`];
-                const savedFaqA = vbConfig.siteContent[`faq_a_${faq.id}`];
-                const qEntry =
-                  language === 'pt'
-                    ? savedFaqQ
-                    : savedFaqQ && savedFaqQ.text.trim() !== faq.question.trim()
-                      ? savedFaqQ
-                      : undefined;
-                const aEntry =
-                  language === 'pt'
-                    ? savedFaqA
-                    : savedFaqA && savedFaqA.text.trim() !== faq.answer.trim()
-                      ? savedFaqA
-                      : undefined;
-                return (
-                  <article
-                    key={faq.id}
-                    className={`rounded-2xl border transition-all duration-200 ${
-                      isOpen
-                        ? 'faq-item-active bg-card'
-                        : 'border-border bg-card hover:border-brand/45 hover:bg-[#FAF8F5] dark:hover:bg-[#1D212B]'
-                    }`}
-                  >
-                    <h3 className="m-0">
-                      <button
-                        ref={(el) => {
-                          faqButtonRefs.current[faqIdx] = el;
-                        }}
-                        id={triggerId}
-                        type="button"
-                        aria-expanded={isOpen}
-                        aria-controls={panelId}
-                        onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
-                        onKeyDown={(e) => handleFaqKeyDown(e, faqIdx, faqItems.length)}
-                        className="group flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl px-4 py-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-card sm:gap-5 sm:px-6 sm:py-5"
+            {visibleFaqs.length === 0 ? (
+              <div className="rounded-2xl border border-border bg-card p-6 text-center">
+                <p className="text-sm font-normal text-gray-600 dark:text-gray-300">
+                  {faqEmptyText}
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setFaqSearchQuery('')}
+                  className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-4 py-2 text-sm font-semibold text-ink transition-colors hover:border-brand hover:text-brand-text"
+                >
+                  {faqClearSearchText}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-3.5" role="presentation">
+                {visibleFaqs.map(
+                  ({ faq, originalIndex, translatedFaq, savedFaqQ, savedFaqA }, visibleIdx) => {
+                    const isOpen = openFaqId === faq.id;
+                    const itemNumber = String(originalIndex + 1).padStart(2, '0');
+                    const triggerId = `faq-trigger-${faq.id}`;
+                    const panelId = `faq-panel-${faq.id}`;
+                    const qEntry =
+                      language === 'pt'
+                        ? savedFaqQ
+                        : savedFaqQ && savedFaqQ.text.trim() !== faq.question.trim()
+                          ? savedFaqQ
+                          : undefined;
+                    const aEntry =
+                      language === 'pt'
+                        ? savedFaqA
+                        : savedFaqA && savedFaqA.text.trim() !== faq.answer.trim()
+                          ? savedFaqA
+                          : undefined;
+                    return (
+                      <article
+                        key={faq.id}
+                        className={`rounded-2xl border transition-all duration-200 ${
+                          isOpen
+                            ? 'faq-item-active bg-card'
+                            : 'border-border bg-card hover:border-brand/45 hover:bg-[#FAF8F5] dark:hover:bg-[#1D212B]'
+                        }`}
                       >
-                        <div className="flex min-w-0 flex-1 items-center gap-3.5 sm:gap-5">
-                          <span
-                            aria-hidden="true"
-                            className={`shrink-0 font-display text-2xl font-extrabold leading-none tracking-tight tabular-nums transition-all duration-200 sm:min-w-[2.75rem] sm:text-[28px] ${
-                              isOpen
-                                ? 'translate-x-0.5 text-brand-text'
-                                : 'text-ink-muted/65 group-hover:translate-x-0.5 group-hover:text-brand-text group-focus-visible:translate-x-0.5 group-focus-visible:text-brand-text'
-                            }`}
+                        <h3 className="m-0">
+                          <button
+                            ref={(el) => {
+                              faqButtonRefs.current[visibleIdx] = el;
+                            }}
+                            id={triggerId}
+                            type="button"
+                            aria-expanded={isOpen}
+                            aria-controls={panelId}
+                            onClick={() => setOpenFaqId(isOpen ? null : faq.id)}
+                            onKeyDown={(e) => handleFaqKeyDown(e, visibleIdx, visibleFaqs.length)}
+                            className="group flex w-full cursor-pointer items-center justify-between gap-4 rounded-2xl px-4 py-4 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-brand focus-visible:ring-offset-2 focus-visible:ring-offset-card sm:gap-5 sm:px-6 sm:py-5"
                           >
-                            {itemNumber}
-                          </span>
-                          <EditableText
-                            textKey={`faq_q_${faq.id}`}
-                            defaultText={translatedFaq.question}
-                            entry={qEntry}
-                            isEditMode={isEditMode}
-                            onCommit={handleCommitText}
-                            className={`flex-1 text-sm font-bold leading-snug transition-colors sm:text-base ${
-                              isOpen
-                                ? 'text-brand-text'
-                                : 'text-ink group-hover:text-brand-text group-focus-visible:text-brand-text'
-                            }`}
-                          />
-                        </div>
-                        <span
-                          aria-hidden="true"
-                          className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-all duration-200 ${
-                            isOpen
-                              ? 'border-brand/35 bg-brand-soft text-brand-text'
-                              : 'border-border bg-surface text-ink-muted group-hover:border-brand/35 group-hover:bg-brand-soft/60 group-hover:text-brand-text group-focus-visible:border-brand/35 group-focus-visible:text-brand-text'
+                            <div className="flex min-w-0 flex-1 items-center gap-3.5 sm:gap-5">
+                              <span
+                                aria-hidden="true"
+                                className={`shrink-0 font-display text-2xl font-extrabold leading-none tracking-tight tabular-nums transition-all duration-200 sm:min-w-[2.75rem] sm:text-[28px] ${
+                                  isOpen
+                                    ? 'translate-x-0.5 text-brand-text'
+                                    : 'text-ink-muted/65 group-hover:translate-x-0.5 group-hover:text-brand-text group-focus-visible:translate-x-0.5 group-focus-visible:text-brand-text'
+                                }`}
+                              >
+                                {itemNumber}
+                              </span>
+                              <EditableText
+                                textKey={`faq_q_${faq.id}`}
+                                defaultText={translatedFaq.question}
+                                entry={qEntry}
+                                isEditMode={isEditMode}
+                                onCommit={handleCommitText}
+                                className={`flex-1 text-sm font-bold leading-snug transition-colors sm:text-base ${
+                                  isOpen
+                                    ? 'text-brand-text'
+                                    : 'text-ink group-hover:text-brand-text group-focus-visible:text-brand-text'
+                                }`}
+                              />
+                            </div>
+                            <span
+                              aria-hidden="true"
+                              className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full border transition-all duration-200 ${
+                                isOpen
+                                  ? 'border-brand/35 bg-brand-soft text-brand-text'
+                                  : 'border-border bg-surface text-ink-muted group-hover:border-brand/35 group-hover:bg-brand-soft/60 group-hover:text-brand-text group-focus-visible:border-brand/35 group-focus-visible:text-brand-text'
+                              }`}
+                            >
+                              <ChevronDown
+                                className={`faq-chevron h-4 w-4 transition-transform duration-300 ease-out ${
+                                  isOpen ? 'rotate-180' : ''
+                                }`}
+                              />
+                            </span>
+                          </button>
+                        </h3>
+                        <div
+                          id={panelId}
+                          role="region"
+                          aria-labelledby={triggerId}
+                          aria-hidden={!isOpen}
+                          className={`faq-accordion-panel ${
+                            isOpen ? 'faq-accordion-panel--open' : ''
                           }`}
                         >
-                          <ChevronDown
-                            className={`faq-chevron h-4 w-4 transition-transform duration-300 ease-out ${
-                              isOpen ? 'rotate-180' : ''
-                            }`}
-                          />
-                        </span>
-                      </button>
-                    </h3>
-                    <div
-                      id={panelId}
-                      role="region"
-                      aria-labelledby={triggerId}
-                      aria-hidden={!isOpen}
-                      className={`faq-accordion-panel ${
-                        isOpen ? 'faq-accordion-panel--open' : ''
-                      }`}
-                    >
-                      <div className="overflow-hidden">
-                        <div className="border-t border-border/75 px-4 pt-3.5 pb-5 text-sm leading-relaxed text-ink-muted sm:px-6 sm:pl-[5.5rem] sm:pb-6">
-                          <EditableText
-                            as="p"
-                            textKey={`faq_a_${faq.id}`}
-                            defaultText={translatedFaq.answer}
-                            entry={aEntry}
-                            isEditMode={isEditMode}
-                            onCommit={handleCommitText}
-                          />
+                          <div className="overflow-hidden">
+                            <div className="border-t border-border/75 px-4 pt-3.5 pb-5 text-sm leading-relaxed text-ink-muted sm:px-6 sm:pl-[5.5rem] sm:pb-6">
+                              <EditableText
+                                as="p"
+                                textKey={`faq_a_${faq.id}`}
+                                defaultText={translatedFaq.answer}
+                                entry={aEntry}
+                                isEditMode={isEditMode}
+                                onCommit={handleCommitText}
+                              />
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
+                      </article>
+                    );
+                  }
+                )}
+              </div>
+            )}
+
+            {hasMoreThanLimit && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setShowAllFaqs((prev) => !prev)}
+                  className="inline-flex items-center gap-2 whitespace-nowrap rounded-full border border-border bg-card px-5 py-2.5 text-sm font-semibold text-ink shadow-xs transition-colors hover:border-brand hover:text-brand-text"
+                >
+                  <span>{showAllFaqs ? faqShowLessLabel : faqShowMoreLabel}</span>
+                  <ChevronDown
+                    className={`h-4 w-4 transition-transform duration-200 ${
+                      showAllFaqs ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
+              </div>
+            )}
             </div>
           </section>
         );
@@ -2790,9 +2942,9 @@ export function PublicPage({
             ) : (
               <section
                 id="unidades"
-                className="min-h-[540px] border-t border-border bg-card py-16"
+                className="w-full min-h-[540px] border-t border-border bg-card py-16"
               >
-                <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+                <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
                   <p className="text-xs font-bold uppercase tracking-widest text-brand-text">
                     {unitsEyebrow.entry?.text || unitsEyebrow.defaultText}
                   </p>
@@ -2819,8 +2971,8 @@ export function PublicPage({
         const footerSlogan = getLocalizedContent('footer_slogan');
         const footerCredits = getLocalizedContent('footer_credits');
         return (
-          <footer className="border-t border-border bg-surface text-ink-muted">
-            <div className="mx-auto max-w-[1180px] px-4 py-12 sm:px-6">
+          <footer className="w-full border-t border-border bg-surface text-ink-muted">
+            <div className="mx-auto w-full max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
               <div className="grid grid-cols-1 gap-8 md:grid-cols-3">
                 {/* Coluna 1: Logo + Redes + Tema escuro */}
                 <div>
@@ -3130,8 +3282,9 @@ export function PublicPage({
         const isGray = custom.theme === 'gray';
         const customSectionHtml = vbConfig.htmlOverrides?.[`section_html_${block.id}`]?.trim();
         return (
-          <section className="mx-auto max-w-[1180px] px-4 py-6 sm:px-6">
-            <div
+          <section className="w-full bg-surface py-6">
+            <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+              <div
               className={`overflow-hidden rounded-2xl border p-6 sm:p-8 ${
                 isRed
                   ? 'border-brand bg-brand text-on-brand'
@@ -3252,6 +3405,7 @@ export function PublicPage({
                 )}
               </div>
             </div>
+            </div>
           </section>
         );
       }
@@ -3364,7 +3518,7 @@ export function PublicPage({
             isScrolled && !isEditMode ? 'shadow-sm' : ''
           }`}
         >
-          <div className="mx-auto flex h-16 max-w-[1180px] items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6">
+          <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6 lg:px-8">
             <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
               <a
                 href="/"
@@ -3416,7 +3570,7 @@ export function PublicPage({
               )}
             </div>
 
-            <nav className="hidden items-center gap-6 md:flex">
+            <nav className="hidden items-center gap-3 md:flex lg:gap-6">
               {(() => {
                 const navRev = getLocalizedContent('nav_revisions');
                 const navCalc = getLocalizedContent('nav_calculator');
@@ -3637,7 +3791,7 @@ export function PublicPage({
               onDelete={deleteSection}
             >
               {activeHtmlEditMode && (
-                <div className="mx-auto flex max-w-[1180px] justify-end px-4 pt-2 sm:px-6">
+                <div className="mx-auto flex w-full max-w-7xl justify-end px-4 pt-2 sm:px-6 lg:px-8">
                   <button
                     type="button"
                     onClick={() =>
@@ -3654,7 +3808,7 @@ export function PublicPage({
                 </div>
               )}
               {sectionCustomHtml && (
-                <div className="mx-auto max-w-[1180px] px-4 pt-4 sm:px-6">
+                <div className="mx-auto w-full max-w-7xl px-4 pt-4 sm:px-6 lg:px-8">
                   <SafeHtml
                     html={sectionCustomHtml}
                     onClick={

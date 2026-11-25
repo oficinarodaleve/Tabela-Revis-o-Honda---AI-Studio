@@ -1367,9 +1367,9 @@ export function UnitsMapSection({
     <section
       id="unidades"
       ref={sectionRef}
-      className="border-t border-border bg-card py-16"
+      className="w-full border-t border-border bg-card py-16"
     >
-      <div className="mx-auto max-w-[1180px] px-4 sm:px-6">
+      <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
           <div>
             {renderEyebrow ? (
