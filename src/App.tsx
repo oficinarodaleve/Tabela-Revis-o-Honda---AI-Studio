@@ -288,34 +288,9 @@ export default function App() {
       }
     };
 
-    if (isUrgentAuthRoute) {
-      void checkAuth();
-      return () => {
-        active = false;
-      };
-    }
-
-    const win = window as Window & {
-      requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number;
-      cancelIdleCallback?: (id: number) => void;
-    };
-    let timerId: number | null = null;
-    let idleId: number | null = null;
-
-    if (typeof win.requestIdleCallback === 'function') {
-      idleId = win.requestIdleCallback(() => void checkAuth(), { timeout: 2200 });
-    } else {
-      timerId = window.setTimeout(() => void checkAuth(), 1500);
-    }
-
+    void checkAuth();
     return () => {
       active = false;
-      if (idleId !== null && typeof win.cancelIdleCallback === 'function') {
-        win.cancelIdleCallback(idleId);
-      }
-      if (timerId !== null) {
-        window.clearTimeout(timerId);
-      }
     };
   }, [route]);
 

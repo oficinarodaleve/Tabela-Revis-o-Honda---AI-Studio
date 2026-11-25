@@ -3518,7 +3518,11 @@ export function PublicPage({
             isScrolled && !isEditMode ? 'shadow-sm' : ''
           }`}
         >
-          <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between gap-2 px-4 sm:gap-4 sm:px-6 lg:px-8">
+          <div
+            className={`mx-auto flex w-full max-w-7xl items-center justify-between gap-2 px-4 sm:h-16 sm:gap-4 sm:px-6 lg:px-8 ${
+              isAdminLoggedIn ? 'min-h-16 flex-wrap py-2 sm:flex-nowrap sm:py-0' : 'h-16'
+            }`}
+          >
             <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
               <a
                 href="/"
@@ -3686,6 +3690,18 @@ export function PublicPage({
                   );
                 })()}
               </a>
+              {isAdminLoggedIn && (
+                <button
+                  type="button"
+                  onClick={() => (isEditMode ? onExitEditModeToGestor() : onNavigate('/gestor'))}
+                  title="Ir para o Gestor"
+                  className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-surface-neutral px-3 py-2 text-xs font-bold text-ink shadow-xs transition-colors hover:border-brand hover:bg-brand-soft hover:text-brand-text sm:px-4 sm:py-2.5 sm:text-sm"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5 shrink-0 text-brand-text sm:h-4 sm:w-4" />
+                  <span className="hidden sm:inline md:hidden lg:inline">Ir para o Gestor</span>
+                  <span className="sm:hidden md:inline lg:hidden">Gestor</span>
+                </button>
+              )}
             </div>
           </div>
 

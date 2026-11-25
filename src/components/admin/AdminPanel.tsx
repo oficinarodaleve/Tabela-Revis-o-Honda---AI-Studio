@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowLeft,
   CheckCircle2,
   Download,
-  ExternalLink,
   FileDown,
   LogOut,
   Paintbrush,
@@ -819,15 +819,14 @@ export function AdminPanel({
               Editar Site Visualmente
             </button>
 
-            <a
-              href="/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:bg-surface-neutral"
+            <button
+              type="button"
+              onClick={() => onNavigate('/')}
+              className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-border bg-card px-3.5 py-1.5 text-xs font-semibold text-ink transition-colors hover:border-brand hover:bg-surface-neutral hover:text-brand-text"
             >
-              <ExternalLink className="h-3.5 w-3.5" />
-              Ver site
-            </a>
+              <ArrowLeft className="h-3.5 w-3.5 text-brand-text" />
+              Voltar para o site
+            </button>
 
             <button
               type="button"
