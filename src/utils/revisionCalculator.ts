@@ -355,6 +355,48 @@ export function getTargetMonthsForRevision(
   return settings.first_revision_months + settings.subsequent_months_step * (n - 1);
 }
 
+/**
+ * Formata dinamicamente a duração total em meses seguindo o padrão:
+ * 6 -> "6 meses"
+ * 12 -> "1 ano"
+ * 18 -> "1 ano e 6 meses"
+ * 24 -> "2 anos"
+ * 30 -> "2 anos e 6 meses", etc.
+ */
+export function formatRevisionTimeframe(
+  totalMonths: number,
+  language: 'pt' | 'en' | 'es' = 'pt'
+): string {
+  const safeMonths = Math.max(1, Math.round(totalMonths));
+  const years = Math.floor(safeMonths / 12);
+  const remMonths = safeMonths % 12;
+
+  if (language === 'en') {
+    if (years === 0) {
+      return `${safeMonths} ${safeMonths === 1 ? 'month' : 'months'}`;
+    }
+    const yearPart = `${years} ${years === 1 ? 'year' : 'years'}`;
+    if (remMonths === 0) return yearPart;
+    return `${yearPart} and ${remMonths} ${remMonths === 1 ? 'month' : 'months'}`;
+  }
+
+  if (language === 'es') {
+    if (years === 0) {
+      return `${safeMonths} ${safeMonths === 1 ? 'mes' : 'meses'}`;
+    }
+    const yearPart = `${years} ${years === 1 ? 'año' : 'años'}`;
+    if (remMonths === 0) return yearPart;
+    return `${yearPart} y ${remMonths} ${remMonths === 1 ? 'mes' : 'meses'}`;
+  }
+
+  if (years === 0) {
+    return `${safeMonths} ${safeMonths === 1 ? 'mês' : 'meses'}`;
+  }
+  const yearPart = `${years} ${years === 1 ? 'ano' : 'anos'}`;
+  if (remMonths === 0) return yearPart;
+  return `${yearPart} e ${remMonths} ${remMonths === 1 ? 'mês' : 'meses'}`;
+}
+
 export function buildRevisionCycleSnapshot(
   revisionNumber: number,
   currentKm: number,
@@ -588,9 +630,10 @@ export function calculateRevisionSchedule(params: {
         )
       : null;
 
-  // Timeline strictly capped at 1ª..9ª Revisão per specification
+  // Exibe no mínimo 1ª..9ª Revisão e expande dinamicamente caso a revisão alvo ultrapasse a 9ª
+  const maxTimelineRevision = Math.min(25, Math.max(9, targetRevisionNumber));
   const timeline: RevisionCycleSnapshot[] = [];
-  for (let n = 1; n <= 9; n += 1) {
+  for (let n = 1; n <= maxTimelineRevision; n += 1) {
     timeline.push(
       buildRevisionCycleSnapshot(n, safeKm, saleDate, todayDate, effectiveLastCompleted, settings)
     );

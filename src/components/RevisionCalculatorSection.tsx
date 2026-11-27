@@ -43,6 +43,7 @@ import {
   formatDateISO,
   formatKmPT,
   formatKmTyping,
+  formatRevisionTimeframe,
   getTargetKmForRevision,
   getTargetMonthsForRevision,
   getToleranceKmForRevision,
@@ -1040,8 +1041,13 @@ export function RevisionCalculatorSection({
                         {item.revisionNumber}ª
                       </span>
                       <div className="min-w-0">
-                        <p className="font-display text-sm font-bold text-ink sm:text-[15px] tabular-nums">
-                          {localizedLabel} · {formatKmPT(item.targetKm)} km
+                        <p className="font-display text-sm font-bold leading-snug text-ink sm:text-[15px] tabular-nums">
+                          <span className="whitespace-nowrap">
+                            {localizedLabel} · {formatKmPT(item.targetKm)} km
+                          </span>{' '}
+                          <span className="whitespace-nowrap text-ink/90">
+                            - {formatRevisionTimeframe(item.targetMonths, language)}
+                          </span>
                         </p>
                         <p className="mt-0.5 text-sm font-normal leading-snug text-gray-600 dark:text-gray-300 tabular-nums">
                           {t.dueDateLabel} {item.targetDateBR} ·{' '}
@@ -1437,8 +1443,10 @@ export function RevisionCalculatorSection({
               backgroundColor: '#FFFFFF',
               color: '#111827',
               fontFamily: 'Inter, system-ui, -apple-system, sans-serif',
+              height: 'auto',
+              overflow: 'visible',
             }}
-            className="border border-[#E5E7EB] p-8"
+            className="border border-[#E5E7EB] p-7"
           >
             {/* Cabeçalho com Logo da Empresa */}
             <div className="border-b-2 border-[#C8102E] pb-5">
@@ -1506,9 +1514,9 @@ export function RevisionCalculatorSection({
               </div>
             </div>
 
-            {/* Conteúdo Principal: Linha do tempo limpa (1ª à 9ª, apenas quadradinho + título + Data limite) */}
-            <div className="mt-6">
-              <div className="mb-3 flex items-baseline justify-between gap-2">
+            {/* Conteúdo Principal: Linha do tempo limpa (quadradinho + título com prazo + Data limite) */}
+            <div className="mt-5">
+              <div className="mb-2.5 flex items-baseline justify-between gap-2">
                 <h3 className="text-lg font-extrabold text-[#111827]">
                   Linha do tempo das revisões Honda
                 </h3>
@@ -1524,6 +1532,7 @@ export function RevisionCalculatorSection({
                     `${item.revisionNumber}ª Revisão`,
                     language
                   );
+                  const timeframeLabel = formatRevisionTimeframe(item.targetMonths, language);
 
                   const circleColors =
                     item.status === 'completed'
@@ -1540,7 +1549,7 @@ export function RevisionCalculatorSection({
                       style={{
                         backgroundColor: isCurrentTarget ? '#FEF2F2' : '#FFFFFF',
                       }}
-                      className="flex items-center gap-3.5 px-4 py-3"
+                      className="flex items-center gap-3.5 px-4 py-2.5"
                     >
                       <span
                         style={{
@@ -1553,8 +1562,8 @@ export function RevisionCalculatorSection({
                         {item.revisionNumber}ª
                       </span>
                       <div className="min-w-0">
-                        <p className="text-sm font-bold text-[#111827] tabular-nums">
-                          {localizedLabel} · {formatKmPT(item.targetKm)} km
+                        <p className="text-sm font-bold leading-snug text-[#111827] tabular-nums">
+                          {localizedLabel} · {formatKmPT(item.targetKm)} km - {timeframeLabel}
                         </p>
                         <p className="mt-0.5 text-xs font-medium text-[#4B5563] tabular-nums">
                           {t.dueDateLabel} {item.targetDateBR}
@@ -1566,13 +1575,41 @@ export function RevisionCalculatorSection({
               </div>
             </div>
 
+            {/* Card de atenção sobre garantia de fábrica */}
+            <div
+              style={{
+                backgroundColor: '#FFFBEB',
+                borderColor: '#FDE68A',
+              }}
+              className="mt-4 flex items-start gap-3 rounded-xl border px-4 py-3.5"
+            >
+              <span
+                style={{
+                  backgroundColor: '#FEF3C7',
+                  color: '#B45309',
+                  borderColor: '#FCD34D',
+                }}
+                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border"
+              >
+                <AlertTriangle className="h-4 w-4" />
+              </span>
+              <p
+                style={{ color: '#78350F' }}
+                className="text-xs font-semibold leading-relaxed"
+              >
+                Ultrapassar a data limite ou a quilometragem prevista para a revisão compromete a
+                garantia de fábrica da sua moto. Agende o atendimento o quanto antes para avaliação
+                da nossa equipe.
+              </p>
+            </div>
+
             {/* Rodapé de Agendamento (Visual Profissional + Ícone WhatsApp) */}
             <div
               style={{
                 background: 'linear-gradient(90deg, #FFF5F5 0%, #FFFFFF 50%, #F0FDF4 100%)',
                 borderColor: '#E5E7EB',
               }}
-              className="mt-6 flex items-center justify-between gap-4 rounded-xl border px-6 py-4"
+              className="mt-4 flex items-center justify-between gap-4 rounded-xl border px-6 py-4"
             >
               <div className="flex items-center gap-3.5">
                 <span
